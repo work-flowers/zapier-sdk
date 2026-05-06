@@ -3,8 +3,9 @@
  *
  * Single Code-by-Zapier step that replaces the original 24-node sub-zap.
  * Runs inside Run JavaScript with the @zapier/zapier-sdk toggle ON and
- * connections attached for: Notion (var: notion) and ChatGPT/OpenAI (var: openai).
- * Zapier Tables is built-in and does not require a connection.
+ * a connection attached for Notion (Account ID Variable: notion).
+ * Zapier Tables and AI by Zapier are built-in and do not need connections;
+ * AI by Zapier uses plan-included credentials (authentication_id "0").
  *
  * Input Data fields (mapped in the Zap UI):
  *   to, from, cc        -- raw email-header strings from the calling Zap
@@ -36,7 +37,9 @@ const TABLE_FIELD_PAGE_ID = "data__f2";
 const TABLE_NEW_FIELD_EMAIL = "new__data__f3";
 const TABLE_NEW_FIELD_PAGE_ID = "new__data__f2";
 
-const OPENAI_MODEL = "gpt-5-mini";
+const AI_PROVIDER_ID = "openai";
+const AI_MODEL_ID = "openai/gpt-5-mini";
+const AI_AUTHENTICATION_ID = "0"; // "Included in Plan" — no API key needed
 const CLASSIFIER_INSTRUCTIONS = `You are an email classifier. Given an email address, determine whether it belongs to a real individual person or a service/organisational account.Return only a raw JSON object with no markdown, explanation, or preamble:
 {"is_individual": true} or {"is_individual": false}Classify as false (service/organisational) if the address contains prefixes such as:
 
@@ -116,28 +119,32 @@ async function lookupExisting(zapier, emails) {
   return map;
 }
 
-async function classifyIsIndividual(zapier, connectionId, email) {
+async function classifyIsIndividual(zapier, email) {
   const { data } = await zapier.runAction({
-    appKey: "ChatGPTCLIAPI",
+    appKey: "AICLIAPI",
     actionType: "write",
-    actionKey: "conversation_responses_api",
-    connectionId,
+    actionKey: "get_completion",
     inputs: {
-      model: OPENAI_MODEL,
+      provider_id: AI_PROVIDER_ID,
+      authentication_id: AI_AUTHENTICATION_ID,
+      model_id: AI_MODEL_ID,
       instructions: CLASSIFIER_INSTRUCTIONS,
-      user_message: email,
-      response_format: "json_object",
-      max_tokens: 200,
+      inputFields: { Email: email },
+      outputSchema: {
+        "Is Individual":
+          "Indicates whether the email address belongs to a real individual person (true) or a service/organisational account (false).",
+        Rationale:
+          "A text explanation of the reasoning behind the classification decision.",
+      },
+      "required_Is Individual": true,
+      "type_Is Individual": "boolean",
+      required_Rationale: true,
+      type_Rationale: "text",
+      isOutputArray: false,
     },
   });
 
-  const raw = data?.response ?? data?.output_text ?? data?.text ?? data?.message ?? "";
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return parsed?.is_individual === true;
-  } catch {
-    return false;
-  }
+  return data?.["Is Individual"] === true;
 }
 
 async function createNotionContact(zapier, connectionId, email) {
@@ -179,13 +186,12 @@ export default async function main({ inputData }) {
     return { page_ids: existingPageIds.join(",") };
   }
 
-  const openaiConnectionId = connections["openai"];
   const notionConnectionId = connections["notion"];
   const newlyCreatedPageIds = [];
 
   for (const email of newEmails) {
     try {
-      const isIndividual = await classifyIsIndividual(zapier, openaiConnectionId, email);
+      const isIndividual = await classifyIsIndividual(zapier, email);
       if (!isIndividual) continue;
 
       const pageId = await createNotionContact(zapier, notionConnectionId, email);

@@ -16,9 +16,8 @@ In the Code step:
 
 1. Toggle **`@zapier/zapier-sdk` (latest)** on so `zapier` and `connections` are auto-imported.
 2. **Add app connection → Notion**, account = `work.flowers | Dennis`, set Account ID Variable to `notion`.
-3. **Add app connection → ChatGPT (OpenAI)**, set Account ID Variable to `openai`.
-   (Zapier Tables is built-in and does not need a connection.)
-4. **Input Data:**
+   (Zapier Tables and AI by Zapier are built-in and do not need connections.)
+3. **Input Data:**
 
    | Key   | Value             |
    |-------|-------------------|
@@ -26,7 +25,7 @@ In the Code step:
    | `from`| `{{trigger.From}}`|
    | `cc`  | `{{trigger.Cc}}`  |
 
-5. Paste `code-step.js` as the code body. The Return step maps `page_ids` from this step's output.
+4. Paste `code-step.js` as the code body. The Return step maps `page_ids` from this step's output.
 
 ## What it does (summary)
 
@@ -34,7 +33,7 @@ In the Code step:
 2. Look up filtered emails in Zapier Table `01JYEPSEARXB2Z6BJRCMFGXBC2` via `TableCLIAPI.search.find_record`.
 3. If every email already has a row → return the matched page IDs and stop.
 4. Otherwise, for each new email (capped at 10):
-   - Ask `gpt-5-mini` whether the address looks like an individual person.
+   - Ask AI by Zapier (`gpt-5-mini`, plan-included credits) whether the address looks like an individual person.
    - If yes, create a Notion Contacts row (`NotionCLIAPI.write.create_database_item`, data source `21991b07-11ac-81a6-a894-000be4a09a67`, property `Primary Email`).
    - Write the email→page-id mapping back to the Zapier Table immediately (`TableCLIAPI.write.create_record`).
 5. Return existing + newly-created page IDs as a comma-separated string.

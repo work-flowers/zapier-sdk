@@ -4,7 +4,7 @@ import { test } from "node:test";
 const codeStepUrl = new URL("./code-step.js", import.meta.url);
 
 async function loadMain({ existingByEmail = {}, classifyAs = () => true, notionPageIds = {}, captureCalls } = {}) {
-  globalThis.connections = { openai: "openai-conn", notion: "notion-conn" };
+  globalThis.connections = { notion: "notion-conn" };
 
   const calls = { findRecord: [], createNotion: [], createTableRow: [], classify: [] };
   if (captureCalls) Object.assign(captureCalls, calls);
@@ -29,11 +29,11 @@ async function loadMain({ existingByEmail = {}, classifyAs = () => true, notionP
           ],
         };
       }
-      if (appKey === "ChatGPTCLIAPI" && actionKey === "conversation_responses_api") {
+      if (appKey === "AICLIAPI" && actionKey === "get_completion") {
         calls.classify.push({ inputs, connectionId });
-        const email = inputs.user_message;
+        const email = inputs.inputFields.Email;
         const verdict = classifyAs(email);
-        return { data: { response: JSON.stringify({ is_individual: verdict, rationale: "test" }) } };
+        return { data: { "Is Individual": verdict, Rationale: "test" } };
       }
       if (appKey === "NotionCLIAPI" && actionKey === "create_database_item") {
         calls.createNotion.push({ inputs, connectionId });
@@ -119,7 +119,7 @@ test("substring blocklist drops support/billing/contact addresses before AI", as
     },
   });
   assert.equal(calls.classify.length, 1);
-  assert.equal(calls.classify[0].inputs.user_message, "real.person@vendor.com");
+  assert.equal(calls.classify[0].inputs.inputFields.Email, "real.person@vendor.com");
   assert.match(result.page_ids, /real\.person/);
 });
 
