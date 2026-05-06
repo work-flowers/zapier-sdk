@@ -14,31 +14,34 @@ async function loadMain({ existingByEmail = {}, classifyAs = () => true, notionP
       if (appKey === "TableCLIAPI" && actionKey === "find_record") {
         calls.findRecord.push(inputs);
         const lookup = inputs.lookup_value;
-        const matchedEmails = [];
-        const matchedPageIds = [];
+        const rows = [];
         for (const e of lookup) {
           if (existingByEmail[e]) {
-            matchedEmails.push(e);
-            matchedPageIds.push(existingByEmail[e]);
+            rows.push({
+              new: null,
+              old: { data: { f3: e, f2: existingByEmail[e] } },
+              record_id: `rec-${e}`,
+              table_id: inputs.table_id,
+            });
           }
         }
-        if (matchedEmails.length === 0) return { data: null };
-        return {
-          data: [
-            { "results[]old": { data: { f3: matchedEmails, f2: matchedPageIds } } },
-          ],
-        };
+        return { data: rows.length ? rows : null };
       }
       if (appKey === "AICLIAPI" && actionKey === "get_completion") {
         calls.classify.push({ inputs, connectionId });
-        const email = inputs.inputFields.Email;
-        const verdict = classifyAs(email);
-        return { data: { "Is Individual": verdict, Rationale: "test" } };
+        const emails = String(inputs.inputFields.Emails || "").split("\n").filter(Boolean);
+        return {
+          data: emails.map((email) => ({
+            Email: email,
+            "Is Individual": classifyAs(email),
+            Rationale: "test",
+          })),
+        };
       }
       if (appKey === "NotionCLIAPI" && actionKey === "create_database_item") {
         calls.createNotion.push({ inputs, connectionId });
         const email = inputs["properties|||Primary Email|||email"];
-        return { data: { id: notionPageIds[email] || `page-for-${email}` } };
+        return { data: [{ id: notionPageIds[email] || `page-for-${email}` }] };
       }
       if (appKey === "TableCLIAPI" && actionKey === "create_record") {
         calls.createTableRow.push(inputs);
@@ -102,7 +105,7 @@ test("skips emails the AI classifies as non-individual", async () => {
   const result = await main({
     inputData: { to: "info@example.com, jane.doe@example.com", from: "", cc: "" },
   });
-  assert.equal(calls.classify.length, 2);
+  assert.equal(calls.classify.length, 1, "single batched AI call");
   assert.equal(calls.createNotion.length, 1);
   assert.equal(calls.createNotion[0].inputs["properties|||Primary Email|||email"], "jane.doe@example.com");
   assert.match(result.page_ids, /^page-for-jane\.doe@example\.com$/);
@@ -119,7 +122,7 @@ test("substring blocklist drops support/billing/contact addresses before AI", as
     },
   });
   assert.equal(calls.classify.length, 1);
-  assert.equal(calls.classify[0].inputs.inputFields.Email, "real.person@vendor.com");
+  assert.equal(calls.classify[0].inputs.inputFields.Emails, "real.person@vendor.com");
   assert.match(result.page_ids, /real\.person/);
 });
 
