@@ -88,6 +88,7 @@ function dedupeExternal(to, from, cc) {
 }
 
 async function lookupExisting(zapier, emails) {
+  console.log(`Looking up ${emails.length} email(s):`, emails);
   const { data } = await zapier.runAction({
     appKey: "TableCLIAPI",
     actionType: "search",
@@ -104,6 +105,7 @@ async function lookupExisting(zapier, emails) {
     },
   });
 
+  console.log("find_record raw response:", JSON.stringify(data));
   const map = new Map();
   if (!data) return map;
   const rows = Array.isArray(data) ? data : [data];
@@ -148,7 +150,13 @@ async function classifyIsIndividual(zapier, email) {
     },
   });
 
-  return data?.["Is Individual"] === true;
+  console.log(`AI raw response for ${email}:`, JSON.stringify(data));
+  const verdict =
+    data?.["Is Individual"] ??
+    data?.is_individual ??
+    data?.outputs?.["Is Individual"] ??
+    data?.fields?.["Is Individual"];
+  return verdict === true || verdict === "true";
 }
 
 async function createNotionContact(zapier, connectionId, email) {
@@ -162,6 +170,7 @@ async function createNotionContact(zapier, connectionId, email) {
       "properties|||Primary Email|||email": email,
     },
   });
+  console.log(`Notion create raw response for ${email}:`, JSON.stringify(data));
   return data?.id ?? data?.page_id ?? data?.url?.split("-").pop() ?? null;
 }
 
