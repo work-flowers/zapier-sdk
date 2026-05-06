@@ -15,7 +15,7 @@ The end-state Zap has 3 steps: `start_subzap` → Code step → `return_subzap`.
 In the Code step:
 
 1. Toggle **`@zapier/zapier-sdk` (latest)** on so `zapier` and `connections` are auto-imported.
-2. **Add app connection → Notion**, account = `work.flowers | Dennis`, set Account ID Variable to `notion`.
+2. **Add app connection → Notion**, account = `work.flowers | Dennis`, set Account ID Variable to `notion` (overwrite the auto-generated one).
    (Zapier Tables and AI by Zapier are built-in and do not need connections.)
 3. **Input Data:**
 

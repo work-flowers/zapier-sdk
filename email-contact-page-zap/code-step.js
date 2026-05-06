@@ -1,3 +1,7 @@
+import { createZapierSdk } from "@zapier/zapier-sdk";
+
+const zapier = createZapierSdk();
+
 /**
  * [Sub-Zap] Retrieve Contact Page IDs for Email Addresses
  *
@@ -187,29 +191,35 @@ export default async function main({ inputData }) {
   }
 
   const notionConnectionId = connections["notion"];
-  const newlyCreatedPageIds = [];
 
-  for (const email of newEmails) {
-    try {
+  const results = await Promise.allSettled(
+    newEmails.map(async (email) => {
       const isIndividual = await classifyIsIndividual(zapier, email);
-      if (!isIndividual) continue;
+      if (!isIndividual) return null;
 
       const pageId = await createNotionContact(zapier, notionConnectionId, email);
       if (!pageId) {
         console.log(`No page id returned for ${email}`);
-        continue;
+        return null;
       }
-      newlyCreatedPageIds.push(pageId);
 
       try {
         await writeTableRow(zapier, email, pageId);
       } catch (err) {
         console.log(`Table row write failed for ${email}: ${err?.message || err}`);
       }
-    } catch (err) {
-      console.log(`Processing ${email} failed: ${err?.message || err}`);
+      return pageId;
+    })
+  );
+
+  const newlyCreatedPageIds = [];
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      if (r.value) newlyCreatedPageIds.push(r.value);
+    } else {
+      console.log(`Processing ${newEmails[i]} failed: ${r.reason?.message || r.reason}`);
     }
-  }
+  });
 
   return { page_ids: [...existingPageIds, ...newlyCreatedPageIds].join(",") };
 }

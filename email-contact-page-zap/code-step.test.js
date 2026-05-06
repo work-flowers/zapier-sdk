@@ -9,7 +9,7 @@ async function loadMain({ existingByEmail = {}, classifyAs = () => true, notionP
   const calls = { findRecord: [], createNotion: [], createTableRow: [], classify: [] };
   if (captureCalls) Object.assign(captureCalls, calls);
 
-  globalThis.zapier = {
+  globalThis.__zapierMock = {
     async runAction({ appKey, actionType, actionKey, inputs, connectionId }) {
       if (appKey === "TableCLIAPI" && actionKey === "find_record") {
         calls.findRecord.push(inputs);
@@ -135,8 +135,8 @@ test("caps new contact creation at 10 even when more new emails arrive", async (
 test("a single failing Notion call does not abort the batch", async () => {
   const calls = {};
   const main = await loadMain({ captureCalls: calls });
-  const originalRunAction = globalThis.zapier.runAction;
-  globalThis.zapier.runAction = async (args) => {
+  const originalRunAction = globalThis.__zapierMock.runAction;
+  globalThis.__zapierMock.runAction = async (args) => {
     if (
       args.appKey === "NotionCLIAPI" &&
       args.inputs["properties|||Primary Email|||email"] === "broken@vendor.com"
