@@ -19,22 +19,13 @@ const zapier = createZapierSdk();
  */
 
 const ZAPIER_TABLE_ID = "01JYEPSEARXB2Z6BJRCMFGXBC2";
+const BLOCKLIST_TABLE_ID = "01KQY6RB1TJ9X7BAYBRRRKB35S";
+const BLOCKLIST_PATTERN_FIELD = "data__f1";
+const BLOCKLIST_MATCH_TYPE_FIELD = "data__f2";
 const NOTION_DATA_SOURCE_ID = "21991b07-11ac-81a6-a894-000be4a09a67";
 const NEW_CONTACT_CAP = 10;
 
 const INTERNAL_DOMAIN = "@work.flowers";
-const EMAIL_BLOCKLIST = new Set([
-  "meeting.room@knoxxfoods.com",
-  "team_awesome@knoxxfoods.com",
-  "messaging-service@post.xero.com",
-]);
-const SUBSTRING_BLOCKLIST = [
-  "@zapiermail.com",
-  "@resource.calendar.google.com",
-  "support",
-  "billing",
-  "contact",
-];
 
 const TABLE_FIELD_EMAIL = "data__f3";
 const TABLE_FIELD_PAGE_ID = "data__f2";
@@ -73,18 +64,56 @@ function extractAddresses(field) {
     .filter(Boolean);
 }
 
-function isExternal(email) {
+function isExternal(email, { exact, substrings }) {
   if (email.endsWith(INTERNAL_DOMAIN)) return false;
-  if (EMAIL_BLOCKLIST.has(email)) return false;
-  for (const fragment of SUBSTRING_BLOCKLIST) {
+  if (exact.has(email)) return false;
+  for (const fragment of substrings) {
     if (email.includes(fragment)) return false;
   }
   return true;
 }
 
-function dedupeExternal(to, from, cc) {
+function dedupeExternal(to, from, cc, blocklist) {
   const all = [...extractAddresses(to), ...extractAddresses(from), ...extractAddresses(cc)];
-  return [...new Set(all.filter(isExternal))];
+  return [...new Set(all.filter((e) => isExternal(e, blocklist)))];
+}
+
+async function loadBlocklist(zapier) {
+  const { data } = await zapier.runAction({
+    appKey: "TableCLIAPI",
+    actionType: "search",
+    actionKey: "find_record",
+    inputs: {
+      table_id: BLOCKLIST_TABLE_ID,
+      filter_count: "1",
+      use_stored_order: false,
+      field_data_key: BLOCKLIST_MATCH_TYPE_FIELD,
+      operator: "in",
+      lookup_value: ["exact", "substring"],
+      _zap_search_success_on_miss: true,
+      _zap_search_multiple_results: "group",
+    },
+  });
+
+  const exact = new Set();
+  const substrings = [];
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  for (const row of rows) {
+    const recordData = row?.old?.data ?? row?.new?.data ?? row?.data;
+    if (!recordData) continue;
+    const pattern = recordData.f1;
+    const matchTypeRaw = recordData.f2;
+    const matchType =
+      typeof matchTypeRaw === "object" ? matchTypeRaw?.value : matchTypeRaw;
+    if (!pattern || !matchType) continue;
+    const normalised = String(pattern).toLowerCase();
+    if (matchType === "exact") exact.add(normalised);
+    else if (matchType === "substring") substrings.push(normalised);
+  }
+  console.log(
+    `Loaded blocklist: ${exact.size} exact, ${substrings.length} substring`
+  );
+  return { exact, substrings };
 }
 
 async function lookupExisting(zapier, emails) {
@@ -188,7 +217,8 @@ async function writeTableRow(zapier, email, pageId) {
 }
 
 export default async function main({ inputData }) {
-  const filtered = dedupeExternal(inputData.to, inputData.from, inputData.cc);
+  const blocklist = await loadBlocklist(zapier);
+  const filtered = dedupeExternal(inputData.to, inputData.from, inputData.cc, blocklist);
   if (filtered.length === 0) return { page_ids: "" };
 
   const existingMap = await lookupExisting(zapier, filtered);

@@ -3,14 +3,30 @@ import { test } from "node:test";
 
 const codeStepUrl = new URL("./code-step.js", import.meta.url);
 
-async function loadMain({ existingByEmail = {}, classifyAs = () => true, notionPageIds = {}, captureCalls } = {}) {
+const BLOCKLIST_TABLE_ID = "01KQY6RB1TJ9X7BAYBRRRKB35S";
+
+async function loadMain({
+  existingByEmail = {},
+  classifyAs = () => true,
+  notionPageIds = {},
+  blocklistRows = [],
+  captureCalls,
+} = {}) {
   globalThis.connections = { notion: "notion-conn" };
 
-  const calls = { findRecord: [], createNotion: [], createTableRow: [], classify: [] };
+  const calls = { findRecord: [], createNotion: [], createTableRow: [], classify: [], loadBlocklist: [] };
   if (captureCalls) Object.assign(captureCalls, calls);
 
   globalThis.__zapierMock = {
     async runAction({ appKey, actionType, actionKey, inputs, connectionId }) {
+      if (appKey === "TableCLIAPI" && actionKey === "find_record" && inputs.table_id === BLOCKLIST_TABLE_ID) {
+        calls.loadBlocklist.push(inputs);
+        return {
+          data: blocklistRows.map((row) => ({
+            old: { data: { f1: row.pattern, f2: { value: row.matchType, label: row.matchType } } },
+          })),
+        };
+      }
       if (appKey === "TableCLIAPI" && actionKey === "find_record") {
         calls.findRecord.push(inputs);
         const lookup = inputs.lookup_value;
@@ -110,7 +126,14 @@ test("skips emails the AI classifies as non-individual", async () => {
 
 test("substring blocklist drops support/billing/contact addresses before AI", async () => {
   const calls = {};
-  const main = await loadMain({ captureCalls: calls });
+  const main = await loadMain({
+    blocklistRows: [
+      { pattern: "support", matchType: "substring" },
+      { pattern: "billing", matchType: "substring" },
+      { pattern: "contact", matchType: "substring" },
+    ],
+    captureCalls: calls,
+  });
   const result = await main({
     inputData: {
       to: "support@vendor.com, billing@vendor.com, contact@vendor.com, real.person@vendor.com",
@@ -121,6 +144,22 @@ test("substring blocklist drops support/billing/contact addresses before AI", as
   assert.equal(calls.classify.length, 1);
   assert.equal(calls.classify[0].inputs.inputFields.Email, "real.person@vendor.com");
   assert.match(result.page_ids, /real\.person/);
+});
+
+test("exact-match blocklist row drops the listed address", async () => {
+  const calls = {};
+  const main = await loadMain({
+    blocklistRows: [{ pattern: "noisy@vendor.com", matchType: "exact" }],
+    classifyAs: () => true,
+    captureCalls: calls,
+  });
+  const result = await main({
+    inputData: { to: "noisy@vendor.com, jane@vendor.com", from: "", cc: "" },
+  });
+  assert.equal(calls.loadBlocklist.length, 1, "blocklist loaded once per run");
+  assert.equal(calls.classify.length, 1);
+  assert.equal(calls.classify[0].inputs.inputFields.Email, "jane@vendor.com");
+  assert.match(result.page_ids, /jane/);
 });
 
 test("caps new contact creation at 10 even when more new emails arrive", async () => {
