@@ -35,8 +35,9 @@ const TABLE_NEW_FIELD_PAGE_ID = "new__data__f2";
 const AI_PROVIDER_ID = "openai";
 const AI_MODEL_ID = "openai/gpt-5-mini";
 const AI_AUTHENTICATION_ID = "0"; // "Included in Plan" — no API key needed
-const CLASSIFIER_INSTRUCTIONS = `You are an email classifier. Given an email address, determine whether it belongs to a real individual person or a service/organisational account.Return only a raw JSON object with no markdown, explanation, or preamble:
-{"is_individual": true} or {"is_individual": false}Classify as false (service/organisational) if the address contains prefixes such as:
+const CLASSIFIER_INSTRUCTIONS = `You are an email classifier. The "Emails" input contains one or more email addresses, one per line. For EACH email address in the list, classify whether it belongs to a real individual person or a service/organisational account, and produce one output object per input email. Preserve the original casing of the email in the Email output field.
+
+Classify as false (service/organisational) if the address contains prefixes such as:
 
 Generic roles: info, contact, hello, support, help, admin, administrator
 No-reply patterns: noreply, no-reply, donotreply, do-not-reply
@@ -139,22 +140,18 @@ async function lookupExisting(zapier, emails) {
   if (!data) return map;
   const rows = Array.isArray(data) ? data : [data];
   for (const row of rows) {
-    const grouped = row?.["results[]old"] ?? row?.results ?? row;
-    if (!grouped) continue;
-    const emailField = grouped?.data?.f3;
-    const pageField = grouped?.data?.f2;
-    const emailList = Array.isArray(emailField) ? emailField : [emailField].filter(Boolean);
-    const pageList = Array.isArray(pageField) ? pageField : [pageField].filter(Boolean);
-    emailList.forEach((email, i) => {
-      if (!email) return;
-      const pageId = pageList[i] ?? pageList[0];
-      if (pageId) map.set(String(email).toLowerCase(), String(pageId));
-    });
+    const recordData = row?.old?.data ?? row?.new?.data ?? row?.data;
+    if (!recordData) continue;
+    const email = recordData.f3;
+    const pageId = recordData.f2;
+    if (email && pageId) {
+      map.set(String(email).toLowerCase(), String(pageId));
+    }
   }
   return map;
 }
 
-async function classifyIsIndividual(zapier, email) {
+async function classifyBatch(zapier, emails) {
   const { data } = await zapier.runAction({
     appKey: "AICLIAPI",
     actionType: "write",
@@ -164,28 +161,34 @@ async function classifyIsIndividual(zapier, email) {
       authentication_id: AI_AUTHENTICATION_ID,
       model_id: AI_MODEL_ID,
       instructions: CLASSIFIER_INSTRUCTIONS,
-      inputFields: { Email: email },
+      inputFields: { Emails: emails.join("\n") },
       outputSchema: {
+        Email: "The email address being classified, copied verbatim from the input.",
         "Is Individual":
           "Indicates whether the email address belongs to a real individual person (true) or a service/organisational account (false).",
-        Rationale:
-          "A text explanation of the reasoning behind the classification decision.",
+        Rationale: "Brief reasoning for the classification.",
       },
+      required_Email: true,
+      type_Email: "text",
       "required_Is Individual": true,
       "type_Is Individual": "boolean",
       required_Rationale: true,
       type_Rationale: "text",
-      isOutputArray: false,
+      isOutputArray: true,
     },
   });
 
-  console.log(`AI raw response for ${email}:`, JSON.stringify(data));
-  const verdict =
-    data?.["Is Individual"] ??
-    data?.is_individual ??
-    data?.outputs?.["Is Individual"] ??
-    data?.fields?.["Is Individual"];
-  return verdict === true || verdict === "true";
+  console.log("AI batch raw response:", JSON.stringify(data));
+  const items = Array.isArray(data) ? data : data ? [data] : [];
+  const individuals = new Set();
+  for (const item of items) {
+    const verdict = item?.["Is Individual"];
+    if (verdict === true || verdict === "true") {
+      const email = String(item?.Email ?? "").toLowerCase().trim();
+      if (email) individuals.add(email);
+    }
+  }
+  return individuals;
 }
 
 async function createNotionContact(zapier, connectionId, email) {
@@ -200,7 +203,8 @@ async function createNotionContact(zapier, connectionId, email) {
     },
   });
   console.log(`Notion create raw response for ${email}:`, JSON.stringify(data));
-  return data?.id ?? data?.page_id ?? data?.url?.split("-").pop() ?? null;
+  const root = Array.isArray(data) ? data[0] : data;
+  return root?.id ?? root?.page_id ?? null;
 }
 
 async function writeTableRow(zapier, email, pageId) {
@@ -231,11 +235,11 @@ export default async function main({ inputData }) {
 
   const notionConnectionId = connections["notion"];
 
-  const results = await Promise.allSettled(
-    newEmails.map(async (email) => {
-      const isIndividual = await classifyIsIndividual(zapier, email);
-      if (!isIndividual) return null;
+  const individuals = await classifyBatch(zapier, newEmails);
+  const toCreate = newEmails.filter((e) => individuals.has(e));
 
+  const results = await Promise.allSettled(
+    toCreate.map(async (email) => {
       const pageId = await createNotionContact(zapier, notionConnectionId, email);
       if (!pageId) {
         console.log(`No page id returned for ${email}`);
@@ -256,7 +260,7 @@ export default async function main({ inputData }) {
     if (r.status === "fulfilled") {
       if (r.value) newlyCreatedPageIds.push(r.value);
     } else {
-      console.log(`Processing ${newEmails[i]} failed: ${r.reason?.message || r.reason}`);
+      console.log(`Processing ${toCreate[i]} failed: ${r.reason?.message || r.reason}`);
     }
   });
 
