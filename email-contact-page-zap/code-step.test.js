@@ -46,12 +46,17 @@ async function loadMain({
       if (appKey === "AICLIAPI" && actionKey === "get_completion") {
         calls.classify.push({ inputs, connectionId });
         const emails = String(inputs.inputFields.Emails || "").split("\n").filter(Boolean);
+        // Live AI by Zapier wraps array outputs under `result`.
         return {
-          data: emails.map((email) => ({
-            Email: email,
-            "Is Individual": classifyAs(email),
-            Rationale: "test",
-          })),
+          data: [
+            {
+              result: emails.map((email) => ({
+                Email: email,
+                "Is Individual": classifyAs(email),
+                Rationale: "test",
+              })),
+            },
+          ],
         };
       }
       if (appKey === "NotionCLIAPI" && actionKey === "create_database_item") {
@@ -161,7 +166,7 @@ test("exact-match blocklist row drops the listed address", async () => {
   });
   assert.equal(calls.loadBlocklist.length, 1, "blocklist loaded once per run");
   assert.equal(calls.classify.length, 1);
-  assert.equal(calls.classify[0].inputs.inputFields.Email, "jane@vendor.com");
+  assert.equal(calls.classify[0].inputs.inputFields.Emails, "jane@vendor.com");
   assert.match(result.page_ids, /jane/);
 });
 
