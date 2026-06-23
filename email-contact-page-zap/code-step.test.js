@@ -11,6 +11,7 @@ async function loadMain({
   notionPageIds = {},
   blocklistRows = [],
   captureCalls,
+  aiResponseShape = "result-array",
 } = {}) {
   globalThis.connections = { notion: "notion-conn" };
 
@@ -46,18 +47,19 @@ async function loadMain({
       if (appKey === "AICLIAPI" && actionKey === "get_completion") {
         calls.classify.push({ inputs, connectionId });
         const emails = String(inputs.inputFields.Emails || "").split("\n").filter(Boolean);
-        // Live AI by Zapier wraps array outputs under `result`.
-        return {
-          data: [
-            {
-              result: emails.map((email) => ({
-                Email: email,
-                "Is Individual": classifyAs(email),
-                Rationale: "test",
-              })),
-            },
-          ],
-        };
+        const classified = emails.map((email) => ({
+          Email: email,
+          "Is Individual": classifyAs(email),
+          Rationale: "test",
+        }));
+        // Live AI by Zapier wraps array outputs under `result`, either as the
+        // array directly or nested as `result.items` next to `_agent_meta`.
+        if (aiResponseShape === "result-items") {
+          return {
+            data: [{ result: { items: classified }, _agent_meta: { execution_id: "exec-1" } }],
+          };
+        }
+        return { data: [{ result: classified }] };
       }
       if (appKey === "NotionCLIAPI" && actionKey === "create_database_item") {
         calls.createNotion.push({ inputs, connectionId });
@@ -130,6 +132,25 @@ test("skips emails the AI classifies as non-individual", async () => {
   assert.equal(calls.createNotion.length, 1);
   assert.equal(calls.createNotion[0].inputs["properties|||Primary Email|||email"], "jane.doe@example.com");
   assert.match(result.page_ids, /^page-for-jane\.doe@example\.com$/);
+});
+
+test("handles AI output nested under result.items (live shape)", async () => {
+  const calls = {};
+  const main = await loadMain({
+    aiResponseShape: "result-items",
+    classifyAs: () => true,
+    notionPageIds: { "donna.tedesco@zapier.com": "page-donna" },
+    captureCalls: calls,
+  });
+  const result = await main({
+    inputData: { to: "donna.tedesco@zapier.com", from: "", cc: "" },
+  });
+  assert.equal(calls.createNotion.length, 1);
+  assert.equal(
+    calls.createNotion[0].inputs["properties|||Primary Email|||email"],
+    "donna.tedesco@zapier.com"
+  );
+  assert.equal(result.page_ids, "page-donna");
 });
 
 test("substring blocklist drops support/billing/contact addresses before AI", async () => {

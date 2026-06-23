@@ -180,11 +180,16 @@ async function classifyBatch(zapier, emails) {
 
   console.log("AI batch raw response:", JSON.stringify(data));
   const outer = Array.isArray(data) ? data : data ? [data] : [];
-  // AI by Zapier wraps array outputs under `result` when isOutputArray=true,
-  // so flatten one level if present.
-  const items = outer.flatMap((entry) =>
-    Array.isArray(entry?.result) ? entry.result : [entry]
-  );
+  // AI by Zapier wraps array outputs under `result` when isOutputArray=true.
+  // Observed shapes: `result` is the array itself, or `result.items` holds it
+  // (alongside an `_agent_meta` sibling). Unwrap whichever is present.
+  const items = outer.flatMap((entry) => {
+    const result = entry?.result;
+    if (Array.isArray(result)) return result;
+    if (Array.isArray(result?.items)) return result.items;
+    if (Array.isArray(entry?.items)) return entry.items;
+    return [entry];
+  });
   const individuals = new Set();
   for (const item of items) {
     const verdict = item?.["Is Individual"];
