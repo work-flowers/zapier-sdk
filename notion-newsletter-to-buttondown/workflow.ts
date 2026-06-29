@@ -276,8 +276,7 @@ const workflow = defineDurable({
         };
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
-        // NOTE: update_scheduled_email doesn't expose canonical_url; it's set at
-        // create time and persists, so we don't re-send it on updates.
+        if (canonicalUrl) inputs.canonical_url = canonicalUrl;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
