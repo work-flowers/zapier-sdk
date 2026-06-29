@@ -202,6 +202,7 @@ const workflow = defineDurable({
         coverUrl: cover ? cover.external?.url || cover.file?.url || null : null,
         existingButtondownId:
           plainText(props["Buttondown ID"]?.rich_text).trim() || null,
+        blogPostId: (props["Blog post"]?.relation || [])[0]?.id || null,
       };
     });
 
@@ -226,6 +227,25 @@ const workflow = defineDurable({
     // 3. Convert Notion pseudo-tags (callouts, columns, ...) to email markdown.
     const body = notionMarkdownToEmail(markdown);
 
+    // 3b. Pull the canonical URL from the related Blog post's "Published URL"
+    // (a Notion formula property) so the Buttondown archive points at the blog.
+    const canonicalUrl = await ctx.step("fetch-blog-canonical-url", async () => {
+      if (!page.blogPostId) return null;
+      const res = await sdk.fetch(`${NOTION_API}/pages/${page.blogPostId}`, {
+        connection: NOTION_CONNECTION,
+        headers: { "Notion-Version": NOTION_VERSION },
+      });
+      if (!res.ok) {
+        throw new Error(
+          `Notion get blog page failed (${res.status}): ${await res.text()}`,
+        );
+      }
+      const b: any = await res.json();
+      const p: any = b.properties?.["Published URL"];
+      const url = p?.formula?.string || p?.url || plainText(p?.rich_text) || "";
+      return url.trim() || null;
+    });
+
     // Side-effect-free preview path (for testing the conversion end to end).
     if (flags.previewOnly) {
       return {
@@ -234,6 +254,7 @@ const workflow = defineDurable({
         subject: page.subject,
         sendDate: page.sendDate,
         coverUrl: page.coverUrl,
+        canonicalUrl,
         existingButtondownId: page.existingButtondownId,
         bodyLength: body.length,
         bodyPreview: body.slice(0, 1500),
@@ -255,6 +276,8 @@ const workflow = defineDurable({
         };
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
+        // NOTE: update_scheduled_email doesn't expose canonical_url; it's set at
+        // create time and persists, so we don't re-send it on updates.
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -272,6 +295,7 @@ const workflow = defineDurable({
         };
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
+        if (canonicalUrl) inputs.canonical_url = canonicalUrl;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -335,6 +359,8 @@ const workflow = defineDurable({
       buttondownUrl,
       buttondownStatus,
       notionStatus,
+      canonicalUrl,
+      buttondownCanonicalUrl: emailData?.canonical_url ?? null,
       scheduled: willSchedule,
     };
   },
