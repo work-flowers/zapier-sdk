@@ -227,10 +227,10 @@ const workflow = defineDurable({
     // 3. Convert Notion pseudo-tags (callouts, columns, ...) to email markdown.
     const body = notionMarkdownToEmail(markdown);
 
-    // 3b. Pull the canonical URL from the related Blog post's "Published URL"
-    // (a Notion formula property) so the Buttondown archive points at the blog.
-    const canonicalUrl = await ctx.step("fetch-blog-canonical-url", async () => {
-      if (!page.blogPostId) return null;
+    // 3b. Pull metadata from the related Blog post: the canonical URL (its
+    // "Published URL" formula) and the "Description" rich_text, for the email.
+    const blogMeta = await ctx.step("fetch-blog-metadata", async () => {
+      if (!page.blogPostId) return { canonicalUrl: null, description: null };
       const res = await sdk.fetch(`${NOTION_API}/pages/${page.blogPostId}`, {
         connection: NOTION_CONNECTION,
         headers: { "Notion-Version": NOTION_VERSION },
@@ -241,10 +241,16 @@ const workflow = defineDurable({
         );
       }
       const b: any = await res.json();
-      const p: any = b.properties?.["Published URL"];
-      const url = p?.formula?.string || p?.url || plainText(p?.rich_text) || "";
-      return url.trim() || null;
+      const pub: any = b.properties?.["Published URL"];
+      const canonicalUrl =
+        (pub?.formula?.string || pub?.url || plainText(pub?.rich_text) || "")
+          .trim() || null;
+      const description =
+        plainText(b.properties?.["Description"]?.rich_text).trim() || null;
+      return { canonicalUrl, description };
     });
+    const canonicalUrl = blogMeta.canonicalUrl;
+    const description = blogMeta.description;
 
     // Side-effect-free preview path (for testing the conversion end to end).
     if (flags.previewOnly) {
@@ -255,6 +261,7 @@ const workflow = defineDurable({
         sendDate: page.sendDate,
         coverUrl: page.coverUrl,
         canonicalUrl,
+        description,
         existingButtondownId: page.existingButtondownId,
         bodyLength: body.length,
         bodyPreview: body.slice(0, 1500),
@@ -277,6 +284,7 @@ const workflow = defineDurable({
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
         if (canonicalUrl) inputs.canonical_url = canonicalUrl;
+        if (description) inputs.description = description;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -295,6 +303,7 @@ const workflow = defineDurable({
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
         if (canonicalUrl) inputs.canonical_url = canonicalUrl;
+        if (description) inputs.description = description;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -360,6 +369,8 @@ const workflow = defineDurable({
       notionStatus,
       canonicalUrl,
       buttondownCanonicalUrl: emailData?.canonical_url ?? null,
+      description,
+      buttondownDescription: emailData?.description ?? null,
       scheduled: willSchedule,
     };
   },
