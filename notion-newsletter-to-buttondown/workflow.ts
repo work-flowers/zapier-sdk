@@ -14,6 +14,11 @@ const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 const BUTTONDOWN_EMAIL_URL = "https://buttondown.com/emails/";
 
+// Zapier Table that logs the Notion page id -> Buttondown email id mapping.
+// Columns: "Page ID" (string), "Buttondown Email ID" (string), "Created at" (datetime).
+// Tables auth is automatic (no connection needed), so this works from the durable.
+const ZAPIER_TABLE_ID = "01KNJN2MSBAJVXRME6M1Y65F5B";
+
 // Input arrives from a Catch Hook (the Notion "Send to Buttondown" button
 // posts the page). The shape varies, so we accept anything and extract the
 // page id ourselves; everything else is fetched fresh from Notion.
@@ -227,10 +232,10 @@ const workflow = defineDurable({
     // 3. Convert Notion pseudo-tags (callouts, columns, ...) to email markdown.
     const body = notionMarkdownToEmail(markdown);
 
-    // 3b. Pull the canonical URL from the related Blog post's "Published URL"
-    // (a Notion formula property) so the Buttondown archive points at the blog.
-    const canonicalUrl = await ctx.step("fetch-blog-canonical-url", async () => {
-      if (!page.blogPostId) return null;
+    // 3b. Pull metadata from the related Blog post: the canonical URL (its
+    // "Published URL" formula) and the "Description" rich_text, for the email.
+    const blogMeta = await ctx.step("fetch-blog-metadata", async () => {
+      if (!page.blogPostId) return { canonicalUrl: null, description: null };
       const res = await sdk.fetch(`${NOTION_API}/pages/${page.blogPostId}`, {
         connection: NOTION_CONNECTION,
         headers: { "Notion-Version": NOTION_VERSION },
@@ -241,10 +246,16 @@ const workflow = defineDurable({
         );
       }
       const b: any = await res.json();
-      const p: any = b.properties?.["Published URL"];
-      const url = p?.formula?.string || p?.url || plainText(p?.rich_text) || "";
-      return url.trim() || null;
+      const pub: any = b.properties?.["Published URL"];
+      const canonicalUrl =
+        (pub?.formula?.string || pub?.url || plainText(pub?.rich_text) || "")
+          .trim() || null;
+      const description =
+        plainText(b.properties?.["Description"]?.rich_text).trim() || null;
+      return { canonicalUrl, description };
     });
+    const canonicalUrl = blogMeta.canonicalUrl;
+    const description = blogMeta.description;
 
     // Side-effect-free preview path (for testing the conversion end to end).
     if (flags.previewOnly) {
@@ -255,6 +266,7 @@ const workflow = defineDurable({
         sendDate: page.sendDate,
         coverUrl: page.coverUrl,
         canonicalUrl,
+        description,
         existingButtondownId: page.existingButtondownId,
         bodyLength: body.length,
         bodyPreview: body.slice(0, 1500),
@@ -276,8 +288,8 @@ const workflow = defineDurable({
         };
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
-        // NOTE: update_scheduled_email doesn't expose canonical_url; it's set at
-        // create time and persists, so we don't re-send it on updates.
+        if (canonicalUrl) inputs.canonical_url = canonicalUrl;
+        if (description) inputs.description = description;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -296,6 +308,7 @@ const workflow = defineDurable({
         if (page.coverUrl) inputs.image_url = page.coverUrl;
         if (willSchedule) inputs.publish_date = page.sendDate;
         if (canonicalUrl) inputs.canonical_url = canonicalUrl;
+        if (description) inputs.description = description;
         return sdk.runAction({
           appKey: BUTTONDOWN_APP_KEY,
           actionType: "write",
@@ -351,6 +364,49 @@ const workflow = defineDurable({
       return { ok: true };
     });
 
+    // 6. Log the page id -> Buttondown email id mapping to a Zapier Table.
+    // Best-effort: the email + Notion write above are the real work, so a Tables
+    // hiccup must not fail the run. Keyed on Page ID so re-runs/updates don't pile
+    // up duplicate rows — create on first sync, refresh the email id thereafter.
+    const tableLog = await ctx.step("log-to-zapier-table", async () => {
+      try {
+        const existing = await sdk.listTableRecords({
+          table: ZAPIER_TABLE_ID,
+          keyMode: "names",
+          filters: [{ fieldKey: "Page ID", operator: "exact", value: pageId }],
+          pageSize: 1,
+        });
+        const found = existing.data?.[0];
+        if (found) {
+          if (found.data?.["Buttondown Email ID"] !== buttondownId) {
+            await sdk.updateTableRecords({
+              table: ZAPIER_TABLE_ID,
+              keyMode: "names",
+              records: [{ id: found.id, data: { "Buttondown Email ID": buttondownId } }],
+            });
+            return { logged: "updated" as const, recordId: found.id };
+          }
+          return { logged: "unchanged" as const, recordId: found.id };
+        }
+        const created = await sdk.createTableRecords({
+          table: ZAPIER_TABLE_ID,
+          keyMode: "names",
+          records: [
+            {
+              data: {
+                "Page ID": pageId,
+                "Buttondown Email ID": buttondownId,
+                "Created at": new Date().toISOString(),
+              },
+            },
+          ],
+        });
+        return { logged: "created" as const, recordId: created.data?.[0]?.id ?? null };
+      } catch (err) {
+        return { logged: "error" as const, error: String((err as Error)?.message ?? err) };
+      }
+    });
+
     return {
       pageId,
       mode,
@@ -361,7 +417,10 @@ const workflow = defineDurable({
       notionStatus,
       canonicalUrl,
       buttondownCanonicalUrl: emailData?.canonical_url ?? null,
+      description,
+      buttondownDescription: emailData?.description ?? null,
       scheduled: willSchedule,
+      tableLog,
     };
   },
 });
