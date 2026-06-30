@@ -14,6 +14,11 @@ const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 const BUTTONDOWN_EMAIL_URL = "https://buttondown.com/emails/";
 
+// Zapier Table that logs the Notion page id -> Buttondown email id mapping.
+// Columns: "Page ID" (string), "Buttondown Email ID" (string), "Created at" (datetime).
+// Tables auth is automatic (no connection needed), so this works from the durable.
+const ZAPIER_TABLE_ID = "01KNJN2MSBAJVXRME6M1Y65F5B";
+
 // Input arrives from a Catch Hook (the Notion "Send to Buttondown" button
 // posts the page). The shape varies, so we accept anything and extract the
 // page id ourselves; everything else is fetched fresh from Notion.
@@ -359,6 +364,49 @@ const workflow = defineDurable({
       return { ok: true };
     });
 
+    // 6. Log the page id -> Buttondown email id mapping to a Zapier Table.
+    // Best-effort: the email + Notion write above are the real work, so a Tables
+    // hiccup must not fail the run. Keyed on Page ID so re-runs/updates don't pile
+    // up duplicate rows — create on first sync, refresh the email id thereafter.
+    const tableLog = await ctx.step("log-to-zapier-table", async () => {
+      try {
+        const existing = await sdk.listTableRecords({
+          table: ZAPIER_TABLE_ID,
+          keyMode: "names",
+          filters: [{ fieldKey: "Page ID", operator: "exact", value: pageId }],
+          pageSize: 1,
+        });
+        const found = existing.data?.[0];
+        if (found) {
+          if (found.data?.["Buttondown Email ID"] !== buttondownId) {
+            await sdk.updateTableRecords({
+              table: ZAPIER_TABLE_ID,
+              keyMode: "names",
+              records: [{ id: found.id, data: { "Buttondown Email ID": buttondownId } }],
+            });
+            return { logged: "updated" as const, recordId: found.id };
+          }
+          return { logged: "unchanged" as const, recordId: found.id };
+        }
+        const created = await sdk.createTableRecords({
+          table: ZAPIER_TABLE_ID,
+          keyMode: "names",
+          records: [
+            {
+              data: {
+                "Page ID": pageId,
+                "Buttondown Email ID": buttondownId,
+                "Created at": new Date().toISOString(),
+              },
+            },
+          ],
+        });
+        return { logged: "created" as const, recordId: created.data?.[0]?.id ?? null };
+      } catch (err) {
+        return { logged: "error" as const, error: String((err as Error)?.message ?? err) };
+      }
+    });
+
     return {
       pageId,
       mode,
@@ -372,6 +420,7 @@ const workflow = defineDurable({
       description,
       buttondownDescription: emailData?.description ?? null,
       scheduled: willSchedule,
+      tableLog,
     };
   },
 });
