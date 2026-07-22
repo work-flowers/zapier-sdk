@@ -18,7 +18,11 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      the enriched email to Secondary Email.
    - **Profile pic** (Path C): if the enrichment returned a profile pic URL,
      updates the Notion page icon and cover via `sdk.fetch`.
-4. **Return** — `{ pageId, enriched, emailPath, iconUpdated }`.
+4. **Add outcome comment** — Posts a brief comment on the triggering Notion
+   page stating the outcome of the run. If the webhook was triggered by a
+   button click and the payload included the user's Notion ID, the comment
+   mentions that user for better visibility.
+5. **Return** — `{ pageId, enriched, emailPath, iconUpdated }`.
 
 ## Connections
 
@@ -26,6 +30,9 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 |---|---|---|
 | `notion_wf` | `NotionCLIAPI` | Notion (work.flowers \| Dennis) |
 | `enrichment` | `App243984CLIAPI` | Person enrichment app (zapier-ninjapear) |
+
+The Notion connection must have the **Insert comments** capability enabled so
+the workflow can post outcome comments on the triggering page.
 
 ## Trigger configuration
 
@@ -40,7 +47,9 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 
 The Notion database automation on the Contacts DB sends a webhook to the
 Zapier webhook URL when a contact is created or updated. The trigger payload
-has the shape `{ data: { id, properties: { ... } } }`.
+has the shape `{ data: { id, properties: { ... } } }`. When triggered by a
+button click, the payload may also include the user's Notion ID under
+`data.created_by.id`, `data.last_edited_by.id`, or `data.triggered_by.id`.
 
 ## Test
 
@@ -83,6 +92,10 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
   on a specific action key.
 - **Enrichment via `sdk.runAction`** — uses the Zapier SDK action interface
   rather than raw API calls, following the repo's existing Durable patterns.
+- **Outcome comment** — after every run, posts a brief comment on the
+  triggering Notion page stating the outcome. If the webhook was triggered by a
+  button click and the payload included the user's Notion ID, the comment
+  mentions that user.
 
 ## References
 

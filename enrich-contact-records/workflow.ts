@@ -30,7 +30,7 @@ function normalizeInput(rawInput: unknown): unknown {
   let v: unknown = rawInput;
   for (let i = 0; i < 4 && typeof v === "string"; i++) {
     const t = v.trim();
-    if (t[0] !== "{"" && t[0] !== "[" && t[0] !== '"') break;
+    if (t[0] !== "{" && t[0] !== "[" && t[0] !== '"') break;
     try {
       v = JSON.parse(t);
     } catch {
@@ -70,6 +70,9 @@ interface ContactData {
   linkedinUrl: string;
   secondaryEmails: string[];
   primaryPhone: string;
+  /** Notion user ID of whoever triggered the webhook (e.g. by clicking a
+   *  button on the page). Null when the trigger was not a user action. */
+  triggeredById: string | null;
 }
 
 function extractContactData(raw: unknown): ContactData {
@@ -94,6 +97,20 @@ function extractContactData(raw: unknown): ContactData {
     .filter(Boolean)
     .join("");
 
+  // Extract the Notion user ID of whoever triggered the webhook (e.g. by
+  // clicking a button on the page). Notion may surface this under several
+  // keys depending on the automation type.
+  const triggeredById = firstString(
+    data?.triggered_by?.id,
+    data?.triggered_by,
+    data?.created_by?.id,
+    data?.last_edited_by?.id,
+    data?.user_id,
+    data?.userId,
+    o?.triggered_by?.id,
+    o?.triggered_by,
+  );
+
   return {
     pageId,
     firstName: plainText(props["First Name"]?.rich_text).trim(),
@@ -105,6 +122,7 @@ function extractContactData(raw: unknown): ContactData {
       .map((s: any) => s?.name)
       .filter(Boolean),
     primaryPhone: props["Primary Phone"]?.phone_number ?? "",
+    triggeredById,
   };
 }
 
@@ -144,6 +162,10 @@ function extractEnriched(enriched: any): EnrichedData {
   };
 }
 
+// --- Durable context type --------------------------------------------------
+
+type DurableCtx = Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0];
+
 // --- Inline sub-zap: update contact record ---------------------------------
 //
 // Replaces the "[Sub-Zap] Update Contact Record" Zap. The original sub-zap
@@ -156,7 +178,7 @@ function extractEnriched(enriched: any): EnrichedData {
 // In the Durable these collapse to sequential if/else blocks.
 
 async function updateContactRecord(
-  ctx: Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0],
+  ctx: DurableCtx,
   contact: ContactData,
   enriched: EnrichedData,
 ): Promise<{ emailPath: string; iconUpdated: boolean }> {
@@ -257,6 +279,86 @@ async function updateContactRecord(
   return { emailPath, iconUpdated };
 }
 
+// --- Add outcome comment to the triggering page ----------------------------
+//
+// After every run (success or skip), posts a brief comment on the Notion
+// page that triggered the webhook. If the webhook was triggered by a button
+// click and the payload included the user's Notion ID, the comment mentions
+// that user for better visibility.
+
+interface WorkflowResult {
+  pageId: string;
+  enriched: boolean;
+  reason?: string;
+  emailPath?: string;
+  iconUpdated?: boolean;
+}
+
+async function addOutcomeComment(
+  ctx: DurableCtx,
+  contact: ContactData,
+  result: WorkflowResult,
+): Promise<void> {
+  // Build a brief summary of the outcome.
+  let summary: string;
+  if (result.enriched) {
+    const changes: string[] = [];
+    if (result.emailPath === "same-or-no-prior") changes.push("primary email");
+    if (result.emailPath === "new-email") changes.push("secondary email");
+    if (result.iconUpdated) changes.push("profile icon");
+    changes.push("contact details");
+    summary = `Contact enriched and updated: ${changes.join(", ")}.`;
+  } else {
+    summary = `Enrichment skipped: ${result.reason ?? "no data found"}.`;
+  }
+
+  // Build the rich_text array. If we know who triggered the run, mention
+  // them at the start of the comment.
+  const richText: any[] = [];
+
+  if (contact.triggeredById) {
+    richText.push({
+      type: "mention",
+      mention: { type: "user", user: { id: contact.triggeredById } },
+    });
+    richText.push({
+      type: "text",
+      text: { content: " " + summary },
+    });
+  } else {
+    richText.push({
+      type: "text",
+      text: { content: summary },
+    });
+  }
+
+  await ctx.step("add-outcome-comment", async () => {
+    try {
+      const res = await sdk.fetch(`${NOTION_API}/comments`, {
+        connection: NOTION_CONNECTION,
+        method: "POST",
+        headers: {
+          "Notion-Version": NOTION_VERSION,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          parent: { page_id: contact.pageId },
+          rich_text: richText,
+        }),
+      });
+      if (!res.ok) {
+        console.log(
+          `Failed to add outcome comment (${res.status}): ${await res.text()}`,
+        );
+      }
+    } catch (err) {
+      console.log(
+        `Failed to add outcome comment: ${String((err as Error)?.message ?? err)}`,
+      );
+    }
+  });
+}
+
 // --- Workflow --------------------------------------------------------------
 
 const workflow = defineDurable<unknown, unknown>(
@@ -297,25 +399,33 @@ const workflow = defineDurable<unknown, unknown>(
       console.log(`Enrichment failed for ${contact.pageId}: ${enrichmentError}`);
     }
 
+    let result: WorkflowResult;
+
     if (!enriched) {
-      return {
+      result = {
         pageId: contact.pageId,
         enriched: false,
         reason: enrichmentError
           ? `enrichment error: ${enrichmentError}`
           : "no result from enrichment",
       };
+    } else {
+      // 2. Update the contact record (inline sub-zap logic).
+      const enrichedData = extractEnriched(enriched);
+      const updateResult = await updateContactRecord(ctx, contact, enrichedData);
+      result = {
+        pageId: contact.pageId,
+        enriched: true,
+        ...updateResult,
+      };
     }
 
-    // 2. Update the contact record (inline sub-zap logic).
-    const enrichedData = extractEnriched(enriched);
-    const updateResult = await updateContactRecord(ctx, contact, enrichedData);
+    // 3. Add a brief comment to the triggering page stating the outcome.
+    //    If the webhook was triggered by a button click and the payload
+    //    included a user ID, the comment mentions that user.
+    await addOutcomeComment(ctx, contact, result);
 
-    return {
-      pageId: contact.pageId,
-      enriched: true,
-      ...updateResult,
-    };
+    return result;
   },
 );
 
