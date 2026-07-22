@@ -98,17 +98,20 @@ function extractContactData(raw: unknown): ContactData {
     .join("");
 
   // Extract the Notion user ID of whoever triggered the webhook (e.g. by
-  // clicking a button on the page). Notion may surface this under several
-  // keys depending on the automation type.
+  // clicking a button on the page). Notion DB automations put the acting
+  // user in source.user_id; page-level created_by/last_edited_by can be a
+  // bot (e.g. the automation that created the page), so they come last.
   const triggeredById = firstString(
+    o?.source?.user_id,
+    data?.source?.user_id,
     data?.triggered_by?.id,
     data?.triggered_by,
-    data?.created_by?.id,
-    data?.last_edited_by?.id,
-    data?.user_id,
-    data?.userId,
     o?.triggered_by?.id,
     o?.triggered_by,
+    data?.last_edited_by?.id,
+    data?.created_by?.id,
+    data?.user_id,
+    data?.userId,
   );
 
   return {
