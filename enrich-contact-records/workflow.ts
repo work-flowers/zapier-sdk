@@ -98,17 +98,20 @@ function extractContactData(raw: unknown): ContactData {
     .join("");
 
   // Extract the Notion user ID of whoever triggered the webhook (e.g. by
-  // clicking a button on the page). Notion may surface this under several
-  // keys depending on the automation type.
+  // clicking a button on the page). Notion DB automations put the acting
+  // user in source.user_id; page-level created_by/last_edited_by can be a
+  // bot (e.g. the automation that created the page), so they come last.
   const triggeredById = firstString(
+    o?.source?.user_id,
+    data?.source?.user_id,
     data?.triggered_by?.id,
     data?.triggered_by,
-    data?.created_by?.id,
-    data?.last_edited_by?.id,
-    data?.user_id,
-    data?.userId,
     o?.triggered_by?.id,
     o?.triggered_by,
+    data?.last_edited_by?.id,
+    data?.created_by?.id,
+    data?.user_id,
+    data?.userId,
   );
 
   return {
@@ -183,7 +186,6 @@ async function updateContactRecord(
   enriched: EnrichedData,
 ): Promise<{ emailPath: string; iconUpdated: boolean }> {
   const fullName = `${enriched.firstName || contact.firstName} ${enriched.lastName || contact.lastName}`.trim();
-  const now = new Date().toISOString();
 
   // --- Determine email path (mirrors the sub-zap's Path D / Path G logic) ---
   const hasNewEmail = Boolean(enriched.newEmail);
@@ -210,7 +212,6 @@ async function updateContactRecord(
     "properties|||City|||select": enriched.city,
     "properties|||Twitter|||url": "",
     use_zapier_datetime_fields: true,
-    "properties|||Last Enriched|||date__start": now,
   };
 
   let emailPath: string;
@@ -234,13 +235,18 @@ async function updateContactRecord(
   }
 
   // --- Update the Notion contact record ---
+  // new Date() is non-deterministic, so the Last Enriched timestamp must be
+  // computed inside the step (GUARDED mode forbids it at workflow level).
   await ctx.step("update-contact-record", async () =>
     sdk.runAction({
       appKey: NOTION_APP_KEY,
       actionType: "write",
       actionKey: "update_database_item",
       connection: NOTION_CONNECTION,
-      inputs: updateInputs,
+      inputs: {
+        ...updateInputs,
+        "properties|||Last Enriched|||date__start": new Date().toISOString(),
+      },
     }),
   );
 
