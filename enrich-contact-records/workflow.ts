@@ -183,7 +183,6 @@ async function updateContactRecord(
   enriched: EnrichedData,
 ): Promise<{ emailPath: string; iconUpdated: boolean }> {
   const fullName = `${enriched.firstName || contact.firstName} ${enriched.lastName || contact.lastName}`.trim();
-  const now = new Date().toISOString();
 
   // --- Determine email path (mirrors the sub-zap's Path D / Path G logic) ---
   const hasNewEmail = Boolean(enriched.newEmail);
@@ -210,7 +209,6 @@ async function updateContactRecord(
     "properties|||City|||select": enriched.city,
     "properties|||Twitter|||url": "",
     use_zapier_datetime_fields: true,
-    "properties|||Last Enriched|||date__start": now,
   };
 
   let emailPath: string;
@@ -234,13 +232,18 @@ async function updateContactRecord(
   }
 
   // --- Update the Notion contact record ---
+  // new Date() is non-deterministic, so the Last Enriched timestamp must be
+  // computed inside the step (GUARDED mode forbids it at workflow level).
   await ctx.step("update-contact-record", async () =>
     sdk.runAction({
       appKey: NOTION_APP_KEY,
       actionType: "write",
       actionKey: "update_database_item",
       connection: NOTION_CONNECTION,
-      inputs: updateInputs,
+      inputs: {
+        ...updateInputs,
+        "properties|||Last Enriched|||date__start": new Date().toISOString(),
+      },
     }),
   );
 
