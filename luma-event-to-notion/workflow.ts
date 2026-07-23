@@ -67,16 +67,17 @@ interface LumaEvent {
   type: "In-person" | "Virtual";
 }
 
-function extractEvent(raw: unknown): LumaEvent {
+function extractEvent(raw: unknown): LumaEvent | null {
   const o = (raw ?? {}) as Record<string, any>;
   // event_* triggers send the event at the top level; guest triggers nest it
   // under `event`. Support both, plus a `data` wrapper just in case.
   const ev = (o.event ?? o.data?.event ?? o.data ?? o) as Record<string, any>;
   const id = firstString(ev.id, ev.event_id, ev.api_id);
   if (!id) {
-    throw new Error(
-      "No event id in Luma event payload: " + JSON.stringify(raw).slice(0, 300),
-    );
+    // Empty/malformed payload (e.g. a manual "test" run from the Zapier UI,
+    // which sends {}). Return null so the workflow exits as a clean no-op
+    // rather than a failed run.
+    return null;
   }
   // In-person if the event carries a physical location; otherwise Virtual.
   const hasAddress =
@@ -150,6 +151,10 @@ const workflow = defineDurable<unknown, unknown>(
   "luma-event-to-notion",
   async (ctx, rawInput) => {
     const ev = extractEvent(InputSchema.parse(normalizeInput(rawInput)));
+    if (!ev) {
+      console.log("skipping: no event id in payload (empty/test delivery)");
+      return { skipped: true, reason: "no event id in payload" };
+    }
 
     // 1. Resolve the Event page id via the free Zapier Table first.
     const tableHit = await ctx.step("find-event-in-table", async () =>

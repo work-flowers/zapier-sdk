@@ -74,14 +74,10 @@ interface LumaEvent {
   type: "In-person" | "Virtual";
 }
 
-function extractEvent(o: Record<string, any>): LumaEvent {
+function extractEvent(o: Record<string, any>): LumaEvent | null {
   const ev = (o.event ?? o) as Record<string, any>;
   const id = firstString(ev.id, ev.event_id, ev.api_id);
-  if (!id) {
-    throw new Error(
-      "No event id in Luma guest payload: " + JSON.stringify(o).slice(0, 300),
-    );
-  }
+  if (!id) return null;
   const hasAddress =
     firstString(ev.address) !== null ||
     ev.latitude != null ||
@@ -111,15 +107,16 @@ interface Guest {
   event: LumaEvent;
 }
 
-function extractGuest(raw: unknown): Guest {
+function extractGuest(raw: unknown): Guest | null {
   const o = (raw ?? {}) as Record<string, any>;
   const g = (o.guest ?? o.data ?? o) as Record<string, any>;
   const email = firstString(g.email, g.attendee_email, g.attendee?.email);
-  if (!email) {
-    throw new Error(
-      "No guest email in Luma payload: " + JSON.stringify(raw).slice(0, 300),
-    );
-  }
+  // Empty/malformed payload (e.g. a manual "test" run from the Zapier UI) or a
+  // guest with no resolvable event — return null so the workflow exits as a
+  // clean no-op rather than a failed run.
+  if (!email) return null;
+  const event = extractEvent(g);
+  if (!event) return null;
   const tickets = Array.isArray(g.tickets) ? g.tickets : [];
   const checkedIn =
     firstString(g.checked_in_at) !== null ||
@@ -133,7 +130,7 @@ function extractGuest(raw: unknown): Guest {
     approvalStatus: firstString(g.approval_status, g.status),
     registeredAt: firstString(g.registered_at, g.registeredAt, g.created_at),
     checkedIn,
-    event: extractEvent(g),
+    event,
   };
 }
 
@@ -165,6 +162,10 @@ const workflow = defineDurable<unknown, unknown>(
   "luma-guest-to-event-attendance",
   async (ctx, rawInput) => {
     const guest = extractGuest(InputSchema.parse(normalizeInput(rawInput)));
+    if (!guest) {
+      console.log("skipping: no guest email/event in payload (empty/test delivery)");
+      return { skipped: true, reason: "no guest email or event in payload" };
+    }
     const ev = guest.event;
 
     // 1. Resolve the Event: free Table lookup -> Notion search -> create.
