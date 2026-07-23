@@ -20,9 +20,15 @@ Idempotent upsert keyed on the Luma event id:
    back to a Notion search on the `Luma ID` property.
 4. **Create or update** the Notion Event: `Event` (title), `Luma ID`, `Type`,
    `Date` (start/end datetime), `Event page` (url).
-5. **Set the page cover** from `event.cover_url` via a best-effort
+5. **Sync the page body** from Luma's `description_markdown` (rendered as Notion
+   blocks via `content` + `content_format: markdown`). Luma owns the body — on
+   update, existing blocks are cleared first (`clearPageBody` deletes the page's
+   children) so the description is *replaced*, not appended. The body is only
+   touched when the payload carries a description; **manual edits to the event
+   page body will be overwritten** on the next `event_updated`.
+6. **Set the page cover** from `event.cover_url` via a best-effort
    `PATCH /v1/pages/{id}` (`sdk.fetch`) — the create/update actions can't set covers.
-6. **Upsert the `LUMA_EVENT_TABLE` row** (`Luma Event ID` → `Page ID`, `Event Name`)
+7. **Upsert the `LUMA_EVENT_TABLE` row** (`Luma Event ID` → `Page ID`, `Event Name`)
    so guest workflows resolve the event without a Notion call.
 
 ## Connections

@@ -70,6 +70,7 @@ interface LumaEvent {
   endAt: string | null;
   url: string | null;
   coverUrl: string | null;
+  descriptionMarkdown: string | null;
   type: "In-person" | "Virtual";
 }
 
@@ -93,6 +94,7 @@ function extractEvent(o: Record<string, any>): LumaEvent {
     endAt: firstString(ev.end_at, ev.endAt, ev.end),
     url: firstString(ev.url, ev.event_url),
     coverUrl: firstString(ev.cover_url, ev.coverUrl),
+    descriptionMarkdown: firstString(ev.description_markdown, ev.descriptionMarkdown),
     type: hasAddress ? "In-person" : "Virtual",
   };
 }
@@ -211,6 +213,12 @@ const workflow = defineDurable<unknown, unknown>(
         createEventInputs["use_zapier_datetime_fields"] = true;
         createEventInputs["properties|||Date|||date__start"] = ev.startAt;
         if (ev.endAt) createEventInputs["properties|||Date|||date__end"] = ev.endAt;
+      }
+      // Set the page body from Luma's description (create-only here; the
+      // luma-event-to-notion workflow owns ongoing body sync via event_updated).
+      if (ev.descriptionMarkdown) {
+        createEventInputs["content"] = ev.descriptionMarkdown;
+        createEventInputs["content_format"] = "markdown";
       }
       const created = await ctx.step("create-event", async () =>
         sdk.runAction({

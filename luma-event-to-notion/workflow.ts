@@ -63,6 +63,7 @@ interface LumaEvent {
   endAt: string | null;
   url: string | null;
   coverUrl: string | null;
+  descriptionMarkdown: string | null;
   type: "In-person" | "Virtual";
 }
 
@@ -90,8 +91,41 @@ function extractEvent(raw: unknown): LumaEvent {
     endAt: firstString(ev.end_at, ev.endAt, ev.end),
     url: firstString(ev.url, ev.event_url),
     coverUrl: firstString(ev.cover_url, ev.coverUrl),
+    descriptionMarkdown: firstString(ev.description_markdown, ev.descriptionMarkdown),
     type: hasAddress ? "In-person" : "Virtual",
   };
+}
+
+/**
+ * Delete every top-level block in a page body. Used before rewriting the body
+ * from Luma's description so the description is replaced, not appended (Luma
+ * owns the event page body). Best-effort: returns the count deleted.
+ */
+async function clearPageBody(pageId: string): Promise<number> {
+  const ids: string[] = [];
+  let cursor: string | null = null;
+  do {
+    const url =
+      `${NOTION_API}/blocks/${pageId}/children?page_size=100` +
+      (cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : "");
+    const res = await sdk.fetch(url, {
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+    if (!res.ok) break;
+    const body: any = await res.json();
+    for (const b of body?.results ?? []) if (b?.id) ids.push(b.id);
+    cursor = body?.has_more ? (body?.next_cursor ?? null) : null;
+  } while (cursor);
+
+  for (const id of ids) {
+    await sdk.fetch(`${NOTION_API}/blocks/${id}`, {
+      connection: NOTION_CONNECTION,
+      method: "DELETE",
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+  }
+  return ids.length;
 }
 
 /** Shared Notion property inputs for create/update of the Event page. */
@@ -155,13 +189,19 @@ const workflow = defineDurable<unknown, unknown>(
     let eventCreated = false;
     let eventUpdated = false;
     if (!eventPageId) {
+      // Fresh page: set the body from Luma's description in the same call.
+      const createInputs = eventProps(ev);
+      if (ev.descriptionMarkdown) {
+        createInputs["content"] = ev.descriptionMarkdown;
+        createInputs["content_format"] = "markdown";
+      }
       const created = await ctx.step("create-event", async () =>
         sdk.runAction({
           appKey: NOTION_APP_KEY,
           actionType: "write",
           actionKey: "create_database_item",
           connection: NOTION_CONNECTION,
-          inputs: eventProps(ev),
+          inputs: createInputs,
         }),
       );
       eventPageId = firstResult(created)?.id ?? null;
@@ -174,13 +214,27 @@ const workflow = defineDurable<unknown, unknown>(
       }
     } else {
       const pageId = eventPageId;
+      // Replace the body (Luma owns it): clear existing blocks first so the
+      // description is rewritten rather than appended on every update. Only
+      // touch the body when the payload actually carries a description.
+      const updateInputs: Record<string, unknown> = {
+        ...eventProps(ev),
+        page: pageId,
+      };
+      if (ev.descriptionMarkdown) {
+        await ctx.step("clear-event-body", async () => ({
+          deleted: await clearPageBody(pageId),
+        }));
+        updateInputs["content"] = ev.descriptionMarkdown;
+        updateInputs["content_format"] = "markdown";
+      }
       await ctx.step("update-event", async () =>
         sdk.runAction({
           appKey: NOTION_APP_KEY,
           actionType: "write",
           actionKey: "update_database_item",
           connection: NOTION_CONNECTION,
-          inputs: { ...eventProps(ev), page: pageId },
+          inputs: updateInputs,
         }),
       );
       eventUpdated = true;
