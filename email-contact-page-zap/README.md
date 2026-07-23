@@ -28,6 +28,21 @@ In the Code step:
 
 4. Paste `code-step.js` as the code body. The Return step maps `page_ids` from this step's output.
 
+## Workflow
+
+```mermaid
+flowchart TD
+    A["Input: to / from / cc header strings<br/>(from the calling Zap)"] --> B["Extract + dedupe emails; drop internal<br/>(@work.flowers) and blocklisted addresses"]
+    B --> C{"Any external emails left?"}
+    C -- no --> D(["Return page_ids = ''"])
+    C -- yes --> E["Look up emails in the email → page-ID<br/>Zapier Table (one find_record call)"]
+    E --> F{"All emails already known?"}
+    F -- yes --> G(["Return existing page IDs"])
+    F -- no --> H["Batch-classify new emails (cap 10) with<br/>AI by Zapier: individual vs service account"]
+    H --> I["For each individual, in parallel:<br/>create Notion Contact + write Table row"]
+    I --> J(["Return existing + new page IDs,<br/>comma-separated"])
+```
+
 ## What it does (summary)
 
 1. Extract & dedupe email addresses from `to`/`from`/`cc`. Drop anything ending in `@work.flowers`, anything in the address blocklist, or anything containing a substring blocklist token (`support`, `billing`, `contact`, `@zapiermail.com`, `@resource.calendar.google.com`).

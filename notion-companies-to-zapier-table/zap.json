@@ -1,0 +1,20 @@
+{
+  "name": "notion-companies-to-zapier-table",
+  "workflow_id": "019f735e-b5fa-7bf1-be8b-82f35858b211",
+  "current_version_id": "019f7384-e112-7da6-ae02-e2ece4c7f4d9",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXhKjw5csbTysoZ2vuOC1g",
+  "enabled": true,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/b25a7dfde826bff6/"
+  },
+  "zapier_durable_version": "0.6.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.80.0"
+  },
+  "created_at": "2026-07-18T03:56:54.676Z",
+  "version_created_at": "2026-07-18T04:38:36.051Z",
+  "description": "Mirror Notion Companies records into Zapier Table 01JM8PH8YM93A482M8BFZ6WKW6, keyed on Notion Page ID. Race-safe: webhook is a ping only; re-fetches page state, guards on last_edited_time, dedupes racing creates, reconciles after 20s. Source of truth: https://github.com/denchiuten/notion-companies-hub (workflows/notion-companies-to-zapier-table.ts)."
+}

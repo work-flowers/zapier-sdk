@@ -24,6 +24,23 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    mentions that user for better visibility.
 5. **Return** — `{ pageId, enriched, emailPath, iconUpdated }`.
 
+## Workflow
+
+```mermaid
+flowchart TD
+    A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> B["Extract contact page + optional<br/>triggering user's Notion ID"]
+    B --> C["Enrich: find_person_profile with<br/>email, name, domain, LinkedIn URL"]
+    C -- error / no result --> D(["Log, comment outcome, return<br/>(no retry)"])
+    C -- profile found --> E{"Enriched email vs existing<br/>Primary Email?"}
+    E -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
+    E -- "new/different email (Path G)" --> G["Keep Primary Email, add enriched<br/>email to Secondary Email"]
+    F --> H{"Profile pic URL returned?"}
+    G --> H
+    H -- yes --> I["Update Notion page icon + cover<br/>(Path C, via sdk.fetch)"] --> J
+    H -- no --> J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
+    J --> K(["Return pageId, enriched, emailPath, iconUpdated"])
+```
+
 ## Connections
 
 | Alias | App key | Connection |

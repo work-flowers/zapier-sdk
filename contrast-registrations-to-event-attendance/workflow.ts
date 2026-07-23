@@ -1,3 +1,4 @@
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/contrast-registrations-to-event-attendance
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
@@ -19,9 +20,11 @@ const ATTENDANCE_DS = "a591ecac-259f-4490-8f09-f7fddd556eed";
 // "Trigger Contact Creation" (boolean). Tables auth is automatic (no connection).
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 
-// The Contrast "Registrations" trigger payload shape isn't formally documented
-// (docs list email/firstName/lastName/webinarName/registeredAt etc. but no
-// explicit webinar id key), so accept anything and extract defensively.
+// Verified Contrast "Registrations" payload (2026-07-21): id (registration),
+// email, firstName, lastName, webinarName, groupName, organizationName,
+// registeredAt, utm*, phoneNumber, jobTitle, companyName, industry,
+// websiteUrl, registrationAnswers. No webinar id/slug — webinarName is the
+// only event identifier. Accept anything and extract defensively regardless.
 const InputSchema = z.unknown();
 
 // --- Pure helpers ----------------------------------------------------------
@@ -117,56 +120,88 @@ const workflow = defineDurable<unknown, unknown>(
       InputSchema.parse(normalizeInput(rawInput)),
     );
 
-    // 1. Resolve the Event: match the Contrast webinar id against the
-    // "Contrast ID" property; fall back to the event title when the trigger
-    // payload carries no id.
-    const findEventInputs: Record<string, unknown> = reg.contrastEventId
-      ? {
-          datasource: EVENTS_DS,
-          search_fields: ["Contrast ID"],
-          "properties|||Contrast ID|||filter": "equals",
-          "properties|||Contrast ID|||rich_text": reg.contrastEventId,
-          "properties|||Contrast ID|||match": "required",
-        }
-      : {
-          datasource: EVENTS_DS,
-          search_fields: ["Event"],
-          "properties|||Event|||filter": "equals",
-          "properties|||Event|||title": reg.webinarName,
-          "properties|||Event|||match": "required",
-        };
+    // 1. Resolve the Event. The Contrast trigger payload carries no webinar
+    // id or slug — webinarName is the only event identifier it sends — so the
+    // "Contrast ID" property holds the exact Contrast webinar name (a real id
+    // still wins if Contrast ever adds one to the payload).
+    const eventKey = reg.contrastEventId ?? reg.webinarName!;
 
-    const foundEvent = await ctx.step("find-event", async () =>
+    const foundEvent = await ctx.step("find-event-by-contrast-id", async () =>
       sdk.runAction({
         appKey: NOTION_APP_KEY,
         actionType: "search",
         actionKey: "find_data_source_item",
         connection: NOTION_CONNECTION,
-        inputs: findEventInputs,
+        inputs: {
+          datasource: EVENTS_DS,
+          search_fields: ["Contrast ID"],
+          "properties|||Contrast ID|||filter": "equals",
+          "properties|||Contrast ID|||rich_text": eventKey,
+          "properties|||Contrast ID|||match": "required",
+        },
       }),
     );
 
     let eventPageId: string | null = firstResult(foundEvent)?.id ?? null;
     let eventCreated = false;
+    let eventSelfHealed = false;
+
+    // Fall back to an exact title match, to adopt events that were created by
+    // hand before their Contrast ID was filled in.
+    if (!eventPageId && reg.webinarName) {
+      const foundByTitle = await ctx.step("find-event-by-title", async () =>
+        sdk.runAction({
+          appKey: NOTION_APP_KEY,
+          actionType: "search",
+          actionKey: "find_data_source_item",
+          connection: NOTION_CONNECTION,
+          inputs: {
+            datasource: EVENTS_DS,
+            search_fields: ["Event"],
+            "properties|||Event|||filter": "equals",
+            "properties|||Event|||title": reg.webinarName,
+            "properties|||Event|||match": "required",
+          },
+        }),
+      );
+      const titleMatch = firstResult(foundByTitle);
+      const existingContrastId = firstString(
+        titleMatch?.properties?.["Contrast ID"],
+      );
+      // Adopt only when its Contrast ID is empty; a different non-empty value
+      // means the title collides with a different Contrast webinar.
+      if (titleMatch?.id && !existingContrastId) {
+        eventPageId = titleMatch.id;
+        await ctx.step("self-heal-event-contrast-id", async () =>
+          sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "update_database_item",
+            connection: NOTION_CONNECTION,
+            inputs: {
+              datasource: EVENTS_DS,
+              page: eventPageId,
+              "properties|||Contrast ID|||rich_text": eventKey,
+            },
+          }),
+        );
+        eventSelfHealed = true;
+      }
+    }
 
     if (!eventPageId) {
-      const createEventInputs: Record<string, unknown> = {
-        datasource: EVENTS_DS,
-        "properties|||Event|||title":
-          reg.webinarName ?? `Contrast event ${reg.contrastEventId}`,
-        "properties|||Type|||select": "Virtual",
-      };
-      if (reg.contrastEventId) {
-        createEventInputs["properties|||Contrast ID|||rich_text"] =
-          reg.contrastEventId;
-      }
       const createdEvent = await ctx.step("create-event", async () =>
         sdk.runAction({
           appKey: NOTION_APP_KEY,
           actionType: "write",
           actionKey: "create_database_item",
           connection: NOTION_CONNECTION,
-          inputs: createEventInputs,
+          inputs: {
+            datasource: EVENTS_DS,
+            "properties|||Event|||title": reg.webinarName ?? eventKey,
+            "properties|||Contrast ID|||rich_text": eventKey,
+            "properties|||Type|||select": "Virtual",
+          },
         }),
       );
       eventPageId = firstResult(createdEvent)?.id ?? null;
@@ -308,10 +343,11 @@ const workflow = defineDurable<unknown, unknown>(
 
     return {
       email: reg.emailLower,
-      contrastEventId: reg.contrastEventId,
+      eventKey,
       webinarName: reg.webinarName,
       eventPageId,
       eventCreated,
+      eventSelfHealed,
       contactPageId,
       contactCreated,
       attendancePageId,

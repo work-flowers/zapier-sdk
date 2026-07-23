@@ -1,0 +1,20 @@
+{
+  "name": "contrast-registrations-to-event-attendance",
+  "workflow_id": "019f83b2-c92f-7fb0-8dcd-3c07990a0d52",
+  "current_version_id": "019f8402-c10f-7cde-9b93-6ff18853607a",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ae0HJbkWHBu2fj-NYj6pvA",
+  "enabled": true,
+  "trigger": {
+    "selected_api": "ContrastCLIAPI@1.5.1",
+    "action": "registrations",
+    "authentication_id": "02bb11d4-8a47-8bb1-857a-78e7edc97a4c"
+  },
+  "zapier_durable_version": "0.9.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.86.0"
+  },
+  "created_at": "2026-07-21T08:02:40.049Z",
+  "version_created_at": "2026-07-21T09:30:00.849Z",
+  "description": "Contrast webinar registrations -> Notion Event Attendance upserts, resolving/creating related Event (by Contrast ID) and Contact (via email->pageId Zapier Table)."
+}

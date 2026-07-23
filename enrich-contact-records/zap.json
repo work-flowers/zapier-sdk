@@ -1,0 +1,20 @@
+{
+  "name": "enrich-contact-records",
+  "workflow_id": "019f878c-64ff-7332-92df-58e39f803836",
+  "current_version_id": "019f87a4-01cd-76b2-9591-6dad981f771d",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AW11SY4tM7eAkPQzytW3yg",
+  "enabled": true,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/nhoSna8Vs7pOWJ1X/"
+  },
+  "zapier_durable_version": "0.6.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.79.0"
+  },
+  "created_at": "2026-07-22T01:59:12.898Z",
+  "version_created_at": "2026-07-22T02:25:00.367Z",
+  "description": "Enrich Notion contact records with person profile data"
+}
