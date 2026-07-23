@@ -1,3 +1,4 @@
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/contrast-registrations-to-event-attendance
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";

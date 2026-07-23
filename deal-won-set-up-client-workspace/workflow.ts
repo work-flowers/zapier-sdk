@@ -1,3 +1,4 @@
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/deal-won-set-up-client-workspace
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
