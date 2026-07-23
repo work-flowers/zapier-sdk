@@ -9,8 +9,19 @@ const sdk = createZapierSdk();
 // Connection aliases are resolved at run/publish time via --connections.
 const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
+// Enrichment fallback: NinjaPear (unofficial Zapier app).
 const ENRICHMENT_APP_KEY = "App243984CLIAPI";
 const ENRICHMENT_CONNECTION = "enrichment";
+// Primary enrichment: Apollo.io people/match. Called through Apollo's native
+// "API Request (Beta)" action (_zap_raw_request), which makes an authenticated
+// raw HTTP request that includes the integration's own auth headers — a plain
+// sdk.fetch through the connection does NOT get those headers and Apollo
+// rejects it with 401. Falls back to NinjaPear when Apollo errors, has no
+// credits, or returns no usable match.
+const APOLLO_APP_KEY = "ApolloCLIAPI";
+const APOLLO_CONNECTION = "apollo";
+const APOLLO_RAW_REQUEST_ACTION = "_zap_raw_request";
+const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
@@ -144,7 +155,7 @@ interface EnrichedData {
   lastName: string;
 }
 
-function extractEnriched(enriched: any): EnrichedData {
+function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   // work_experience is an array of objects with description fields; join them.
   const we = enriched?.work_experience;
   const bio = Array.isArray(we)
@@ -163,6 +174,55 @@ function extractEnriched(enriched: any): EnrichedData {
     jobTitle: firstString(enriched?.current_role) ?? "",
     firstName: firstString(enriched?.first_name) ?? "",
     lastName: firstString(enriched?.last_name) ?? "",
+  };
+}
+
+/** Apollo returns a placeholder like `email_not_unlocked@domain.com` when the
+ *  email is locked behind credits; treat those as "no email". */
+function apolloRealEmail(email: unknown): string {
+  const e = firstString(email);
+  if (!e || /email_not_unlocked/i.test(e)) return "";
+  return e;
+}
+
+/** True when Apollo's `person` object carries at least one useful signal.
+ *  A bare/empty match means Apollo effectively found nothing → fall back. */
+function apolloPersonUsable(person: any): boolean {
+  if (!person || typeof person !== "object") return false;
+  return Boolean(
+    person.first_name ||
+      person.last_name ||
+      person.name ||
+      person.linkedin_url ||
+      person.title ||
+      person.photo_url ||
+      apolloRealEmail(person.email),
+  );
+}
+
+function extractEnrichedFromApollo(person: any): EnrichedData {
+  // employment_history entries carry per-role descriptions; join them into a
+  // bio. Fall back to the person-level headline when no descriptions exist.
+  const employment = Array.isArray(person?.employment_history)
+    ? person.employment_history
+    : [];
+  const descriptions = employment
+    .map((e: any) => e?.description)
+    .filter((d: unknown): d is string => typeof d === "string" && d.trim() !== "");
+  const bio = descriptions.length
+    ? descriptions.join("\n\n")
+    : (firstString(person?.headline) ?? "");
+
+  return {
+    profilePicUrl: firstString(person?.photo_url) ?? "",
+    linkedinUrl: firstString(person?.linkedin_url) ?? "",
+    country: firstString(person?.country) ?? "",
+    city: firstString(person?.city) ?? "",
+    newEmail: apolloRealEmail(person?.email),
+    bio,
+    jobTitle: firstString(person?.title) ?? "",
+    firstName: firstString(person?.first_name) ?? "",
+    lastName: firstString(person?.last_name) ?? "",
   };
 }
 
@@ -296,6 +356,8 @@ async function updateContactRecord(
 interface WorkflowResult {
   pageId: string;
   enriched: boolean;
+  /** Which enrichment source produced the data, when enriched. */
+  source?: "apollo" | "ninjapear";
   reason?: string;
   emailPath?: string;
   iconUpdated?: boolean;
@@ -314,7 +376,13 @@ async function addOutcomeComment(
     if (result.emailPath === "new-email") changes.push("secondary email");
     if (result.iconUpdated) changes.push("profile icon");
     changes.push("contact details");
-    summary = `Contact enriched and updated: ${changes.join(", ")}.`;
+    const via =
+      result.source === "apollo"
+        ? "Apollo"
+        : result.source === "ninjapear"
+          ? "NinjaPear"
+          : "enrichment";
+    summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
   } else {
     summary = `Enrichment skipped: ${result.reason ?? "no data found"}.`;
   }
@@ -378,51 +446,146 @@ const workflow = defineDurable<unknown, unknown>(
       `Enriching contact ${contact.pageId}: ${contact.firstName} ${contact.lastName}`.trim(),
     );
 
-    // 1. Call the person-enrichment search.
-    //    The original Zap retried on error after a 1-minute delay; per Dennis's
-    //    decision, we log and skip instead.
-    let enriched: any = null;
-    let enrichmentError: string | null = null;
+    // 1. Enrich the contact. Apollo.io (people/match) is the primary source;
+    //    NinjaPear is the fallback. Each source runs inside a step that catches
+    //    its own errors and returns a value instead of throwing — so a failing
+    //    source does NOT trigger the durable's step-retry loop (which would
+    //    stall every run on Apollo's free tier) and we fall through cleanly.
+    let enrichedData: EnrichedData | null = null;
+    let source: "apollo" | "ninjapear" | null = null;
+    const reasons: string[] = [];
 
-    try {
-      const result = await ctx.step("find-person-profile", async () =>
-        sdk.runAction({
-          appKey: ENRICHMENT_APP_KEY,
-          actionType: "search",
-          actionKey: "find_person_profile",
-          connection: ENRICHMENT_CONNECTION,
+    // --- Primary: Apollo people/match, via the "API Request (Beta)" action.
+    //     fail_on_errors:false makes the action return the response (with its
+    //     status) instead of throwing on a non-2xx, so a locked/credit-less
+    //     Apollo response falls through to NinjaPear without retries.
+    const apollo = await ctx.step("apollo-match", async () => {
+      try {
+        const res = await sdk.runAction({
+          appKey: APOLLO_APP_KEY,
+          actionType: "write",
+          actionKey: APOLLO_RAW_REQUEST_ACTION,
+          connection: APOLLO_CONNECTION,
           inputs: {
-            work_email: contact.primaryEmail,
-            first_name: contact.firstName,
-            last_name: contact.lastName,
-            employer_website: contact.domain,
-            linkedin_profile_url: contact.linkedinUrl,
+            method: "POST",
+            url: APOLLO_MATCH_URL,
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache",
+            },
+            body: JSON.stringify({
+              first_name: contact.firstName,
+              last_name: contact.lastName,
+              email: contact.primaryEmail,
+              domain: contact.domain,
+              linkedin_url: contact.linkedinUrl,
+              // Keep credit spend minimal; we don't consume Apollo's phone data
+              // and personal emails aren't wanted here.
+              reveal_personal_emails: false,
+              reveal_phone_number: false,
+            }),
+            fail_on_errors: false,
           },
-        }),
+        });
+        // The action result wraps the upstream call as { request, response }.
+        const response = firstResult(res)?.response ?? {};
+        const status =
+          typeof response.status === "number" ? response.status : 0;
+        let person = response?.data?.person ?? null;
+        if (!person && typeof response?.body === "string") {
+          try {
+            person = JSON.parse(response.body)?.person ?? null;
+          } catch {
+            /* non-JSON body */
+          }
+        }
+        const ok = status >= 200 && status < 300;
+        return {
+          ok,
+          status,
+          person,
+          raw: ok ? "" : String(response?.body ?? "").slice(0, 300),
+          error: null as string | null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          status: 0,
+          person: null as any,
+          raw: "",
+          error: String((err as Error)?.message ?? err),
+        };
+      }
+    });
+
+    if (apollo.ok && apolloPersonUsable(apollo.person)) {
+      enrichedData = extractEnrichedFromApollo(apollo.person);
+      source = "apollo";
+      console.log(`Apollo enriched ${contact.pageId}`);
+    } else {
+      const why = apollo.error
+        ? `apollo error: ${apollo.error}`
+        : !apollo.ok
+          ? `apollo http ${apollo.status}: ${apollo.raw}`.trim()
+          : "apollo returned no usable match";
+      reasons.push(why);
+      console.log(
+        `Apollo enrichment unavailable for ${contact.pageId} (${why}); falling back to NinjaPear`,
       );
-      enriched = firstResult(result);
-    } catch (err) {
-      enrichmentError = String((err as Error)?.message ?? err);
-      console.log(`Enrichment failed for ${contact.pageId}: ${enrichmentError}`);
+
+      // --- Fallback: NinjaPear find_person_profile.
+      const ninja = await ctx.step("find-person-profile", async () => {
+        try {
+          const result = await sdk.runAction({
+            appKey: ENRICHMENT_APP_KEY,
+            actionType: "search",
+            actionKey: "find_person_profile",
+            connection: ENRICHMENT_CONNECTION,
+            inputs: {
+              work_email: contact.primaryEmail,
+              first_name: contact.firstName,
+              last_name: contact.lastName,
+              employer_website: contact.domain,
+              linkedin_profile_url: contact.linkedinUrl,
+            },
+          });
+          return { result: firstResult(result), error: null as string | null };
+        } catch (err) {
+          return {
+            result: null,
+            error: String((err as Error)?.message ?? err),
+          };
+        }
+      });
+
+      if (ninja.result) {
+        enrichedData = extractEnrichedFromNinjaPear(ninja.result);
+        source = "ninjapear";
+        console.log(`NinjaPear enriched ${contact.pageId}`);
+      } else {
+        reasons.push(
+          ninja.error
+            ? `ninjapear error: ${ninja.error}`
+            : "ninjapear returned no result",
+        );
+      }
     }
 
     let result: WorkflowResult;
 
-    if (!enriched) {
+    if (!enrichedData || !source) {
       result = {
         pageId: contact.pageId,
         enriched: false,
-        reason: enrichmentError
-          ? `enrichment error: ${enrichmentError}`
-          : "no result from enrichment",
+        reason: reasons.join("; ") || "no result from enrichment",
       };
     } else {
       // 2. Update the contact record (inline sub-zap logic).
-      const enrichedData = extractEnriched(enriched);
       const updateResult = await updateContactRecord(ctx, contact, enrichedData);
       result = {
         pageId: contact.pageId,
         enriched: true,
+        source,
         ...updateResult,
       };
     }
