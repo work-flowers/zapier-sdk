@@ -67,11 +67,18 @@ flowchart TD
 
 ## Connections
 
-| Alias | App key | Connection |
-|---|---|---|
-| `notion_wf` | `NotionCLIAPI` | Notion (work.flowers \| Dennis) |
-| `apollo` | `ApolloCLIAPI` | Apollo.io (primary enrichment, via API Request Beta) |
-| `enrichment` | `App243984CLIAPI` | Person enrichment app (zapier-ninjapear, fallback) |
+| Alias | App key | Connection | Connection id |
+|---|---|---|---|
+| `notion_wf` | `NotionCLIAPI` | `work.flowers \| Dennis` | `02b73654-15c8-85c3-b16a-07304d2beb17` |
+| `apollo` | `ApolloCLIAPI` | Apollo.io (primary enrichment, via API Request Beta) | `02be390b-7f16-8214-9337-c9a9b04cf4f7` |
+| `enrichment` | `App243984CLIAPI` | Person enrichment app (zapier-ninjapear, fallback) | `025703ba-3a5f-8132-9138-e87fb3599abc` |
+
+> ⚠️ **Notion connection:** `notion_wf` **must** be the `work.flowers | Dennis`
+> connection (`02b73654-…`) — it's the one with the Contacts DB shared. Do **not**
+> bind the `Knoxx | Dennis #2` connection (`02b95b31-…`); that's the Knoxx Foods
+> *client* workspace and the write-back fails with `Could not find data_source …
+> shared with your integration "Zapier"`. See the root `CLAUDE.md` for the
+> repo-wide rule.
 
 The Notion connection must have the **Insert comments** capability enabled so
 the workflow can post outcome comments on the triggering page.
