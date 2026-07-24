@@ -35,6 +35,15 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      the enriched email to Secondary Email.
    - **Profile pic** (Path C): if the enrichment returned a profile pic URL,
      updates the Notion page icon and cover via `sdk.fetch`.
+   - **Index the email in the email→contact Zapier Table**
+     (`01JYEPSEARXB2Z6BJRCMFGXBC2`): whenever a new email lands on the contact
+     (Path G secondary, or a first-ever primary via Path D), upsert-if-missing a
+     row (`Email` → `Page ID`, `Type` Secondary/Primary, `Trigger Contact
+     Creation: false`). The Luma guest workflows resolve contacts through this
+     Table — an email on a contact but missing from the Table produces a
+     **duplicate contact** when that person registers with it (bug observed
+     2026-07-24 with a secondary email). Best-effort: a Table error logs and
+     never fails the run.
 4. **Add outcome comment** — Posts a brief comment on the triggering Notion
    page stating the outcome of the run:
    - which source did the enrichment (**Apollo** or **NinjaPear**);

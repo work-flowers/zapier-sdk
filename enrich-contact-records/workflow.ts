@@ -29,6 +29,13 @@ const NOTION_VERSION = "2026-03-11";
 // Contacts data source (same as the original Zap).
 const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 
+// Zapier Table indexing email -> Notion Contact page id (free ops, no
+// connection). The Luma guest workflows resolve contacts through this Table;
+// any email that exists on a contact but not in the Table produces a duplicate
+// contact when that person registers with it (seen with a secondary email,
+// 2026-07-24). Every email this workflow adds to a contact must be indexed.
+const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
+
 // The webhook payload shape varies (Notion DB automation → Zapier webhook),
 // so accept anything and extract defensively.
 const InputSchema = z.unknown();
@@ -310,6 +317,44 @@ async function updateContactRecord(
       },
     }),
   );
+
+  // --- Index the enriched email in the email -> page id Table ---
+  // Path G adds a Secondary email, Path D can set a first-ever Primary; either
+  // way the address must resolve to this contact in the Table or the Luma guest
+  // workflows will create a duplicate contact when that person registers with
+  // it. Best-effort upsert-if-missing (Table ops are free).
+  if (hasNewEmail && emailPath !== "no-new-email") {
+    const emailLower = enriched.newEmail!.toLowerCase();
+    const emailType = emailPath === "new-email" ? "Secondary" : "Primary";
+    await ctx.step("index-email-in-table", async () => {
+      try {
+        const existing = await sdk.listTableRecords({
+          table: CONTACT_EMAIL_TABLE,
+          keyMode: "names",
+          filters: [{ fieldKey: "Email", operator: "exact", value: emailLower }],
+          pageSize: 1,
+        });
+        if (existing.data?.[0]) return { logged: "exists" as const };
+        await sdk.createTableRecords({
+          table: CONTACT_EMAIL_TABLE,
+          keyMode: "names",
+          records: [
+            {
+              data: {
+                Email: emailLower,
+                "Page ID": contact.pageId,
+                Type: emailType,
+                "Trigger Contact Creation": false,
+              },
+            },
+          ],
+        });
+        return { logged: "created" as const };
+      } catch (err) {
+        return { logged: "error" as const, error: String((err as Error)?.message ?? err) };
+      }
+    });
+  }
 
   // --- Update page icon + cover if a profile pic was found (Path C) ---
   let iconUpdated = false;
