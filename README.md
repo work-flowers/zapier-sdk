@@ -27,10 +27,14 @@ These rules are mirrored in [CLAUDE.md](CLAUDE.md) so Claude Code sessions follo
 
 | Zap | Type | Status | Description |
 | --- | --- | --- | --- |
-| [`contrast-registrations-to-event-attendance`](contrast-registrations-to-event-attendance/) | Durable | ✅ Enabled | Contrast webinar registrations → Notion Event Attendance upserts, resolving/creating the related Event (by Contrast ID) and Contact (via email → page-ID Zapier Table). |
+| [`contact-emails-to-zapier-table`](contact-emails-to-zapier-table/) | Durable | ✅ Enabled | Notion Contacts email edits → index every Primary/Secondary email in the email → page-ID Zapier Table; marks cross-contact email collisions as `Duplicate of`. Port of the classic "Update Zapier Table When Email Address Updated" Zap. |
+| [`contrast-registrations-to-event-attendance`](contrast-registrations-to-event-attendance/) | Durable | ⏸️ Disabled | Contrast webinar registrations → Notion Event Attendance upserts. Retired 2026-07-23 when events moved to Luma; kept for reference. |
 | [`deal-won-set-up-client-workspace`](deal-won-set-up-client-workspace/) | Durable | ⚠️ Not deployed | Deal won → create the company's Google Drive folder under Client Docs and link it on the Notion Companies record. Source only; not yet published to Zapier. |
 | [`email-contact-page-zap`](email-contact-page-zap/) | Code step (classic Zap) | ✅ In production | [Sub-Zap] Retrieve Contact Page IDs for Email Addresses — single Code step replacing the original 24-node sub-Zap. |
-| [`enrich-contact-records`](enrich-contact-records/) | Durable | ✅ Enabled | Enrich Notion contact records with person profile data; collapses the old parent Zap + sub-Zap into one workflow. |
+| [`enrich-contact-records`](enrich-contact-records/) | Durable | ✅ Enabled | Enrich Notion contact records with person profile data (Apollo primary, NinjaPear fallback); collapses the old parent Zap + sub-Zap into one workflow. |
+| [`luma-event-to-notion`](luma-event-to-notion/) | Durable ×2 | ✅ Enabled | One code file deployed twice — `luma-event-created-to-notion` (`event_created`) and `luma-event-updated-to-notion` (`event_updated`). Upserts the Notion Events record keyed on Luma ID: properties, page cover, and description → page body (full replace). |
+| [`luma-guest-registered-to-event-attendance`](luma-guest-registered-to-event-attendance/) | Durable | ✅ Enabled | Luma `guest_registered` → Event Attendance upsert. **Sole creator** of Event/Contact/Attendance records for the guest flow (see README for the race this prevents). |
+| [`luma-guest-updated-to-event-attendance`](luma-guest-updated-to-event-attendance/) | Durable | ✅ Enabled | Luma `guest_updated` → pure updater: refreshes Approval Status / ticks Checked In on the existing Attendance record; never creates. |
 | [`notion-companies-to-zapier-table`](notion-companies-to-zapier-table/) | Durable | ✅ Enabled | Race-safe mirror of Notion Companies records into the company-ID Zapier Table, keyed on Notion Page ID. |
 | [`notion-newsletter-to-buttondown`](notion-newsletter-to-buttondown/) | Durable | ✅ Enabled | Notion Newsletter Issues page → Buttondown draft/scheduled email, keyed on the page's Buttondown ID. |
 
