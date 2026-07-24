@@ -36,10 +36,14 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    - **Profile pic** (Path C): if the enrichment returned a profile pic URL,
      updates the Notion page icon and cover via `sdk.fetch`.
 4. **Add outcome comment** — Posts a brief comment on the triggering Notion
-   page stating the outcome of the run (including which source — Apollo or
-   NinjaPear — did the enrichment). If the webhook was triggered by a button
-   click and the payload included the user's Notion ID, the comment mentions
-   that user for better visibility.
+   page stating the outcome of the run:
+   - which source did the enrichment (**Apollo** or **NinjaPear**);
+   - when NinjaPear was used as a fallback, a short note on **why Apollo failed**
+     (e.g. `Apollo unavailable: HTTP 401 — Invalid API key…`);
+   - when nothing enriched, the skip reason.
+
+   If the webhook was triggered by a button click and the payload included the
+   user's Notion ID, the comment mentions that user for better visibility.
 5. **Return** — `{ pageId, enriched, source, emailPath, iconUpdated }`.
 
 ## Workflow

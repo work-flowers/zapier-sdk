@@ -358,9 +358,24 @@ interface WorkflowResult {
   enriched: boolean;
   /** Which enrichment source produced the data, when enriched. */
   source?: "apollo" | "ninjapear";
+  /** Why the primary (Apollo) attempt failed, if it did — surfaced in the
+   *  outcome comment so a maintainer can see why NinjaPear was used. */
+  apolloError?: string;
   reason?: string;
   emailPath?: string;
   iconUpdated?: boolean;
+}
+
+/** Trim an internal Apollo failure reason down to a short, human-readable
+ *  phrase for the outcome comment (e.g. "HTTP 401 — Invalid API key…"). */
+function briefReason(why: string): string {
+  let s = why
+    .replace(/^apollo\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  s = s.replace(/^http\s+(\d+):\s*/i, "HTTP $1 — ");
+  s = s.replace(/^error:\s*/i, "");
+  return s.length > 160 ? s.slice(0, 159).trimEnd() + "…" : s;
 }
 
 async function addOutcomeComment(
@@ -383,8 +398,12 @@ async function addOutcomeComment(
           ? "NinjaPear"
           : "enrichment";
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
+    // When the fallback (NinjaPear) did the work, note why Apollo was skipped.
+    if (result.source === "ninjapear" && result.apolloError) {
+      summary += ` (Apollo unavailable: ${briefReason(result.apolloError)})`;
+    }
   } else {
-    summary = `Enrichment skipped: ${result.reason ?? "no data found"}.`;
+    summary = `Enrichment skipped: ${briefReason(result.reason ?? "no data found")}.`;
   }
 
   // Build the rich_text array. If we know who triggered the run, mention
@@ -453,6 +472,7 @@ const workflow = defineDurable<unknown, unknown>(
     //    stall every run on Apollo's free tier) and we fall through cleanly.
     let enrichedData: EnrichedData | null = null;
     let source: "apollo" | "ninjapear" | null = null;
+    let apolloFailure: string | null = null;
     const reasons: string[] = [];
 
     // --- Primary: Apollo people/match, via the "API Request (Beta)" action.
@@ -528,6 +548,7 @@ const workflow = defineDurable<unknown, unknown>(
         : !apollo.ok
           ? `apollo http ${apollo.status}: ${apollo.raw}`.trim()
           : "apollo returned no usable match";
+      apolloFailure = why;
       reasons.push(why);
       console.log(
         `Apollo enrichment unavailable for ${contact.pageId} (${why}); falling back to NinjaPear`,
@@ -586,6 +607,7 @@ const workflow = defineDurable<unknown, unknown>(
         pageId: contact.pageId,
         enriched: true,
         source,
+        apolloError: apolloFailure ?? undefined,
         ...updateResult,
       };
     }
