@@ -1,16 +1,18 @@
-# Luma Guest → Notion Event Attendance
+# Luma Guest Registered → Notion Event Attendance
 
-Durable workflow that upserts a Notion **Event Attendance** record from a Luma guest.
-Replaces the retired `contrast-registrations-to-event-attendance` workflow. Deployed
-twice — once per trigger — from this single code directory.
+Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upserts a Notion
+**Event Attendance** record from a Luma guest. Replaces the retired
+`contrast-registrations-to-event-attendance` workflow.
 
-| Workflow name | Trigger (`LumaCLIAPI@6.1.0`) |
-|---|---|
-| `luma-guest-registered-to-event-attendance` | `guest_registered` |
-| `luma-guest-updated-to-event-attendance` | `guest_updated` |
-
-Both triggers deliver the same guest shape, so one code file handles create (register)
-and update (approval-status change / check-in / registration edit).
+> **This is the SOLE CREATOR** of Event / Contact / Attendance records for the guest flow.
+> The sibling [`luma-guest-updated-to-event-attendance`](../luma-guest-updated-to-event-attendance)
+> (trigger `guest_updated`) is **lookup/update-only** and never creates.
+>
+> **Why the split:** Luma fires `guest.registered` **and** `guest.updated` within ~150ms of a
+> single new registration. When both workflows could create, they raced and produced duplicate
+> Attendance (and Contact) records — neither saw the other's just-created record (Notion search
+> lags, and this Zapier account has no unique-Table constraint to claim atomically). Making
+> creation single-owner eliminates the race.
 
 ## What it does
 
