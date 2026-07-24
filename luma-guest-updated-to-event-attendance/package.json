@@ -1,5 +1,5 @@
 {
-  "name": "luma-guest-to-event-attendance",
+  "name": "luma-guest-updated-to-event-attendance",
   "type": "module",
   "private": true,
   "dependencies": {

@@ -158,8 +158,15 @@ function mapApprovalStatus(status: string | null): string {
 }
 
 // --- Workflow ----------------------------------------------------------------
+// SOLE CREATOR of Event / Contact / Attendance records for the guest flow.
+// Luma fires guest.registered AND guest.updated near-simultaneously on a new
+// registration; if both workflows could create, they race and produce
+// duplicate Attendance (and Contact) records — neither sees the other's
+// just-created record (Notion search lags, and this account has no unique
+// Table constraint). So creation lives here only; the guest_updated deployment
+// (luma-guest-updated-to-event-attendance) is lookup/update-only.
 const workflow = defineDurable<unknown, unknown>(
-  "luma-guest-to-event-attendance",
+  "luma-guest-registered-to-event-attendance",
   async (ctx, rawInput) => {
     const guest = extractGuest(InputSchema.parse(normalizeInput(rawInput)));
     if (!guest) {
