@@ -129,6 +129,78 @@ async function clearPageBody(pageId: string): Promise<number> {
   return ids.length;
 }
 
+/**
+ * Create a Notion data source item, applying the data source's DEFAULT TEMPLATE
+ * when one exists, so automation-created pages look like hand-made ones (icon,
+ * body blocks, and any property defaults set on the template).
+ *
+ * Two constraints of the Notion create action shape this helper:
+ *  1. `template_mode: "default"` THROWS on a data source that has no default
+ *     template ("No default template is configured for this data source"), so
+ *     that one error is caught and the create retried without it. No
+ *     per-data-source config is needed, and a template added in Notion later is
+ *     picked up automatically. (Today: Contacts has a default template; Events
+ *     and Event Attendance do not.)
+ *  2. A template and inline `content` are mutually exclusive — "If you select a
+ *     template, you cannot include content" — so body content must be appended
+ *     in a second call, via write/page_content.
+ *
+ * The fallback is caught INSIDE the step so a template miss doesn't spin the
+ * durable's step-retry loop.
+ */
+async function createItemWithTemplate(
+  ctx: any,
+  stepPrefix: string,
+  datasource: string,
+  props: Record<string, unknown>,
+  contentMarkdown?: string | null,
+): Promise<{ pageId: string | null; usedTemplate: boolean }> {
+  const created = await ctx.step(`${stepPrefix}-create`, async () => {
+    const inputs = { datasource, ...props };
+    try {
+      const res = await sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "create_database_item",
+        connection: NOTION_CONNECTION,
+        inputs: { ...inputs, template_mode: "default" },
+      });
+      return { res, usedTemplate: true };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!/no default template/i.test(msg)) throw err;
+      const res = await sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "create_database_item",
+        connection: NOTION_CONNECTION,
+        inputs,
+      });
+      return { res, usedTemplate: false };
+    }
+  });
+
+  const pageId: string | null = firstResult(created?.res)?.id ?? null;
+
+  if (pageId && contentMarkdown) {
+    await ctx.step(`${stepPrefix}-content`, async () =>
+      sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "page_content",
+        connection: NOTION_CONNECTION,
+        inputs: {
+          page_id: pageId,
+          content: contentMarkdown,
+          content_format: "markdown",
+        },
+      }),
+    );
+  }
+
+  return { pageId, usedTemplate: Boolean(created?.usedTemplate) };
+}
+
 /** Shared Notion property inputs for create/update of the Event page. */
 function eventProps(ev: LumaEvent): Record<string, unknown> {
   const props: Record<string, unknown> = {
@@ -193,29 +265,23 @@ const workflow = defineDurable<unknown, unknown>(
     // 3. Create or update the Notion Event page.
     let eventCreated = false;
     let eventUpdated = false;
+    let usedTemplate = false;
     if (!eventPageId) {
-      // Fresh page: set the body from Luma's description in the same call.
-      const createInputs = eventProps(ev);
-      if (ev.descriptionMarkdown) {
-        createInputs["content"] = ev.descriptionMarkdown;
-        createInputs["content_format"] = "markdown";
-      }
-      const created = await ctx.step("create-event", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "create_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: createInputs,
-        }),
+      // Apply the Events default template if one exists, then append the Luma
+      // description as the body (a template and inline content can't be sent in
+      // the same call, so the body is a second step inside the helper).
+      const created = await createItemWithTemplate(
+        ctx,
+        "event",
+        EVENTS_DS,
+        eventProps(ev),
+        ev.descriptionMarkdown,
       );
-      eventPageId = firstResult(created)?.id ?? null;
+      eventPageId = created.pageId;
+      usedTemplate = created.usedTemplate;
       eventCreated = true;
       if (!eventPageId) {
-        throw new Error(
-          "Event creation returned no page id: " +
-            JSON.stringify(created).slice(0, 300),
-        );
+        throw new Error("Event creation returned no page id");
       }
     } else {
       const pageId = eventPageId;
@@ -323,6 +389,7 @@ const workflow = defineDurable<unknown, unknown>(
       eventType: ev.type,
       eventCreated,
       eventUpdated,
+      usedTemplate,
       coverSet,
     };
   },

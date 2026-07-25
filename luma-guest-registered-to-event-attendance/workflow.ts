@@ -134,6 +134,78 @@ function extractGuest(raw: unknown): Guest | null {
   };
 }
 
+/**
+ * Create a Notion data source item, applying the data source's DEFAULT TEMPLATE
+ * when one exists, so automation-created pages look like hand-made ones (icon,
+ * body blocks, and any property defaults set on the template).
+ *
+ * Two constraints of the Notion create action shape this helper:
+ *  1. `template_mode: "default"` THROWS on a data source that has no default
+ *     template ("No default template is configured for this data source"), so
+ *     that one error is caught and the create retried without it. No
+ *     per-data-source config is needed, and a template added in Notion later is
+ *     picked up automatically. (Today: Contacts has a default template; Events
+ *     and Event Attendance do not.)
+ *  2. A template and inline `content` are mutually exclusive — "If you select a
+ *     template, you cannot include content" — so body content must be appended
+ *     in a second call, via write/page_content.
+ *
+ * The fallback is caught INSIDE the step so a template miss doesn't spin the
+ * durable's step-retry loop.
+ */
+async function createItemWithTemplate(
+  ctx: any,
+  stepPrefix: string,
+  datasource: string,
+  props: Record<string, unknown>,
+  contentMarkdown?: string | null,
+): Promise<{ pageId: string | null; usedTemplate: boolean }> {
+  const created = await ctx.step(`${stepPrefix}-create`, async () => {
+    const inputs = { datasource, ...props };
+    try {
+      const res = await sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "create_database_item",
+        connection: NOTION_CONNECTION,
+        inputs: { ...inputs, template_mode: "default" },
+      });
+      return { res, usedTemplate: true };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!/no default template/i.test(msg)) throw err;
+      const res = await sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "create_database_item",
+        connection: NOTION_CONNECTION,
+        inputs,
+      });
+      return { res, usedTemplate: false };
+    }
+  });
+
+  const pageId: string | null = firstResult(created?.res)?.id ?? null;
+
+  if (pageId && contentMarkdown) {
+    await ctx.step(`${stepPrefix}-content`, async () =>
+      sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "page_content",
+        connection: NOTION_CONNECTION,
+        inputs: {
+          page_id: pageId,
+          content: contentMarkdown,
+          content_format: "markdown",
+        },
+      }),
+    );
+  }
+
+  return { pageId, usedTemplate: Boolean(created?.usedTemplate) };
+}
+
 /** Map Luma approval_status to the Notion "Approval Status" select option. */
 function mapApprovalStatus(status: string | null): string {
   switch ((status ?? "").toLowerCase()) {
@@ -222,28 +294,20 @@ const workflow = defineDurable<unknown, unknown>(
         createEventInputs["properties|||Date|||date__start"] = ev.startAt;
         if (ev.endAt) createEventInputs["properties|||Date|||date__end"] = ev.endAt;
       }
-      // Set the page body from Luma's description (create-only here; the
-      // luma-event-to-notion workflow owns ongoing body sync via event_updated).
-      if (ev.descriptionMarkdown) {
-        createEventInputs["content"] = ev.descriptionMarkdown;
-        createEventInputs["content_format"] = "markdown";
-      }
-      const created = await ctx.step("create-event", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "create_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: createEventInputs,
-        }),
+      // Apply the Events default template if one exists, then append Luma's
+      // description as the body (create-only here; the luma-event-to-notion
+      // workflow owns ongoing body sync via event_updated).
+      const created = await createItemWithTemplate(
+        ctx,
+        "event",
+        EVENTS_DS,
+        createEventInputs,
+        ev.descriptionMarkdown,
       );
-      eventPageId = firstResult(created)?.id ?? null;
+      eventPageId = created.pageId;
       eventCreated = true;
       if (!eventPageId) {
-        throw new Error(
-          "Event creation returned no page id: " +
-            JSON.stringify(created).slice(0, 300),
-        );
+        throw new Error("Event creation returned no page id");
       }
 
       // Best-effort page cover from the Luma cover image.
@@ -327,22 +391,18 @@ const workflow = defineDurable<unknown, unknown>(
         createContactInputs["properties|||Last Name|||rich_text"] =
           guest.lastName;
       }
-      const createdContact = await ctx.step("create-contact", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "create_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: createContactInputs,
-        }),
+      // Contacts HAS a default template (blue user-circle icon), so this picks
+      // it up — automation-created contacts match hand-made ones.
+      const createdContact = await createItemWithTemplate(
+        ctx,
+        "contact",
+        CONTACTS_DS,
+        createContactInputs,
       );
-      contactPageId = firstResult(createdContact)?.id ?? null;
+      contactPageId = createdContact.pageId;
       contactCreated = true;
       if (!contactPageId) {
-        throw new Error(
-          "Contact creation returned no page id: " +
-            JSON.stringify(createdContact).slice(0, 300),
-        );
+        throw new Error("Contact creation returned no page id");
       }
 
       // Index the new contact so future lookups resolve from the table.
@@ -437,16 +497,13 @@ const workflow = defineDurable<unknown, unknown>(
         createInputs["properties|||Registration Date|||date__start"] =
           guest.registeredAt;
       }
-      const created = await ctx.step("create-attendance", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "create_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: createInputs,
-        }),
+      const created = await createItemWithTemplate(
+        ctx,
+        "attendance",
+        ATTENDANCE_DS,
+        createInputs,
       );
-      attendancePageId = firstResult(created)?.id ?? null;
+      attendancePageId = created.pageId;
       attendanceCreated = true;
     } else {
       // Update the approval status to the current value. Only ever tick

@@ -50,7 +50,7 @@ flowchart TD
 3. If every email already has a row → return the matched page IDs and stop.
 4. Otherwise, for the new emails (capped at 10):
    - Send the whole batch to AI by Zapier in **one** `get_completion` call (`gpt-5-mini`, plan-included credits, `isOutputArray: true`). The model returns one `{ Email, "Is Individual", Rationale }` object per input.
-   - For each email classified as an individual, in parallel: create a Notion Contacts row (`NotionCLIAPI.write.create_database_item`, data source `21991b07-11ac-81a6-a894-000be4a09a67`, property `Primary Email`), then write the email→page-id mapping back to the Zapier Table (`TableCLIAPI.write.create_record`).
+   - For each email classified as an individual, in parallel: create a Notion Contacts row (`NotionCLIAPI.write.create_database_item`, data source `21991b07-11ac-81a6-a894-000be4a09a67`, property `Primary Email`) **with the Contacts default template** (`template_mode: "default"` — gives the page its blue `user-circle-filled` icon, matching hand-made contacts; falls back to a plain create if that data source ever loses its default template), then write the email→page-id mapping back to the Zapier Table (`TableCLIAPI.write.create_record`).
 5. Return existing + newly-created page IDs as a comma-separated string.
 
 ## Performance

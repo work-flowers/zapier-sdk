@@ -43,6 +43,27 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
 
 Physical check-in is tracked separately in the **`Checked In`** checkbox, not in the select.
 
+## Notion default templates
+
+All three creates (Event, Contact, Attendance) go through
+`createItemWithTemplate`, which applies the data source's **default template** so
+automation-created pages match hand-made ones (icon, body blocks, template
+property defaults). Two Notion-action constraints shape it:
+
+1. `template_mode: "default"` **throws** on a data source with no default
+   template (`No default template is configured for this data source`). The
+   helper catches that single error and retries without it — no per-data-source
+   config, and a template added in Notion later is picked up automatically.
+   Current state: **Contacts has** a default template (blue `user-circle-filled`
+   icon); **Events and Event Attendance do not**.
+2. A template and inline `content` are **mutually exclusive** in one call, so the
+   event body (Luma's description) is appended in a second `write/page_content`
+   call.
+
+Properties you pass still win — Notion's docs: "Any properties you provide here
+override the template's defaults." Verified live: a contact created by this
+workflow now carries the template icon while keeping its own Name/email.
+
 ## Connections
 
 | Alias | App key | Connection |

@@ -203,16 +203,34 @@ async function classifyBatch(zapier, emails) {
 }
 
 async function createNotionContact(zapier, connectionId, email) {
-  const { data } = await zapier.runAction({
-    appKey: "NotionCLIAPI",
-    actionType: "write",
-    actionKey: "create_database_item",
-    connectionId,
-    inputs: {
-      datasource: NOTION_DATA_SOURCE_ID,
-      "properties|||Primary Email|||email": email,
-    },
-  });
+  const inputs = {
+    datasource: NOTION_DATA_SOURCE_ID,
+    "properties|||Primary Email|||email": email,
+  };
+  // Apply the Contacts default template (blue user-circle icon) so contacts
+  // created here match hand-made ones. `template_mode: "default"` throws when a
+  // data source has no default template, so fall back to a plain create — that
+  // keeps this working if the template is ever removed.
+  let data;
+  try {
+    ({ data } = await zapier.runAction({
+      appKey: "NotionCLIAPI",
+      actionType: "write",
+      actionKey: "create_database_item",
+      connectionId,
+      inputs: { ...inputs, template_mode: "default" },
+    }));
+  } catch (err) {
+    if (!/no default template/i.test(String(err?.message ?? err))) throw err;
+    console.log(`No default template on Contacts; creating ${email} without one`);
+    ({ data } = await zapier.runAction({
+      appKey: "NotionCLIAPI",
+      actionType: "write",
+      actionKey: "create_database_item",
+      connectionId,
+      inputs,
+    }));
+  }
   console.log(`Notion create raw response for ${email}:`, JSON.stringify(data));
   const root = Array.isArray(data) ? data[0] : data;
   return root?.id ?? root?.page_id ?? null;
