@@ -20,6 +20,12 @@ Idempotent upsert keyed on the Luma event id:
    back to a Notion search on the `Luma ID` property.
 4. **Create or update** the Notion Event: `Event` (title), `Luma ID`, `Type`,
    `Date` (start/end datetime), `Event page` (url).
+4b. **Apply the data source's default template on create** via
+   `createItemWithTemplate` — `template_mode: "default"`, falling back to a plain
+   create when the data source has none (Events currently has no default
+   template, so this is a no-op there today; Contacts does). Because a template
+   and inline `content` cannot be sent in one call, the body is a **second**
+   `write/page_content` call. See "Notion default templates" below.
 5. **Sync the page body** from Luma's `description_markdown` (rendered as Notion
    blocks via `content` + `content_format: markdown`). Luma owns the body — on
    update, existing blocks are cleared first (`clearPageBody` deletes the page's
@@ -30,6 +36,31 @@ Idempotent upsert keyed on the Luma event id:
    `PATCH /v1/pages/{id}` (`sdk.fetch`) — the create/update actions can't set covers.
 7. **Upsert the `LUMA_EVENT_TABLE` row** (`Luma Event ID` → `Page ID`, `Event Name`)
    so guest workflows resolve the event without a Notion call.
+
+## Notion default templates
+
+Page creation goes through `createItemWithTemplate`, which applies the data
+source's **default template** so automation-created pages match hand-made ones
+(icon, body blocks, template property defaults). Two Notion-action constraints
+shape it:
+
+1. `template_mode: "default"` **throws** on a data source with no default
+   template (`No default template is configured for this data source`). The
+   helper catches that single error and retries without it — no per-data-source
+   config, and a template added in Notion later is picked up automatically.
+   Current state: **Contacts has** a default template (blue `user-circle-filled`
+   icon); **Events and Event Attendance do not**.
+2. A template and inline `content` are **mutually exclusive** in one call, so
+   body content is appended in a second `write/page_content` call.
+
+Properties you pass still win — Notion's docs: "Any properties you provide here
+override the template's defaults."
+
+> ⚠️ **Interaction with body sync:** on `event_updated` this workflow *clears
+> all* child blocks before rewriting the description (Luma owns the body). If a
+> default template with body blocks is ever added to the **Events** data source,
+> those blocks would be wiped on the next update. Revisit `clearPageBody` if that
+> changes.
 
 ## Connections
 

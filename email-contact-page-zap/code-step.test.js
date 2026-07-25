@@ -200,6 +200,39 @@ test("caps new contact creation at 10 even when more new emails arrive", async (
   assert.equal(result.page_ids.split(",").filter(Boolean).length, 10);
 });
 
+test("creates contacts with the data source's default template", async () => {
+  const calls = {};
+  const main = await loadMain({ captureCalls: calls });
+  await main({ inputData: { to: "jane.doe@example.com", from: "", cc: "" } });
+  assert.equal(calls.createNotion.length, 1);
+  assert.equal(calls.createNotion[0].inputs.template_mode, "default");
+});
+
+test("falls back to a plain create when the data source has no default template", async () => {
+  const calls = {};
+  const main = await loadMain({ captureCalls: calls });
+  const originalRunAction = globalThis.__zapierMock.runAction;
+  let templateAttempts = 0;
+  globalThis.__zapierMock.runAction = async (args) => {
+    if (args.appKey === "NotionCLIAPI" && args.inputs.template_mode === "default") {
+      templateAttempts += 1;
+      throw new Error(
+        "Action execution failed: No default template is configured for this data source.",
+      );
+    }
+    return originalRunAction(args);
+  };
+  const result = await main({
+    inputData: { to: "jane.doe@example.com", from: "", cc: "" },
+  });
+  // The template create was attempted and rejected, then the plain retry ran
+  // and produced the page — so only the retry reaches the recording mock.
+  assert.equal(templateAttempts, 1);
+  assert.equal(calls.createNotion.length, 1);
+  assert.equal(calls.createNotion[0].inputs.template_mode, undefined);
+  assert.match(result.page_ids, /^page-for-jane\.doe@example\.com$/);
+});
+
 test("a single failing Notion call does not abort the batch", async () => {
   const calls = {};
   const main = await loadMain({ captureCalls: calls });
