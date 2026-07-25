@@ -20,6 +20,7 @@ Classic Code-step Zap directories carry the code-step source and tests instead o
 2. **Deployed code always links back to this repo** — each source file carries a `// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/<zap-name>` comment, and that comment must be present in the version published to Zapier.
 3. **This root README is updated whenever Zaps are created, published, modified, enabled/disabled, or removed** — keep the Zap index below current.
 4. **Every Durable directory carries a `zap.json` mirroring the deployed state** — pulled from Zapier when the Zap is added to the repo, and refreshed (`current_version_id`, `enabled`, dependency versions, etc.) whenever the Zap changes on Zapier.
+5. **Creating a page in a Notion data source always applies that data source's default template, if one exists** — automation-created pages must look like hand-made ones. Pass `template_mode: "default"` on every `create_database_item` call and fall back to a plain create only when Notion reports the data source has no default template. Because a template and inline page content are mutually exclusive in one call, body content is added in a second `write/page_content` call. See the "Notion page creation" convention in [CLAUDE.md](CLAUDE.md) for the helper and the exact error to catch.
 
 These rules are mirrored in [CLAUDE.md](CLAUDE.md) so Claude Code sessions follow them automatically.
 
