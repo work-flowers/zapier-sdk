@@ -114,13 +114,19 @@ interface ContactEmails {
   pageId: string;
   /** [email, "Primary" | "Secondary"] pairs, primary first, deduped. */
   emails: Array<[string, "Primary" | "Secondary"]>;
-  /** The contact was sent to Notion's trash — the losing half of a merge. */
+  /** The contact was sent to Notion's trash — the losing half of a merge, or a
+   *  genuine delete. */
   inTrash: boolean;
+  /** The contact was pulled back OUT of the trash. */
+  restored: boolean;
 }
 
 /** Notion's integration-webhook event types that mean "this page is gone".
  *  Matched exactly — `page.undeleted` must not be mistaken for a deletion. */
 const DELETED_EVENT_TYPES = new Set(["page.deleted", "page.trashed"]);
+
+/** ...and the ones that mean it came back. */
+const RESTORED_EVENT_TYPES = new Set(["page.undeleted", "page.restored"]);
 
 function extractContact(raw: unknown): ContactEmails | null {
   const o = (raw ?? {}) as Record<string, any>;
@@ -160,7 +166,12 @@ function extractContact(raw: unknown): ContactEmails | null {
     data?.archived === true ||
     data?.is_archived === true ||
     DELETED_EVENT_TYPES.has(eventType);
-  return { pageId, emails, inTrash };
+  return {
+    pageId,
+    emails,
+    inTrash,
+    restored: !inTrash && RESTORED_EVENT_TYPES.has(eventType),
+  };
 }
 
 // --- Notion page state -------------------------------------------------------
@@ -250,37 +261,28 @@ async function rowsOwnedBy(pageId: string): Promise<any[]> {
  * them finds nothing in the Table and creates a fresh duplicate contact — which
  * is how the 2026-07-26 Tun Shu pair kept regenerating.
  *
- * That automation matches rows by Page ID, so the hand-over below both fixes
- * the ownership AND takes the rows out of its sights — verified live on
- * 2026-07-26: a row re-pointed at the survivor before the trash was still there
- * long after the deletion would have run. The second pass is the backstop for
- * when it wins anyway (this workflow queued behind it, a retry, a slow tick):
- * an upsert that puts back whatever went missing. Five minutes is several times
- * the observed latency, and the durable is suspended for the wait, so it costs
- * nothing. If that automation is ever retired, the second pass simply finds
- * every row already correct.
+ * RETIRED 2026-07-26: that Zap's Contacts branch (path A) has been turned off
+ * and the `page.deleted` subscription now points at this workflow, so nothing
+ * races the hand-over any more and the second pass is dead weight. Set back to
+ * 300 if path A is ever revived — the second pass is an idempotent upsert, so it
+ * is only ever a cost, never a risk.
  */
-const MERGE_SETTLE_SECONDS = 300;
+const MERGE_SETTLE_SECONDS = 0;
 
 /**
  * How long to keep watching an address that another live contact already owns.
  *
  * A cross-contact collision is the first visible sign of a merge in progress:
- * the addresses land on the survivor before the loser is trashed. As of
- * 2026-07-26 the Contacts automation does NOT fire on trash, so the merge path
- * above never runs — and the reclaim path can't help either, because by then
- * the row-deleting automation has removed the row entirely rather than leaving
- * it pointed at a trashed page.
+ * the addresses land on the survivor before the loser is trashed. This existed
+ * because the trash event did not reach this workflow, so the merge path never
+ * ran and a collision was the only handle on a merge.
  *
- * So a conflict schedules its own re-check: mark the duplicate as before, wait,
- * then look again. If the other contact has since been trashed (or its row has
- * vanished) the address is claimed for this contact. If it's still alive — two
- * genuinely different people sharing an address — nothing changes.
- *
- * Fifteen minutes covers a merge done in one sitting. Anything slower needs the
- * trash trigger; see the deploy notes in the README.
+ * RETIRED 2026-07-26: `page.deleted` now arrives here, so trashing the loser
+ * drives the merge path directly and the deferred re-check is redundant — along
+ * with the fifteen-minute lingering run it caused on every collision. Set back
+ * to 900 if the subscription is ever pointed away again.
  */
-const CONFLICT_SETTLE_SECONDS = 900;
+const CONFLICT_SETTLE_SECONDS = 0;
 
 /** How the survivor holds an address, so a handed-over row is typed the way the
  *  contact actually reads — after a merge the loser's Primary is usually one of
@@ -364,14 +366,17 @@ async function handOverAddresses(
 }
 
 /**
- * Re-examine addresses that a different live contact owned, after giving a
- * merge time to finish. Claims an address for `pageId` when its previous owner
- * has gone to the trash, or when its row has disappeared altogether (the
- * row-deleting automation, see MERGE_SETTLE_SECONDS). Leaves it alone while the
- * other contact is still alive.
+ * Make `pageId` the owner of every address in `entries`, without ever taking one
+ * off a living contact: the row is created if it has gone, re-pointed if its
+ * owner is in the trash, and left exactly as it is if some other live contact
+ * holds it.
+ *
+ * Used twice — to settle a collision once a merge has had time to finish, and to
+ * put a restored contact's addresses back.
  */
-async function reclaimConflicted(
+async function claimAddresses(
   ctx: DurableContext,
+  stepPrefix: string,
   pageId: string,
   entries: Array<[string, "Primary" | "Secondary"]>,
 ) {
@@ -380,7 +385,7 @@ async function reclaimConflicted(
 
   for (let i = 0; i < entries.length; i++) {
     const [email, type] = entries[i];
-    const outcome = await ctx.step(`conflict-recheck-${i}`, async () => {
+    const outcome = await ctx.step(`${stepPrefix}-${i}`, async () => {
       const hit = await sdk.listTableRecords({
         table: CONTACT_EMAIL_TABLE,
         keyMode: "names",
@@ -391,8 +396,9 @@ async function reclaimConflicted(
       const rowPageId = firstString(row?.data?.["Page ID"]);
 
       if (!row) {
-        // The owner was trashed and its rows swept away. The address is on this
-        // contact, so this contact is who it should resolve to.
+        // No row at all — the owner was trashed and its rows removed with it.
+        // The address is on this contact, so this contact is who it should
+        // resolve to.
         await sdk.createTableRecords({
           table: CONTACT_EMAIL_TABLE,
           keyMode: "names",
@@ -431,6 +437,52 @@ async function reclaimConflicted(
   }
 
   return { claimed, stillOwned };
+}
+
+/**
+ * The contact came back out of the trash. Its rows went with it when it was
+ * deleted, so put them back — otherwise the restored contact is invisible to
+ * every lookup until someone happens to edit one of its emails, and the next
+ * registration with one of its addresses creates a duplicate.
+ *
+ * Addresses come off the page itself rather than the payload: Notion's
+ * `page.undeleted` event carries no properties, and the restore is the moment
+ * the page is authoritative again.
+ */
+async function restoreContact(ctx: DurableContext, contact: ContactEmails) {
+  const pageId = contact.pageId;
+  const state = await ctx.step("restore-read-page", async () => readPageState(pageId));
+
+  if (!state) {
+    console.log(`contact ${pageId} was restored but Notion would not return the page`);
+    return { pageId, restored: true, claimed: [], reason: "page unreadable" };
+  }
+  if (state.gone) {
+    // Trashed again between the event and this read — the trash path owns it.
+    console.log(`contact ${pageId} is back in the trash; nothing to restore`);
+    return { pageId, restored: true, claimed: [], reason: "back in the trash" };
+  }
+
+  const entries: Array<[string, "Primary" | "Secondary"]> = [];
+  if (state.primary) entries.push([state.primary, "Primary"]);
+  for (const email of state.secondaries) {
+    if (email !== state.primary) entries.push([email, "Secondary"]);
+  }
+  for (const [email, type] of contact.emails) {
+    if (!entries.some(([e]) => e === email)) entries.push([email, type]);
+  }
+
+  if (entries.length === 0) {
+    console.log(`contact ${pageId} was restored but holds no addresses`);
+    return { pageId, restored: true, claimed: [], reason: "no addresses" };
+  }
+
+  const result = await claimAddresses(ctx, "restore", pageId, entries);
+  console.log(
+    `restored ${pageId}: re-indexed ${result.claimed.length} of ${entries.length} ` +
+      `address(es), ${result.stillOwned.length} held by another contact`,
+  );
+  return { pageId, restored: true, ...result };
 }
 
 /**
@@ -612,6 +664,12 @@ const workflow = defineDurable<unknown, unknown>(
       return await mergeAway(ctx, contact);
     }
 
+    // Pulled back out of the trash: its rows were removed when it went in, so
+    // re-index the addresses it still holds.
+    if (contact.restored) {
+      return await restoreContact(ctx, contact);
+    }
+
     if (contact.emails.length === 0) {
       console.log("skipping: no valid emails in payload");
       return { skipped: true, reason: "no valid emails in payload", pageId: contact.pageId };
@@ -720,7 +778,7 @@ const workflow = defineDurable<unknown, unknown>(
     // A collision is usually a merge caught in the act — the addresses reach the
     // survivor before the loser is trashed. Come back once the dust has settled
     // and claim anything whose owner has gone. See CONFLICT_SETTLE_SECONDS.
-    let settledConflicts: Awaited<ReturnType<typeof reclaimConflicted>> | null = null;
+    let settledConflicts: Awaited<ReturnType<typeof claimAddresses>> | null = null;
     if (duplicates.length > 0 && CONFLICT_SETTLE_SECONDS > 0) {
       await ctx.wait("conflict-settle", CONFLICT_SETTLE_SECONDS);
       const conflicted = duplicates.map(
@@ -728,7 +786,9 @@ const workflow = defineDurable<unknown, unknown>(
           contact.emails.find(([email]) => email === d.email) ??
           ([d.email, "Secondary"] as [string, "Primary" | "Secondary"]),
       );
-      settledConflicts = await reclaimConflicted(ctx, contact.pageId, conflicted);
+      settledConflicts = await claimAddresses(
+        ctx, "conflict-recheck", contact.pageId, conflicted,
+      );
     }
 
     return {
