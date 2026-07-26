@@ -173,6 +173,10 @@ interface PageState {
   duplicateLinks: string[];
   /** `Primary Email`, lowercased, or null — used to type a handed-over row. */
   primary: string | null;
+  /** `Secondary Email` values, lowercased and validated. A trashed page keeps
+   *  its properties, so this is the one address source a merge can always rely
+   *  on: the webhook may carry none, and the rows may already be swept. */
+  secondaries: string[];
 }
 
 /**
@@ -191,7 +195,7 @@ async function readPageState(pageId: string): Promise<PageState | null> {
   // A hard-deleted page (emptied from the trash) 404s; that's still "gone",
   // and it's the state a row left behind by an old merge is most likely in.
   if (res.status === 404) {
-    return { gone: true, duplicateLinks: [], primary: null };
+    return { gone: true, duplicateLinks: [], primary: null, secondaries: [] };
   }
   if (!res.ok) return null;
   const body: any = await res.json();
@@ -211,6 +215,7 @@ async function readPageState(pageId: string): Promise<PageState | null> {
       body?.is_archived === true,
     duplicateLinks: links,
     primary: cleanEmail(props["Primary Email"]?.email),
+    secondaries: extractEmails(props["Secondary Email"]),
   };
 }
 
@@ -439,20 +444,31 @@ async function reclaimConflicted(
  * arises when both contacts' emails get edited). The first linked page that
  * isn't itself in the trash wins.
  *
- * With no usable survivor nothing is written. A missing or trash-pointed row is
- * recoverable — the reclaim path picks it up the moment the surviving contact's
- * emails are next edited — whereas a row pointed at the WRONG contact is silent,
- * lasting corruption. Guessing is the worse failure, so this does nothing and
- * says so in the result.
+ * A trashed contact with no live duplicate link was not merged into anything —
+ * it was simply deleted — so its rows are deleted with it. That is the classic
+ * Zap's Contacts behaviour, kept here where the merge case can be recognised
+ * first. The two are told apart only when Notion actually answers: if the
+ * trashed page can't be read, nothing is touched, because "no link" and "no
+ * answer" look identical and only one of them justifies deleting rows.
  */
 async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
   const pageId = contact.pageId;
 
-  // Snapshot the addresses while the evidence still exists: the trashed
-  // contact's own properties from the webhook, plus whatever the Table still
-  // says it owns. Minutes from now the rows may be gone.
+  // Read the trashed page first — it is the only address source that can't be
+  // raced. The webhook may carry no properties at all (Notion's `page.deleted`
+  // integration event carries none), and the rows may already have been swept
+  // by the row-deleting automation; a page in the trash still answers
+  // `GET /v1/pages/{id}` with its full property set.
+  //
+  // `readable` separates "this contact was merged into nobody" from "Notion
+  // wouldn't tell us". Only the first is grounds for deleting rows.
+  const self = await ctx.step("merge-read-self", async () => readPageState(pageId));
+  const readable = self !== null;
+
   const addresses = await ctx.step("merge-collect-addresses", async () => {
     const found = new Set(contact.emails.map(([email]) => email));
+    if (self?.primary) found.add(self.primary);
+    for (const email of self?.secondaries ?? []) found.add(email);
     for (const row of await rowsOwnedBy(pageId)) {
       const email = cleanEmail(row?.data?.["Email"]);
       if (email) found.add(email);
@@ -466,7 +482,6 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
   }
 
   const survivor = await ctx.step("merge-find-survivor", async () => {
-    const self = await readPageState(pageId);
     for (const candidate of self?.duplicateLinks ?? []) {
       if (sameId(candidate, pageId)) continue;
       const state = await readPageState(candidate);
@@ -477,17 +492,45 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
     return null;
   });
 
-  if (!survivor) {
+  if (!survivor && !readable) {
     console.log(
-      `contact ${pageId} is in the trash holding ${addresses.length} address(es) but ` +
-        "has no surviving duplicate link — leaving the Table alone",
+      `contact ${pageId} is in the trash but Notion would not return the page — ` +
+        "leaving the Table alone",
     );
     return {
       pageId,
       inTrash: true,
       movedTo: null,
       addresses,
-      reason: "no surviving duplicate link",
+      reason: "trashed page unreadable",
+    };
+  }
+
+  if (!survivor) {
+    // Nobody was merged into: this is a genuine delete, and the rows should go
+    // with the contact. Leaving them would resolve future registrations to a
+    // page in the trash, which is the problem the classic Zap's Contacts branch
+    // was built to solve — this is that behaviour, moved here so that the merge
+    // case can be told apart from it first.
+    const removed = await ctx.step("merge-delete-rows", async () => {
+      const rows = await rowsOwnedBy(pageId);
+      if (rows.length === 0) return [] as string[];
+      await sdk.deleteTableRecords({
+        table: CONTACT_EMAIL_TABLE,
+        records: rows.map((r) => r.id),
+      });
+      return rows.map((r) => firstString(r?.data?.["Email"]) ?? r.id);
+    });
+    console.log(
+      `contact ${pageId} was deleted, not merged — removed ${removed.length} Table row(s)`,
+    );
+    return {
+      pageId,
+      inTrash: true,
+      movedTo: null,
+      addresses,
+      deleted: removed,
+      reason: "no surviving duplicate link (genuine delete)",
     };
   }
 
@@ -502,7 +545,8 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
     ctx, "merge-handover", addresses, pageId, survivor, beforeState,
   );
 
-  await ctx.wait("merge-settle", MERGE_SETTLE_SECONDS);
+  // Zero disables the wait — see the cutover notes in the README.
+  if (MERGE_SETTLE_SECONDS > 0) await ctx.wait("merge-settle", MERGE_SETTLE_SECONDS);
 
   // Second pass: put back anything that got deleted in the meantime.
   const afterState = await ctx.step("merge-recheck-survivor", async () =>
@@ -677,7 +721,7 @@ const workflow = defineDurable<unknown, unknown>(
     // survivor before the loser is trashed. Come back once the dust has settled
     // and claim anything whose owner has gone. See CONFLICT_SETTLE_SECONDS.
     let settledConflicts: Awaited<ReturnType<typeof reclaimConflicted>> | null = null;
-    if (duplicates.length > 0) {
+    if (duplicates.length > 0 && CONFLICT_SETTLE_SECONDS > 0) {
       await ctx.wait("conflict-settle", CONFLICT_SETTLE_SECONDS);
       const conflicted = duplicates.map(
         (d) =>
