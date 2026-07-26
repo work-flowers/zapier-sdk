@@ -27,9 +27,10 @@ pointed here to drive the merge hand-over. It isn't today — see
 
 ## What it does
 
-**If the triggering contact is in the trash** it's the losing half of a merge, so its
-addresses are handed to the survivor — see [Merges](#merges) below. Otherwise, for every
-valid email on the contact (primary + each secondary, lowercased, deduped):
+**If the triggering contact is in the trash**, it was either merged away (addresses go
+to the survivor) or genuinely deleted (rows go with it) — see [Merges and deletes](#merges-and-deletes)
+below. Otherwise, for every valid email on the contact (primary + each secondary,
+lowercased, deduped):
 
 | Table state for that email | Action |
 |---|---|
@@ -47,9 +48,11 @@ several generations of automation, in both spellings; a mismatch used to read as
 flowchart TD
     A["Webhook: Contacts DB automation<br/>(Primary/Secondary Email edited,<br/>or page trashed)"] --> T{"Contact in trash?"}
     T -- yes --> M1["Snapshot its addresses<br/>(payload + rows it owns)"]
-    M1 --> M2{"Live 'Duplicate of' /<br/>'Duplicated by' link?"}
+    M1 --> M2{"Trashed page readable?"}
     M2 -- no --> MS(["Leave the Table alone"])
-    M2 -- yes --> M3["Hand addresses to survivor<br/>(move / recreate / skip)"]
+    M2 -- yes --> M2b{"Live 'Duplicate of' /<br/>'Duplicated by' link?"}
+    M2b -- "no (genuine delete)" --> MD(["Delete the rows it owns"])
+    M2b -- "yes (merge)" --> M3["Hand addresses to survivor<br/>(move / recreate / skip)"]
     M3 --> M4["ctx.wait 5 min<br/>(outlast the row-deleting automation)"]
     M4 --> M5["Re-check: recreate<br/>anything deleted meanwhile"]
     T -- no --> B["Extract page id + all emails<br/>(email prop, multi_select, comma string —<br/>validated, lowercased, deduped)"]
@@ -73,7 +76,7 @@ flowchart TD
     H -- no --> J(["Return indexed / unchanged / healed /<br/>reclaimed / duplicates / settled"])
 ```
 
-## Merges
+## Merges and deletes
 
 Merging two contacts by hand means consolidating the addresses onto the survivor and
 trashing the loser. Nothing in Notion tells the Table that happened, and **a separate,
@@ -119,33 +122,58 @@ leave it alone if a *third* contact has since claimed the address), so running i
 is harmless, and if the deleting automation is ever retired the second pass simply finds
 everything already correct. The durable is suspended for the wait, so it costs nothing.
 
-None of the paths guess. With no live duplicate link, the trashed contact's addresses
-are left alone and the result says so; a collision whose owner is still alive is left
-alone too. A missing or trash-pointed row is recoverable by the reclaim path, whereas a
-row pointed at the *wrong* contact is silent, lasting corruption.
+### Merge vs genuine delete
 
-### ⚠️ The trash trigger isn't pointed here yet
+A trashed contact with **no** live duplicate link wasn't merged into anything — it was
+deleted — so its rows are deleted with it. That is the classic Zap's Contacts behaviour,
+living here now that the merge case can be recognised first and spared.
 
-Measured on 2026-07-26: the Contacts **DB automation** does not fire on trash — three
-test contacts were trashed and not one produced a run here. Notion *is* emitting the
-event, but as an **integration webhook** (`type: "page.deleted"`) aimed at the classic
-Zap "Delete Contact, Company or Meeting Note Page from Zapier Table", which is what
-sweeps the rows.
+The two are only told apart when Notion actually answers. If the trashed page can't be
+read, nothing is touched: "no link" and "no answer" look identical from here, and only
+one of them justifies deleting rows. A collision whose owner is still alive is likewise
+left alone — two people can share an address. Nothing guesses; a row pointed at the
+*wrong* contact is silent, lasting corruption, and is always the worse failure.
 
-So the trash branch is correct but dormant, and the collision re-check is carrying the
-load. That covers a merge done in one sitting (edit the survivor, trash the loser within
-15 minutes); a merge where the loser is trashed hours later still strands its addresses.
+### Where the addresses come from
 
-To close the gap, **add this workflow's webhook URL as a second destination for that
-`page.deleted` subscription**. No republish is needed: `extractContact` already reads
-both payload shapes — the DB automation's `{ data: { id, properties } }` and the
-integration webhook's `{ type: "page.deleted", entity: { id } }`, which carries the page
-id on `entity` and no trash flag at all.
+A trashed contact's addresses are gathered from three sources, unioned:
 
-The longer-term shape is for this durable to own Contacts-table hygiene outright — merge
-→ hand over, genuine delete → remove the rows — and for the classic Zap's Contacts branch
-(path A) to be retired, leaving it Companies, Meeting Notes and Setup Sessions. That also
-retires the settle wait, since nothing would be racing.
+1. **The trashed page itself** (`GET /v1/pages/{id}`) — the only source that can't be
+   raced. A page in the trash still answers with its full property set, so this works
+   even when the webhook carried no properties and the rows are already gone.
+2. **The webhook payload**, when it carries `properties` (the DB automation shape does;
+   Notion's `page.deleted` integration event does not).
+3. **Rows the Table still says it owns**, which catches an address that was indexed but
+   has since been removed from the contact.
+
+Source 1 is why the merge path is reliable regardless of which automation fires first.
+Verified live: with the row already swept and a property-less `page.deleted` payload,
+the hand-over still recovered the address and re-pointed it at the survivor.
+
+## Cutover: making this durable the table's only owner
+
+The classic Zap **"Delete Contact, Company or Meeting Note Page from Zapier Table"**
+(path A, nodes 4 / 14 / 15 / 16) still deletes Contacts rows on `page.deleted`. This
+workflow now covers that case properly — merge → hand over, genuine delete → delete —
+so path A is redundant and actively harmful on merges. Three steps to retire it:
+
+1. **Point the `page.deleted` subscription at this workflow's webhook** (see `zap.json`
+   → `trigger.webhook_url`). No code change: `extractContact` reads both the DB
+   automation's `{ data: { id, properties } }` and the integration webhook's
+   `{ type: "page.deleted", entity: { id } }`.
+2. **Pause path A** in that Zap, leaving paths B (Company), C (Meeting Note) and D
+   (Setup Sessions) alone. Those tables have no create-on-miss consumer, so the plain
+   delete is fine for them.
+3. **Set both settle constants to `0`** and republish. Each is guarded by a
+   `> 0` check, so zero skips the wait entirely:
+   - `MERGE_SETTLE_SECONDS` — exists only to outlast path A's sweep.
+   - `CONFLICT_SETTLE_SECONDS` — exists only because the trash event doesn't reach this
+     workflow. Once step 1 is done the trash branch handles merges directly, and the
+     15-minute lingering run goes away.
+
+Do steps 1 and 2 together: with the subscription pointed here but path A still live,
+both delete the same rows (harmless, just duplicated work); with path A paused but the
+subscription not repointed, nothing cleans up after a genuine delete.
 
 ## Gaps in the original Zap this port fixes
 
@@ -183,9 +211,10 @@ duplicate rows are benign (lookups take the first hit, both point at the same pa
 - **A collision makes the run linger 15 minutes** (`CONFLICT_SETTLE_SECONDS`) before it
   finishes. The durable is suspended for the wait, so it costs nothing, but a bulk edit
   that collides on many contacts leaves that many runs open for a quarter of an hour.
-- Trashing a contact that was never merged has no duplicate link to follow, so its
-  addresses are left alone — and the other automation then deletes their rows. That is
-  the correct outcome for a genuine delete.
+  Goes away at step 3 of the cutover.
+- **A restored contact does not get its rows back.** Trashing a contact deletes its rows;
+  untrashing it in Notion does not recreate them, so the contact is unindexed until one
+  of its emails is next edited. Same as the classic Zap's behaviour, not a regression.
 
 ## Connections
 
