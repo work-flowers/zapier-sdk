@@ -1,7 +1,7 @@
 {
   "name": "contact-emails-to-zapier-table",
   "workflow_id": "019f92d6-a6f8-758b-bed7-ae06760053cf",
-  "current_version_id": "019f9e8f-9b58-75c6-aa27-26e20d96ec55",
+  "current_version_id": "019f9ea7-992d-7fcd-b635-84c17d5ab98b",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZ0f3jlPE-7tAjKM9g-Zpg",
   "enabled": true,
   "trigger": {
@@ -15,6 +15,6 @@
     "@zapier/zapier-sdk": "0.86.0"
   },
   "created_at": "2026-07-24T06:36:12.289Z",
-  "version_created_at": "2026-07-26T13:13:59.383Z",
+  "version_created_at": "2026-07-26T13:40:11.694Z",
   "description": "Notion Contacts email edits -> index every Primary/Secondary email in the email->page-id Zapier Table; mark cross-contact email collisions as Duplicate of; on trash, hand a merged-away contact's addresses to the survivor or delete them on a genuine delete; on restore, re-index them. Ignores pages from the other Core CRM Objects data sources."
 }

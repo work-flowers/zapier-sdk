@@ -224,6 +224,14 @@ async function readPageState(pageId: string): Promise<PageState | null> {
     connection: NOTION_CONNECTION,
     headers: { "Notion-Version": NOTION_VERSION },
   });
+  // Rate limits and server errors are transient. THROW so the enclosing
+  // ctx.step retries with backoff, rather than returning null and letting the
+  // caller mistake "Notion was busy" for an answer — three of these workflows
+  // running at once is enough to trip Notion's rate limit, and on 2026-07-26
+  // that turned two merges into genuine deletes.
+  if (res.status === 429 || res.status >= 500) {
+    throw new Error(`Notion ${res.status} reading page ${pageId} — retrying`);
+  }
   // A hard-deleted page (emptied from the trash) 404s; that's still "gone",
   // and it's the state a row left behind by an old merge is most likely in.
   if (res.status === 404) {
@@ -584,16 +592,37 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
     return { pageId, inTrash: true, movedTo: null, addresses, reason: "no addresses" };
   }
 
-  const survivor = await ctx.step("merge-find-survivor", async () => {
+  // Three outcomes, not two. "No survivor" is not the same claim as "no
+  // survivor could be confirmed", and only the first may lead to a delete.
+  const { survivor, inconclusive } = await ctx.step("merge-find-survivor", async () => {
+    let inconclusive = false;
     for (const candidate of self?.duplicateLinks ?? []) {
       if (sameId(candidate, pageId)) continue;
       const state = await readPageState(candidate);
-      // Unreadable (null) is not proof of life — only an explicit "not gone"
-      // is good enough to receive another contact's addresses.
-      if (state && !state.gone) return candidate;
+      if (state === null) {
+        // Readable neither as a page nor as a 404. Not proof of life, and
+        // emphatically not proof of death.
+        inconclusive = true;
+        continue;
+      }
+      if (!state.gone) return { survivor: candidate as string | null, inconclusive: false };
     }
-    return null;
+    return { survivor: null as string | null, inconclusive };
   });
+
+  if (!survivor && inconclusive) {
+    console.log(
+      `contact ${pageId} is in the trash and its duplicate link could not be read — ` +
+        "leaving the Table alone",
+    );
+    return {
+      pageId,
+      inTrash: true,
+      movedTo: null,
+      addresses,
+      reason: "duplicate link unreadable",
+    };
+  }
 
   if (!survivor && !readable) {
     console.log(
@@ -610,7 +639,8 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
   }
 
   if (!survivor) {
-    // Nobody was merged into: this is a genuine delete, and the rows should go
+    // Nobody was merged into — positively, not for want of looking. This is a
+    // genuine delete, and the rows should go
     // with the contact. Leaving them would resolve future registrations to a
     // page in the trash, which is the problem the classic Zap's Contacts branch
     // was built to solve — this is that behaviour, moved here so that the merge
