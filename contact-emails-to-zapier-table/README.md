@@ -17,8 +17,18 @@ Notion DB automation on the **Contacts** DB (Primary Email or Secondary Email ed
 `{ data: { id, in_trash, properties: { "Primary Email": { email }, "Secondary Email": { multi_select: [{ name }] } } } }`.
 
 The same webhook also accepts Notion's **integration-webhook** shape,
-`{ type, entity: { id } }`. The `page.deleted` and `page.undeleted` subscriptions point
-here, which is what drives the merge hand-over, the delete sweep and the restore.
+`{ type, entity: { id }, data: { parent: { data_source_id } } }`. The `page.deleted` and
+`page.undeleted` subscriptions point here, which is what drives the merge hand-over, the
+delete sweep and the restore.
+
+> ⚠️ Those subscriptions are registered on the whole **Core CRM Objects** database, not
+> just Contacts, so deletes and restores from every data source under it (Companies,
+> Deals, …) arrive at this webhook. They are filtered out — see
+> [Pages from other data sources](#pages-from-other-data-sources).
+
+Notion's subscription-verification ping (`{ verification_token }`) has no page id, so it
+lands as a clean skipped run. The token stays readable in that run's input, which is
+where to fetch it when wiring a subscription up.
 
 > ⚠️ **The Notion automation must POST to this workflow's webhook URL** (see
 > `zap.json` → `trigger.webhook_url`). After deploying, repoint the automation and
@@ -153,6 +163,24 @@ A trashed contact's addresses are gathered from three sources, unioned:
 Source 1 is why the merge path is reliable regardless of which automation fires first.
 Verified live: with the row already swept and a property-less `page.deleted` payload,
 the hand-over still recovered the address and re-pointed it at the survivor.
+
+## Pages from other data sources
+
+The `page.deleted` / `page.undeleted` subscriptions cover the whole Core CRM Objects
+database, so a deleted Company or Deal reaches this workflow exactly like a deleted
+Contact. Two guards keep them out, in that order:
+
+1. **Payload parent** — every event carries `data.parent.data_source_id` (both shapes do,
+   in the same place). A page whose parent isn't the Contacts data source is dropped
+   before a single API call.
+2. **The page's real parent** — if a payload ever arrives without one, the trash and
+   restore paths check the parent on the page they read and bail before writing.
+
+The second guard is what stops the worst case rather than merely the wasteful one: a
+restore reads `Primary Email` off the page and indexes it, so a sibling data source with
+a same-named property could otherwise point a contact lookup at a Company or a Deal. An
+unknown parent is never treated as a rejection — only a parent that is positively *not*
+Contacts.
 
 ## Restores, and why there is no "deleted" flag
 
