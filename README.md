@@ -30,7 +30,7 @@ These rules are mirrored in [CLAUDE.md](CLAUDE.md) so Claude Code sessions follo
 
 | Zap | Type | Status | Description |
 | --- | --- | --- | --- |
-| [`contact-emails-to-zapier-table`](contact-emails-to-zapier-table/) | Durable | ✅ Enabled | Notion Contacts email edits → index every Primary/Secondary email in the email → page-ID Zapier Table; marks cross-contact email collisions as `Duplicate of`. Port of the classic "Update Zapier Table When Email Address Updated" Zap. |
+| [`contact-emails-to-zapier-table`](contact-emails-to-zapier-table/) | Durable | ✅ Enabled | Notion Contacts email edits → index every Primary/Secondary email in the email → page-ID Zapier Table; marks cross-contact email collisions as `Duplicate of`, and hands a merged-away contact's addresses to the survivor. Port of the classic "Update Zapier Table When Email Address Updated" Zap. |
 | [`contrast-registrations-to-event-attendance`](contrast-registrations-to-event-attendance/) | Durable | ⏸️ Disabled | Contrast webinar registrations → Notion Event Attendance upserts. Retired 2026-07-23 when events moved to Luma; kept for reference. |
 | [`deal-won-set-up-client-workspace`](deal-won-set-up-client-workspace/) | Durable | ⚠️ Not deployed | Deal won → create the company's Google Drive folder under Client Docs and link it on the Notion Companies record. Source only; not yet published to Zapier. |
 | [`email-contact-page-zap`](email-contact-page-zap/) | Code step (classic Zap) | ✅ In production | [Sub-Zap] Retrieve Contact Page IDs for Email Addresses — single Code step replacing the original 24-node sub-Zap. |
