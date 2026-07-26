@@ -31,6 +31,10 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 3. **Update contact** — Inline function that replaces the sub-Zap:
    - **Same or no prior email** (Path D): sets Primary Email to the enriched
      email; leaves Secondary Email untouched.
+   - **Work address over a consumer mailbox** (Path G-promote): when the existing
+     Primary Email is on a **freemail** domain and the enriched address is not,
+     the enriched (work) address takes Primary and the personal one moves to
+     Secondary. See [Email paths](#email-paths).
    - **New/different email** (Path G): keeps the existing Primary Email, adds
      the enriched email to Secondary Email.
    - **Profile pic** (Path C): if the enrichment returned a profile pic URL,
@@ -66,13 +70,48 @@ flowchart TD
     NP -- "profile found" --> E{"Enriched email vs existing<br/>Primary Email?"}
     NP -- "error / no result" --> D(["Log, comment outcome, return<br/>(no retry)"])
     E -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
+    E -- "different, and Primary is freemail<br/>while enriched is corporate<br/>(Path G-promote)" --> GP["Enriched work address → Primary,<br/>personal address → Secondary"]
     E -- "new/different email (Path G)" --> G["Keep Primary Email, add enriched<br/>email to Secondary Email"]
     F --> H{"Profile pic URL returned?"}
+    GP --> H
     G --> H
     H -- yes --> I["Update Notion page icon + cover<br/>(Path C, via sdk.fetch)"] --> J
     H -- no --> J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
     J --> K(["Return pageId, enriched, source, emailPath, iconUpdated"])
 ```
+
+## Email paths
+
+Which slot an enriched address lands in depends on what the contact already has:
+
+| Existing `Primary Email` | Enriched address | Result | Path |
+|---|---|---|---|
+| empty, or the same address | corporate or consumer | enriched → Primary | D |
+| **freemail** (`gmail.com`, `hotmail.co.uk`, `outlook.*`, `yahoo.*`, `icloud.com`, …) | **corporate** | **enriched → Primary, personal → Secondary** | **G-promote** |
+| already corporate | corporate | Primary untouched, enriched → Secondary | G |
+| freemail | also freemail | Primary untouched, enriched → Secondary | G |
+
+**Why G-promote exists (added 2026-07-26).** Path G originally covered every
+"different email" case, so a contact who signed up with a personal address kept
+that address in `Primary Email` while the real work address was buried in
+`Secondary Email` — inverted on ~26 contacts, and the opposite of the rule the
+[Luma guest workflows](../luma-guest-registered-to-event-attendance#work-email--primary-email)
+apply to a `Work Email` registration answer.
+
+**Why it's narrow.** An enriched address is a *guess*, so it must never overwrite
+a `Primary Email` someone chose deliberately. A consumer mailbox in Primary is a
+signup artefact, which is the one case where the guess is reliably better. A
+Primary already on a corporate domain is treated as curated and left alone — that
+was Path G's original point and it still holds.
+
+Freemail detection is a domain list (`FREEMAIL_EXACT` plus `FREEMAIL_PREFIXES`
+for families with many country TLDs). Word boundaries matter: `notgmail.com`,
+`gmailservices.com` and `myhotmailagency.com` are correctly **not** freemail. To
+cover a domain the list misses, add it to `FREEMAIL_EXACT` — no logic change.
+
+The address G-promote **demotes** needs no new Table row: it was this contact's
+Primary, so it already resolves here. Its row keeps `Type: "Primary"` and goes
+stale, which is harmless — lookups match on `Email` only.
 
 ## Connections
 

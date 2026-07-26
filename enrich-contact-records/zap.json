@@ -1,7 +1,7 @@
 {
   "name": "enrich-contact-records",
   "workflow_id": "019f878c-64ff-7332-92df-58e39f803836",
-  "current_version_id": "019f92c7-7671-78b8-97d2-0ffee78980a9",
+  "current_version_id": "019f9e9a-1148-7357-9f24-2a07d6116a92",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AW11SY4tM7eAkPQzytW3yg",
   "enabled": true,
   "trigger": {
@@ -15,6 +15,6 @@
     "@zapier/zapier-sdk": "0.79.0"
   },
   "created_at": "2026-07-22T01:59:12.898Z",
-  "version_created_at": "2026-07-24T06:19:33.364Z",
-  "description": "Enrich Notion contact records with person profile data"
+  "version_created_at": "2026-07-26T13:25:24.935Z",
+  "description": "Enrich Notion contact records with person profile data. An enriched work address takes Primary Email when the existing Primary is a consumer mailbox (Path G-promote); a corporate Primary is treated as curated and left alone."
 }
