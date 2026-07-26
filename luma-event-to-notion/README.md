@@ -37,6 +37,30 @@ Idempotent upsert keyed on the Luma event id:
 7. **Upsert the `LUMA_EVENT_TABLE` row** (`Luma Event ID` → `Page ID`, `Event Name`)
    so guest workflows resolve the event without a Notion call.
 
+## Workflow
+
+```mermaid
+flowchart TD
+    A["Luma event_created / event_updated"] --> B["Extract event<br/>id · name · start/end · url · cover<br/>description_markdown"]
+    B -->|"no event id (empty/test payload)"| Z["Skip (clean no-op)"]
+    B --> C["Derive Type<br/>address or coords → In-person<br/>else Virtual"]
+
+    C --> D{"Luma ID in<br/>LUMA_EVENT_TABLE?"}
+    D -->|hit| H["eventPageId"]
+    D -->|miss| E{"Notion search<br/>on Luma ID?"}
+    E -->|hit| H
+    E -->|miss| F["Create Event<br/>(default template, falls back<br/>to plain create)"] --> G["Append body from<br/>description_markdown, if present"] --> H
+
+    H --> I{"Page already<br/>existed?"}
+    I -->|"yes, and payload has a description"| J["Clear all child blocks<br/>(clearPageBody)"] --> K["Update Event<br/>properties + body"]
+    I -->|"yes, no description"| K
+    I -->|no| L["Set page cover if cover_url<br/>PATCH /v1/pages/:id<br/>(best-effort, never fails the run)"]
+    K --> L
+
+    L --> M["Upsert LUMA_EVENT_TABLE row<br/>Luma Event ID → Page ID · Event Name"]
+    M --> N["Return lumaEventId · eventPageId<br/>eventCreated / eventUpdated · coverSet"]
+```
+
 ## Notion default templates
 
 Page creation goes through `createItemWithTemplate`, which applies the data
