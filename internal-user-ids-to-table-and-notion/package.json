@@ -1,0 +1,12 @@
+{
+  "name": "internal-user-ids-to-table-and-notion",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.86.0",
+    "@zapier/zapier-durable": "0.9.1"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}

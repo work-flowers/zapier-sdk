@@ -1,0 +1,133 @@
+{
+  "note": "One shared sync.ts deployed as FIVE workflows \u2014 one per source system. Each deployment publishes its own workflow.<source>.ts as workflow.ts plus sync.ts verbatim. Republish all five together whenever sync.ts changes.",
+  "deployments": [
+    {
+      "name": "internal-user-ids-slack",
+      "source": "slack",
+      "entry_file": "workflow.slack.ts",
+      "workflow_id": "019f9c3e-359d-7dc4-b6ad-16c8eb8565d8",
+      "current_version_id": "019f9c3e-497c-7103-8741-19dec2dc23e4",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AU4bNBCosncaE_KMUIwAAQ",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "SlackCLIAPI@1.39.2",
+        "action": "team_join",
+        "authentication_id": "020cae54-a27c-86d6-93a9-27b012c17e74"
+      },
+      "created_at": "2026-07-26T02:25:50.496Z",
+      "version_created_at": "2026-07-26T02:25:55.581Z",
+      "description": "New Slack team member -> Slack User ID on the User IDs Table + Notion People row."
+    },
+    {
+      "name": "internal-user-ids-harvest",
+      "source": "harvest",
+      "entry_file": "workflow.harvest.ts",
+      "workflow_id": "019f9c3e-625d-7fe4-b93d-99487b76a0ae",
+      "current_version_id": "019f9c3e-7546-76e5-bcc0-8f8d0e0b30a4",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ9yB-qsVRh9kzpGMYzRHg",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "HarvestCLIAPI@1.0.14",
+        "action": "new_user",
+        "authentication_id": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+      },
+      "created_at": "2026-07-26T02:26:01.951Z",
+      "version_created_at": "2026-07-26T02:26:06.792Z",
+      "description": "New Harvest user -> Harvest User ID on the User IDs Table + Notion People row."
+    },
+    {
+      "name": "internal-user-ids-linear",
+      "source": "linear",
+      "entry_file": "workflow.linear.ts",
+      "workflow_id": "019f9c3e-8c90-7a94-a710-6d86600858e4",
+      "current_version_id": "019f9c3f-d170-7cba-b97f-799bdac4b6a3",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ae-1Qoz3F34YNq5LHrjKFw",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "WebHookCLIAPI@1.1.1",
+        "action": "hook_v2",
+        "authentication_id": null,
+        "status": "active",
+        "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CDYh6npEuajLK2eTK/",
+        "webhook_url_note": "This is the target for Linear's outgoing webhook (Linear > Settings > API > Webhooks). It is NOT returned by get-workflow's top level — it lives at `triggers[0].details.webhook_url`. The `trigger_url` above is the durable's internal endpoint and requires a JWT; do not point Linear at it."
+      },
+      "created_at": "2026-07-26T02:26:12.754Z",
+      "version_created_at": "2026-07-26T02:27:35.920Z",
+      "description": "Linear user webhook -> Linear User ID on the User IDs Table + Notion People row."
+    },
+    {
+      "name": "internal-user-ids-notion",
+      "source": "notion",
+      "entry_file": "workflow.notion.ts",
+      "workflow_id": "019f9c3e-b565-7a36-8488-4db40d4f579b",
+      "current_version_id": "019f9c3e-c8f8-73b4-80b9-3916dd5ec67c",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AREOrKch5DStDiqln7YbXg",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "App233228CLIAPI@1.0.1",
+        "action": "new_user",
+        "authentication_id": "02e68377-e369-8080-8fd5-a169206ab474"
+      },
+      "created_at": "2026-07-26T02:26:23.206Z",
+      "version_created_at": "2026-07-26T02:26:28.217Z",
+      "description": "New Notion workspace user -> Notion User ID on the User IDs Table + links/backfills the Notion People row."
+    },
+    {
+      "name": "internal-user-ids-zapier",
+      "source": "zapier",
+      "entry_file": "workflow.zapier.ts",
+      "workflow_id": "019f9c3e-dec5-7d9f-bb70-a38cc7057a0d",
+      "current_version_id": "019f9c3e-ef41-76d3-a78b-556b3964612c",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUNvt9WmlbszMU0QhB6SyA",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "ZapierManagerCLIAPI@1.5.0",
+        "action": "team_member",
+        "params": {
+          "team": "20491667"
+        }
+      },
+      "created_at": "2026-07-26T02:26:33.799Z",
+      "version_created_at": "2026-07-26T02:26:38.018Z",
+      "description": "New Zapier team member -> Zapier ID on the User IDs Table + Notion People row."
+    }
+  ],
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.9.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.86.0"
+  },
+  "table": {
+    "id": "01JM3J9SG5X6S8GBSSC8AS28AT",
+    "name": "User IDs",
+    "added_field": {
+      "id": "f15",
+      "name": "Notion People Page ID",
+      "type": "string"
+    }
+  },
+  "notion": {
+    "people_data_source_id": "a0791b07-11ac-8364-9113-07ea21165718",
+    "people_database_id": "d3d91b07-11ac-82df-b0d8-014512d331ec",
+    "added_properties": [
+      "Slack User ID",
+      "Linear User ID",
+      "Notion User ID"
+    ],
+    "existing_properties_used": [
+      "Zapier User ID",
+      "Harvest User ID",
+      "Person"
+    ],
+    "note": "People is Notion-managed: rows can be updated but not created, and `Email` is a read-only built-in (people:email) that cannot be added. The join is Person -> Notion user id."
+  },
+  "replaces_classic_zaps": [
+    "Add New Slack User ID",
+    "Add New Harvest User ID",
+    "Add New Linear User ID",
+    "Add New Notion User ID",
+    "Update Zapier User ID"
+  ]
+}
