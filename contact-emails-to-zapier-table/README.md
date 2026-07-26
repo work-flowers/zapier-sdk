@@ -17,9 +17,8 @@ Notion DB automation on the **Contacts** DB (Primary Email or Secondary Email ed
 `{ data: { id, in_trash, properties: { "Primary Email": { email }, "Secondary Email": { multi_select: [{ name }] } } } }`.
 
 The same webhook also accepts Notion's **integration-webhook** shape,
-`{ type: "page.deleted", entity: { id } }`, so the `page.deleted` subscription can be
-pointed here to drive the merge hand-over. It isn't today — see
-[the trash-trigger note](#-the-trash-trigger-isnt-pointed-here-yet).
+`{ type, entity: { id } }`. The `page.deleted` and `page.undeleted` subscriptions point
+here, which is what drives the merge hand-over, the delete sweep and the restore.
 
 > ⚠️ **The Notion automation must POST to this workflow's webhook URL** (see
 > `zap.json` → `trigger.webhook_url`). After deploying, repoint the automation and
@@ -28,9 +27,12 @@ pointed here to drive the merge hand-over. It isn't today — see
 ## What it does
 
 **If the triggering contact is in the trash**, it was either merged away (addresses go
-to the survivor) or genuinely deleted (rows go with it) — see [Merges and deletes](#merges-and-deletes)
-below. Otherwise, for every valid email on the contact (primary + each secondary,
-lowercased, deduped):
+to the survivor) or genuinely deleted (rows go with it). **If it was just restored from
+the trash**, its addresses are re-indexed onto it. Both are covered in
+[Merges, deletes and restores](#merges-deletes-and-restores) below.
+
+Otherwise, for every valid email on the contact (primary + each secondary, lowercased,
+deduped):
 
 | Table state for that email | Action |
 |---|---|
@@ -46,7 +48,9 @@ several generations of automation, in both spellings; a mismatch used to read as
 
 ```mermaid
 flowchart TD
-    A["Webhook: Contacts DB automation<br/>(Primary/Secondary Email edited,<br/>or page trashed)"] --> T{"Contact in trash?"}
+    A["Webhook: Contacts DB automation<br/>(email edited) or Notion<br/>page.deleted / page.undeleted"] --> U{"Restored from trash?"}
+    U -- yes --> RS["Re-index its addresses<br/>(create / reclaim / skip)"]
+    U -- no --> T{"Contact in trash?"}
     T -- yes --> M1["Snapshot its addresses<br/>(payload + rows it owns)"]
     M1 --> M2{"Trashed page readable?"}
     M2 -- no --> MS(["Leave the Table alone"])
@@ -76,7 +80,7 @@ flowchart TD
     H -- no --> J(["Return indexed / unchanged / healed /<br/>reclaimed / duplicates / settled"])
 ```
 
-## Merges and deletes
+## Merges, deletes and restores
 
 Merging two contacts by hand means consolidating the addresses onto the survivor and
 trashing the loser. Nothing in Notion tells the Table that happened, and **a separate,
@@ -150,30 +154,42 @@ Source 1 is why the merge path is reliable regardless of which automation fires 
 Verified live: with the row already swept and a property-less `page.deleted` payload,
 the hand-over still recovered the address and re-pointed it at the survivor.
 
-## Cutover: making this durable the table's only owner
+## Restores, and why there is no "deleted" flag
 
-The classic Zap **"Delete Contact, Company or Meeting Note Page from Zapier Table"**
-(path A, nodes 4 / 14 / 15 / 16) still deletes Contacts rows on `page.deleted`. This
-workflow now covers that case properly — merge → hand over, genuine delete → delete —
-so path A is redundant and actively harmful on merges. Three steps to retire it:
+Deleting a contact's rows is already reversible: `sdk.deleteTableRecords` is a **soft
+delete** in Zapier Tables. The row keeps its data, gains a `deleted_at`, and stays
+readable with `--trash include` — while every ordinary lookup stops seeing it, because
+`list-table-records` excludes trashed rows by default.
 
-1. **Point the `page.deleted` subscription at this workflow's webhook** (see `zap.json`
-   → `trigger.webhook_url`). No code change: `extractContact` reads both the DB
-   automation's `{ data: { id, properties } }` and the integration webhook's
-   `{ type: "page.deleted", entity: { id } }`.
-2. **Pause path A** in that Zap, leaving paths B (Company), C (Meeting Note) and D
-   (Setup Sessions) alone. Those tables have no create-on-miss consumer, so the plain
-   delete is fine for them.
-3. **Set both settle constants to `0`** and republish. Each is guarded by a
-   `> 0` check, so zero skips the wait entirely:
-   - `MERGE_SETTLE_SECONDS` — exists only to outlast path A's sweep.
-   - `CONFLICT_SETTLE_SECONDS` — exists only because the trash event doesn't reach this
-     workflow. Once step 1 is done the trash branch handles merges directly, and the
-     15-minute lingering run goes away.
+That is why this workflow does **not** add a "deleted" boolean of its own, even though
+the sibling Meeting Note branch uses one. A native soft delete *fails safe*: every
+consumer — the two Luma guest workflows, `enrich-contact-records`, the
+`email-contact-page-zap` code step — stops resolving the address with no change at all.
+An explicit flag would *fail open*: any consumer that forgot to filter on it would go on
+resolving the address to a contact in the trash, which is the exact bug the sweep was
+introduced to prevent. It would also mean touching four more places to get one behaviour.
 
-Do steps 1 and 2 together: with the subscription pointed here but path A still live,
-both delete the same rows (harmless, just duplicated work); with path A paused but the
-subscription not repointed, nothing cleans up after a genuine delete.
+What the flag would genuinely have bought is a contact that keeps working after being
+restored. That is handled directly instead: `page.undeleted` re-indexes the addresses the
+page still holds, read off the page itself (the event carries no properties). Rows are
+written fresh rather than un-deleted — the SDK has no restore call — and an address a
+*live* contact has claimed in the meantime is left alone.
+
+## Cutover: complete (2026-07-26)
+
+This durable is now the table's only owner. For the record, and in case any of it needs
+reversing:
+
+| Step | State |
+|---|---|
+| `page.deleted` / `page.undeleted` subscriptions point at this workflow's webhook | ✅ done — first live `page.deleted` received 12:59:40Z |
+| Path A (Contacts) of "Delete Contact, Company or Meeting Note Page from Zapier Table" paused | ✅ done — paths B/C/D (Company, Meeting Note, Setup Sessions) still run there |
+| `MERGE_SETTLE_SECONDS` and `CONFLICT_SETTLE_SECONDS` set to `0` | ✅ done |
+
+Both constants are guarded by a `> 0` check. They exist only to work around path A
+sweeping rows and the trash event not arriving here; if either situation returns, set
+them back to `300` and `900` and republish. Neither is ever a correctness risk — the
+work they trigger is an idempotent upsert — only a cost.
 
 ## Gaps in the original Zap this port fixes
 
@@ -212,9 +228,13 @@ duplicate rows are benign (lookups take the first hit, both point at the same pa
   finishes. The durable is suspended for the wait, so it costs nothing, but a bulk edit
   that collides on many contacts leaves that many runs open for a quarter of an hour.
   Goes away at step 3 of the cutover.
-- **A restored contact does not get its rows back.** Trashing a contact deletes its rows;
-  untrashing it in Notion does not recreate them, so the contact is unindexed until one
-  of its emails is next edited. Same as the classic Zap's behaviour, not a regression.
+- **A restore only recovers addresses the contact still holds.** Rows are rebuilt from
+  the page's own `Primary Email` / `Secondary Email`, so an address that was removed from
+  the contact before it was trashed does not come back. That is the right outcome, but
+  worth knowing if a row is missing after a restore.
+- **Restoring does not un-delete the original rows**, it writes new ones. Zapier Tables
+  keeps the originals soft-deleted (`deleted_at`), visible with `--trash include`; there
+  is no restore call in the SDK.
 
 ## Connections
 
