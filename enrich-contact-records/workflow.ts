@@ -184,6 +184,45 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   };
 }
 
+// --- Freemail detection -----------------------------------------------------
+//
+// Used to decide whether an enriched work address should take the `Primary
+// Email` slot. A consumer mailbox in Primary is a signup artefact — the person
+// filled in a form with their personal address — so a corporate address found
+// by enrichment is the better Primary. A Primary that is ALREADY on a corporate
+// domain is treated as curated and left alone, because the enriched address is
+// only a guess. See "Email paths" in the README.
+
+/** Consumer mailbox domains, matched exactly. */
+const FREEMAIL_EXACT = new Set([
+  "gmail.com", "googlemail.com", "icloud.com", "me.com", "mac.com",
+  "aol.com", "msn.com", "ymail.com", "rocketmail.com",
+  "protonmail.com", "protonmail.ch", "proton.me", "pm.me",
+  "mail.com", "email.com", "usa.com", "zoho.com", "fastmail.com",
+  "hey.com", "tutanota.com", "tuta.io", "duck.com", "hushmail.com",
+  "qq.com", "foxmail.com", "163.com", "126.com", "sina.com", "sohu.com",
+  "naver.com", "daum.net", "hanmail.net", "mail.ru", "bk.ru", "list.ru",
+  "web.de", "t-online.de", "orange.fr", "free.fr", "wanadoo.fr",
+  "singnet.com.sg", "pacific.net.sg", "starhub.net.sg",
+]);
+
+/** Consumer mailbox families with many country TLDs (hotmail.co.uk, yahoo.com.sg…). */
+const FREEMAIL_PREFIXES = [
+  "hotmail.", "outlook.", "live.", "yahoo.", "gmx.", "yandex.",
+  "inbox.", "laposte.", "btinternet.", "sky.", "rediffmail.",
+];
+
+/** True for a consumer mailbox address. Unparseable input is NOT freemail —
+ *  the caller then falls through to the conservative path. */
+function isFreemail(email: string | null | undefined): boolean {
+  const at = (email ?? "").lastIndexOf("@");
+  if (at < 0) return false;
+  const domain = email!.slice(at + 1).trim().toLowerCase();
+  if (!domain) return false;
+  if (FREEMAIL_EXACT.has(domain)) return true;
+  return FREEMAIL_PREFIXES.some((p) => domain.startsWith(p));
+}
+
 /** Apollo returns a placeholder like `email_not_unlocked@domain.com` when the
  *  email is locked behind credits; treat those as "no email". */
 function apolloRealEmail(email: unknown): string {
@@ -246,7 +285,16 @@ type DurableCtx = Parameters<Parameters<typeof defineDurable<unknown, unknown>>[
 //   Path C "Update Page Icon"      — set page icon + cover to profile pic
 //   Path E "Exit"                  — return
 //
-// In the Durable these collapse to sequential if/else blocks.
+// In the Durable these collapse to sequential if/else blocks, plus one path the
+// sub-zap never had:
+//   Path G-promote — the existing Primary is a CONSUMER mailbox and the enriched
+//   address is corporate, so the work address takes Primary and the personal one
+//   moves to Secondary. Added 2026-07-26: the original Path G applied to every
+//   "different email" case, which left signup-form gmail addresses sitting in
+//   Primary with the real work address buried in Secondary (~26 contacts), and
+//   contradicted the rule the Luma guest workflows apply to a "Work Email"
+//   registration answer. A Primary already on a corporate domain is still
+//   treated as curated and never overwritten by an enrichment guess.
 
 async function updateContactRecord(
   ctx: DurableCtx,
@@ -288,9 +336,34 @@ async function updateContactRecord(
     // Path D: set primary email to the enriched email; leave secondary untouched.
     emailPath = "same-or-no-prior";
     updateInputs["properties|||Primary Email|||email"] = enriched.newEmail;
+  } else if (
+    differentEmail &&
+    isFreemail(contact.primaryEmail) &&
+    !isFreemail(enriched.newEmail)
+  ) {
+    // Path G-promote: the contact's Primary is a consumer mailbox (a signup
+    // artefact) and enrichment found a corporate address, so the work address
+    // takes Primary and the personal one is kept as a Secondary. This matches
+    // the rule the Luma guest workflows apply to a "Work Email" registration
+    // answer; before it existed, Path G left the personal address in Primary and
+    // buried the work address in Secondary — inverted on ~26 contacts.
+    emailPath = "promote-over-freemail";
+    updateInputs["properties|||Primary Email|||email"] = enriched.newEmail;
+    updateInputs["properties|||Secondary Email|||multi_select"] = [
+      ...contact.secondaryEmails.filter(
+        (e) => e.toLowerCase() !== enriched.newEmail.toLowerCase(),
+      ),
+      contact.primaryEmail,
+    ].filter(
+      (e, i, all) =>
+        all.findIndex((x) => x.toLowerCase() === e.toLowerCase()) === i,
+    );
   } else if (differentEmail) {
-    // Path G: keep existing primary email (pass empty = no change),
-    // add the new email to the secondary email multi-select.
+    // Path G: the existing Primary is already on a corporate domain (or the
+    // enriched address is itself a consumer mailbox), so treat the Primary as
+    // curated — keep it (pass empty = no change) and add the enriched address to
+    // the secondary email multi-select. An enriched address is only a guess and
+    // must never overwrite a deliberate corporate Primary.
     emailPath = "new-email";
     updateInputs["properties|||Primary Email|||email"] = "";
     updateInputs["properties|||Secondary Email|||multi_select"] = [
@@ -319,10 +392,15 @@ async function updateContactRecord(
   );
 
   // --- Index the enriched email in the email -> page id Table ---
-  // Path G adds a Secondary email, Path D can set a first-ever Primary; either
-  // way the address must resolve to this contact in the Table or the Luma guest
-  // workflows will create a duplicate contact when that person registers with
-  // it. Best-effort upsert-if-missing (Table ops are free).
+  // Path G adds a Secondary email; Path D can set a first-ever Primary; Path
+  // G-promote makes the enriched address the Primary. Either way the address
+  // must resolve to this contact in the Table or the Luma guest workflows will
+  // create a duplicate contact when that person registers with it. Best-effort
+  // upsert-if-missing (Table ops are free).
+  //
+  // The address Path G-promote DEMOTES needs no row of its own: it was this
+  // contact's Primary, so it already resolves here. Its row keeps `Type:
+  // "Primary"` and goes stale, which is harmless — lookups match on Email only.
   if (hasNewEmail && emailPath !== "no-new-email") {
     const emailLower = enriched.newEmail!.toLowerCase();
     const emailType = emailPath === "new-email" ? "Secondary" : "Primary";
