@@ -1,7 +1,7 @@
 {
   "name": "luma-guest-updated-to-event-attendance",
   "workflow_id": "019f8d53-5763-7a67-88d6-7a144729456b",
-  "current_version_id": "019f91e2-4d74-7592-a1df-58c97141d3b3",
+  "current_version_id": "019f9e2b-5ed9-70ea-85df-ca6f118ceb56",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AViOs3pxG6Gy0xQZmiUQ_g",
   "enabled": true,
   "trigger": {
@@ -18,6 +18,6 @@
     "@zapier/zapier-sdk": "0.86.0"
   },
   "created_at": "2026-07-23T04:54:37.157Z",
-  "version_created_at": "2026-07-24T02:09:15.128Z",
-  "description": "Luma guest updated -> update Notion Event Attendance (approval status change / check-in). Lookup/update-only — never creates."
+  "version_created_at": "2026-07-26T11:24:30.298Z",
+  "description": "Luma guest updated -> update Notion Event Attendance (approval status change / check-in). Lookup/update-only — never creates. Also promotes a Work Email registration answer to the contact's Primary Email."
 }
