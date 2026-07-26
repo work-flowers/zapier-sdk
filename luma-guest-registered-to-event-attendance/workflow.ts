@@ -66,16 +66,50 @@ function cleanEmail(v: unknown): string | null {
   return s && EMAIL_RE.test(s) ? s : null;
 }
 
-/** True for a registration-question label that asks for a work address —
- *  it has to mention an email AND a work-ish word, so "Work Email",
- *  "Business e-mail address" and "What's your company email?" all match while
- *  a plain "Email" (the Luma account address) does not. */
-function isWorkEmailLabel(label: string): boolean {
-  const l = label.toLowerCase();
-  return (
-    /e-?mail/.test(l) &&
-    /\b(work|business|company|corporate|office|professional)\b/.test(l)
-  );
+/**
+ * Registration-question labels are free text that gets reworded per event, so
+ * the match is on MEANING, not exact wording. Normalise first: lowercase, fold
+ * the various unicode hyphens/dashes and curly apostrophes a rich-text editor
+ * produces down to ASCII, and collapse whitespace.
+ */
+function normalizeLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[‐-―−]/g, "-")
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Marks the address as belonging to the guest's employer. */
+const WORK_WORD_RE =
+  /\b(work|works|working|workplace|business|company|companies|corporate|office|professional|employer|organisation|organization|official|firm)\b/;
+
+/** Marks the field as an email address. Tolerates `e-mail`, `e mail`, `emails`
+ *  and a bare `mail`; `\b` keeps it off `mailing` and `gmail`. */
+const EMAIL_WORD_RE = /\b(e-? ?mails?|mail)\b/;
+
+/**
+ * Marks the address as SOMEONE ELSE'S. Without this, "Your manager's work
+ * email" and "Referred by (work email)" both read as work-email questions and
+ * would promote a third party's address into the guest's `Primary Email`.
+ */
+const THIRD_PARTY_RE =
+  /\b(manager|managers|colleague|colleagues|coworker|co-worker|teammate|team-mate|refer|refers|referral|referrals|referred|referrer|friend|friends|someone|somebody|assistant|boss|supervisor|plus-? ?one|companion|their|his|her)\b/;
+
+/**
+ * How strongly a label reads as "the guest's own work email":
+ *   2 — a work-ish word AND an email word ("Work Email", "Organisation e-mail")
+ *   1 — a work-ish word only ("Your work address"); a weaker signal, used only
+ *       when nothing scores 2, and still safe because the ANSWER must parse as
+ *       an email before it's used
+ *   0 — no work-ish word, or a third-party marker
+ */
+function workEmailLabelScore(label: string): 0 | 1 | 2 {
+  const l = normalizeLabel(label);
+  if (THIRD_PARTY_RE.test(l)) return 0;
+  if (!WORK_WORD_RE.test(l)) return 0;
+  return EMAIL_WORD_RE.test(l) ? 2 : 1;
 }
 
 /**
@@ -83,27 +117,39 @@ function isWorkEmailLabel(label: string): boolean {
  * one. Luma delivers answers twice — `registration_answers` (an array of
  * `{ label, value, answer, value_text, question_id }`) and
  * `registration_answers_by_label` (snake_cased label -> value) — so read the
- * array first and fall back to the map. Both are matched on the label rather
- * than a hardcoded `question_id`, because Luma mints a fresh question id per
- * event: the same "Work Email" question has a different id on every event.
+ * array first and fall back to the map.
+ *
+ * Matched on the label, never a hardcoded `question_id`: Luma mints a fresh
+ * question id per event, so the same "Work Email" question has a different id
+ * on every event. The best-scoring label wins, so an explicit "Work Email"
+ * question beats a merely work-ish one no matter which order they appear in.
  */
 function extractWorkEmail(g: Record<string, any>): string | null {
+  const candidates: Array<{ score: number; email: string }> = [];
+
   const answers = Array.isArray(g.registration_answers) ? g.registration_answers : [];
   for (const a of answers) {
     const label = firstString(a?.label, a?.question, a?.name);
-    if (!label || !isWorkEmailLabel(label)) continue;
+    if (!label) continue;
+    const score = workEmailLabelScore(label);
+    if (score === 0) continue;
     const email = cleanEmail(firstString(a?.value, a?.answer, a?.value_text));
-    if (email) return email;
+    if (email) candidates.push({ score, email });
   }
+
   const byLabel = g.registration_answers_by_label;
   if (byLabel && typeof byLabel === "object" && !Array.isArray(byLabel)) {
     for (const [key, value] of Object.entries(byLabel)) {
-      if (!isWorkEmailLabel(key.replace(/_/g, " "))) continue;
+      const score = workEmailLabelScore(key.replace(/_/g, " "));
+      if (score === 0) continue;
       const email = cleanEmail(value);
-      if (email) return email;
+      if (email) candidates.push({ score, email });
     }
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+  // Highest score wins; ties keep source order (array before map).
+  return candidates.reduce((best, c) => (c.score > best.score ? c : best)).email;
 }
 
 /** First item of a runAction result ({ data: [...] } or a bare array). */

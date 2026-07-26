@@ -72,15 +72,41 @@ Luma delivers registration answers twice — `registration_answers` (an array of
 `{ label, value, answer, value_text, question_id }`) and `registration_answers_by_label`
 (snake_cased label → value). The array is read first, the map as a fallback.
 
-Matching is on the **label**, not a hardcoded `question_id`: Luma mints a fresh question id
-per event, so the same "Work Email" question has a different id on every event. A label
-qualifies when it mentions an email **and** a work-ish word (`work`, `business`, `company`,
-`corporate`, `office`, `professional`) — so `Work Email`, `Business e-mail address` and
-`What's your company email?` all match, while a plain `Email` does not. Add a differently
-worded question and it keeps working with no code change.
+Matching is on the **label**, never a hardcoded `question_id`: Luma mints a fresh question id
+per event, so the same "Work Email" question has a different id on every event. **The question
+can be reworded freely** — the match is on meaning, not exact wording.
 
-An answer that is blank, not a valid email, or just repeats the Luma account address is
-treated as absent — the workflow then behaves exactly as it did before this feature.
+The label is first normalised: lowercased, unicode hyphens/dashes (`‐ ‑ ‒ – — ― −`) and curly
+apostrophes folded to ASCII — a rich-text editor silently produces these, and `Work e‑mail`
+with a non-breaking hyphen would otherwise miss — then whitespace collapsed. It's then scored:
+
+| Score | Condition | Examples |
+|---|---|---|
+| **2** | a work-ish word **and** an email word | `Work Email` · `Business e-mail address` · `Organisation email` · `Employer email` · `What email do you use at work?` · `Email (work)` · `Work Mail` |
+| **1** | a work-ish word only — weaker, used only if nothing scores 2 | `Your work address` · `Where do you work?` |
+| **0** | no work-ish word, **or** a third-party marker | `Email` · `Personal email` · `Your manager's work email` · `Referred by (business email)` · `Plus one work email` |
+
+- **Work-ish words:** `work`/`works`/`working`/`workplace`, `business`, `company`/`companies`,
+  `corporate`, `office`, `professional`, `employer`, `organisation`/`organization`, `official`,
+  `firm`.
+- **Email words:** `email`/`emails`, `e-mail`, `e mail`, and a bare `mail`. Word boundaries keep
+  it off `mailing` and `gmail`.
+- **Third-party markers** (score 0 regardless): `manager`, `colleague`, `coworker`, `teammate`,
+  `refer*`/`referral`/`referred`, `friend`, `someone`/`somebody`, `assistant`, `boss`,
+  `supervisor`, `plus one`, `companion`, and the pronouns `their`/`his`/`her`. **Without this,
+  "Your manager's work email" would promote a third party's address into the guest's
+  `Primary Email`.**
+
+The **highest-scoring** label wins, so an explicit `Work Email` question beats a merely work-ish
+one no matter which order they appear in the form.
+
+An answer that is blank, not a valid email, or just repeats the Luma account address is treated
+as absent — the workflow then behaves exactly as it did before this feature. That answer
+validation is also what makes the score-1 tier safe: `Where do you work?` answered `Acme Inc`
+is discarded, because it doesn't parse as an email.
+
+If you word a question in a way none of this catches, the fix is a word in `WORK_WORD_RE` — not
+new logic.
 
 ### Contact resolution with two addresses
 

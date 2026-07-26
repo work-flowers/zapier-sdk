@@ -47,6 +47,11 @@ which documents it in full: a `Work Email` registration answer becomes the conta
 `Primary Email`, and whatever it displaces (the old Primary, plus the Luma account address)
 is kept in the `Secondary Email` multi-select, so no address is ever lost.
 
+The label matcher (including the rewording tolerance and the third-party exclusions that stop
+"Your manager's work email" being promoted) is identical in both files and is documented once,
+[there](../luma-guest-registered-to-event-attendance#how-the-answer-is-found). **Keep the two
+copies in sync** — the test battery asserts they score every label identically.
+
 **Why it lives here too:** this is the only workflow that sees a guest **edit** their
 work-email answer after registering — `guest_registered` has already fired by then, so only
 `guest_updated` gets the change. On a brand-new registration both workflows fire ~150ms apart
