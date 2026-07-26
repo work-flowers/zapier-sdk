@@ -119,6 +119,16 @@ interface ContactEmails {
   inTrash: boolean;
   /** The contact was pulled back OUT of the trash. */
   restored: boolean;
+  /** Parent data source from the payload, when it says. The `page.deleted` /
+   *  `page.undeleted` subscription is registered on the whole Core CRM Objects
+   *  database, so pages from every data source under it arrive here. */
+  dataSourceId: string | null;
+}
+
+/** True when a page is known NOT to be a Contact. Unknown (null) is not a
+ *  rejection — the caller falls through and checks again after reading the page. */
+function isForeignDataSource(dataSourceId: string | null): boolean {
+  return dataSourceId !== null && !sameId(dataSourceId, CONTACTS_DS);
 }
 
 /** Notion's integration-webhook event types that mean "this page is gone".
@@ -166,11 +176,19 @@ function extractContact(raw: unknown): ContactEmails | null {
     data?.archived === true ||
     data?.is_archived === true ||
     DELETED_EVENT_TYPES.has(eventType);
+  // Both shapes carry the parent under `data.parent`: the integration webhook as
+  // `{ id, type: "database", data_source_id }`, the DB automation as
+  // `{ type: "data_source_id", database_id, data_source_id }`.
+  const dataSourceId = firstString(
+    data?.parent?.data_source_id,
+    o.parent?.data_source_id,
+  );
   return {
     pageId,
     emails,
     inTrash,
     restored: !inTrash && RESTORED_EVENT_TYPES.has(eventType),
+    dataSourceId,
   };
 }
 
@@ -188,6 +206,9 @@ interface PageState {
    *  its properties, so this is the one address source a merge can always rely
    *  on: the webhook may carry none, and the rows may already be swept. */
   secondaries: string[];
+  /** The data source the page actually lives in — the authority when a payload
+   *  doesn't say, or says something stale. */
+  dataSourceId: string | null;
 }
 
 /**
@@ -206,7 +227,13 @@ async function readPageState(pageId: string): Promise<PageState | null> {
   // A hard-deleted page (emptied from the trash) 404s; that's still "gone",
   // and it's the state a row left behind by an old merge is most likely in.
   if (res.status === 404) {
-    return { gone: true, duplicateLinks: [], primary: null, secondaries: [] };
+    return {
+      gone: true,
+      duplicateLinks: [],
+      primary: null,
+      secondaries: [],
+      dataSourceId: null,
+    };
   }
   if (!res.ok) return null;
   const body: any = await res.json();
@@ -227,6 +254,7 @@ async function readPageState(pageId: string): Promise<PageState | null> {
     duplicateLinks: links,
     primary: cleanEmail(props["Primary Email"]?.email),
     secondaries: extractEmails(props["Secondary Email"]),
+    dataSourceId: firstString(body?.parent?.data_source_id),
   };
 }
 
@@ -462,6 +490,14 @@ async function restoreContact(ctx: DurableContext, contact: ContactEmails) {
     console.log(`contact ${pageId} is back in the trash; nothing to restore`);
     return { pageId, restored: true, claimed: [], reason: "back in the trash" };
   }
+  if (isForeignDataSource(state.dataSourceId)) {
+    // Another data source under Core CRM Objects. Indexing its `Primary Email`
+    // would point a contact lookup at a Company or a Deal.
+    console.log(
+      `skipping: restored page ${pageId} belongs to data source ${state.dataSourceId}, not Contacts`,
+    );
+    return { pageId, restored: true, claimed: [], reason: "not a Contacts page" };
+  }
 
   const entries: Array<[string, "Primary" | "Secondary"]> = [];
   if (state.primary) entries.push([state.primary, "Primary"]);
@@ -516,6 +552,21 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
   // wouldn't tell us". Only the first is grounds for deleting rows.
   const self = await ctx.step("merge-read-self", async () => readPageState(pageId));
   const readable = self !== null;
+
+  // Second line of defence for a payload that didn't name its parent: never
+  // delete or move rows on the strength of a page from another data source.
+  if (isForeignDataSource(self?.dataSourceId ?? null)) {
+    console.log(
+      `skipping: trashed page ${pageId} belongs to data source ${self?.dataSourceId}, not Contacts`,
+    );
+    return {
+      pageId,
+      inTrash: true,
+      movedTo: null,
+      addresses: [],
+      reason: "not a Contacts page",
+    };
+  }
 
   const addresses = await ctx.step("merge-collect-addresses", async () => {
     const found = new Set(contact.emails.map(([email]) => email));
@@ -650,8 +701,28 @@ const workflow = defineDurable<unknown, unknown>(
   async (ctx, rawInput) => {
     const contact = extractContact(InputSchema.parse(normalizeInput(rawInput)));
     if (!contact) {
-      console.log("skipping: no page id in payload (empty/test delivery)");
+      // Also the shape of Notion's subscription-verification ping, which carries
+      // only `{ verification_token }` — a clean no-op, and the token stays
+      // readable in this run's input for whoever is wiring the subscription up.
+      console.log("skipping: no page id in payload (empty/test or verification delivery)");
       return { skipped: true, reason: "no page id in payload" };
+    }
+
+    // The `page.deleted` / `page.undeleted` subscription is registered on the
+    // whole Core CRM Objects database, so Companies, Deals and every other data
+    // source under it arrive here too. Drop them before spending a single API
+    // call. A payload that doesn't name its parent falls through and is checked
+    // again once the page has been read.
+    if (isForeignDataSource(contact.dataSourceId)) {
+      console.log(
+        `skipping: page ${contact.pageId} belongs to data source ${contact.dataSourceId}, not Contacts`,
+      );
+      return {
+        skipped: true,
+        reason: "not a Contacts page",
+        pageId: contact.pageId,
+        dataSourceId: contact.dataSourceId,
+      };
     }
 
     // A trashed contact is a merge's loser. Its addresses now belong to the
