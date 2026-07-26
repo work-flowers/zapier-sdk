@@ -14,6 +14,8 @@ One sub-directory per Zap. Each Durable directory contains:
 
 Classic Code-step Zap directories carry the code-step source and tests instead of `workflow.ts`/`zap.json`; everything else applies unchanged.
 
+A Zap deployed more than once from one directory keeps a single `zap.json` with a `deployments` array (see [`luma-event-to-notion`](luma-event-to-notion/)). Where those deployments need to differ in code, the shared logic lives in a module and each deployment publishes its own thin entry file as `workflow.ts` — see [`internal-user-ids-to-table-and-notion`](internal-user-ids-to-table-and-notion/).
+
 ## Repo rules
 
 1. **Every Zap sub-directory includes a brief README** in addition to the code, always with a Mermaid diagram depicting the workflow, if possible.
@@ -33,6 +35,7 @@ These rules are mirrored in [CLAUDE.md](CLAUDE.md) so Claude Code sessions follo
 | [`deal-won-set-up-client-workspace`](deal-won-set-up-client-workspace/) | Durable | ⚠️ Not deployed | Deal won → create the company's Google Drive folder under Client Docs and link it on the Notion Companies record. Source only; not yet published to Zapier. |
 | [`email-contact-page-zap`](email-contact-page-zap/) | Code step (classic Zap) | ✅ In production | [Sub-Zap] Retrieve Contact Page IDs for Email Addresses — single Code step replacing the original 24-node sub-Zap. |
 | [`enrich-contact-records`](enrich-contact-records/) | Durable | ✅ Enabled | Enrich Notion contact records with person profile data (Apollo primary, NinjaPear fallback); collapses the old parent Zap + sub-Zap into one workflow. |
+| [`internal-user-ids-to-table-and-notion`](internal-user-ids-to-table-and-notion/) | Durable ×5 | ✅ Enabled (Linear pending) | One shared `sync.ts` deployed five times — Slack / Harvest / Linear / Notion / Zapier Manager. Upserts the internal person's row in the "User IDs" Zapier Table, then mirrors every ID onto their row in Notion's native People data source. Port of the five classic "Add New \<System\> User ID" Zaps, plus the Notion mirror. **Linear's outgoing webhook still needs repointing at the new catch-hook** — see the directory README. |
 | [`luma-event-to-notion`](luma-event-to-notion/) | Durable ×2 | ✅ Enabled | One code file deployed twice — `luma-event-created-to-notion` (`event_created`) and `luma-event-updated-to-notion` (`event_updated`). Upserts the Notion Events record keyed on Luma ID: properties, page cover, and description → page body (full replace). |
 | [`luma-guest-registered-to-event-attendance`](luma-guest-registered-to-event-attendance/) | Durable | ✅ Enabled | Luma `guest_registered` → Event Attendance upsert. **Sole creator** of Event/Contact/Attendance records for the guest flow (see README for the race this prevents). |
 | [`luma-guest-updated-to-event-attendance`](luma-guest-updated-to-event-attendance/) | Durable | ✅ Enabled | Luma `guest_updated` → pure updater: refreshes Approval Status / ticks Checked In on the existing Attendance record; never creates. |
