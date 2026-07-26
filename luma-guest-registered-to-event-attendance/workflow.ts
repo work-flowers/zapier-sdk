@@ -1,3 +1,4 @@
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/luma-guest-registered-to-event-attendance
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
@@ -56,6 +57,101 @@ function firstString(...vals: unknown[]): string | null {
   return null;
 }
 
+const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
+
+/** Lowercased, validated email — or null. Every Table row and lookup is
+ *  lowercase, so a raw-case address would never match. */
+function cleanEmail(v: unknown): string | null {
+  const s = firstString(v)?.toLowerCase() ?? null;
+  return s && EMAIL_RE.test(s) ? s : null;
+}
+
+/**
+ * Registration-question labels are free text that gets reworded per event, so
+ * the match is on MEANING, not exact wording. Normalise first: lowercase, fold
+ * the various unicode hyphens/dashes and curly apostrophes a rich-text editor
+ * produces down to ASCII, and collapse whitespace.
+ */
+function normalizeLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .replace(/[‐-―−]/g, "-")
+    .replace(/[‘’ʼ]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Marks the address as belonging to the guest's employer. */
+const WORK_WORD_RE =
+  /\b(work|works|working|workplace|business|company|companies|corporate|office|professional|employer|organisation|organization|official|firm)\b/;
+
+/** Marks the field as an email address. Tolerates `e-mail`, `e mail`, `emails`
+ *  and a bare `mail`; `\b` keeps it off `mailing` and `gmail`. */
+const EMAIL_WORD_RE = /\b(e-? ?mails?|mail)\b/;
+
+/**
+ * Marks the address as SOMEONE ELSE'S. Without this, "Your manager's work
+ * email" and "Referred by (work email)" both read as work-email questions and
+ * would promote a third party's address into the guest's `Primary Email`.
+ */
+const THIRD_PARTY_RE =
+  /\b(manager|managers|colleague|colleagues|coworker|co-worker|teammate|team-mate|refer|refers|referral|referrals|referred|referrer|friend|friends|someone|somebody|assistant|boss|supervisor|plus-? ?one|companion|their|his|her)\b/;
+
+/**
+ * How strongly a label reads as "the guest's own work email":
+ *   2 — a work-ish word AND an email word ("Work Email", "Organisation e-mail")
+ *   1 — a work-ish word only ("Your work address"); a weaker signal, used only
+ *       when nothing scores 2, and still safe because the ANSWER must parse as
+ *       an email before it's used
+ *   0 — no work-ish word, or a third-party marker
+ */
+function workEmailLabelScore(label: string): 0 | 1 | 2 {
+  const l = normalizeLabel(label);
+  if (THIRD_PARTY_RE.test(l)) return 0;
+  if (!WORK_WORD_RE.test(l)) return 0;
+  return EMAIL_WORD_RE.test(l) ? 2 : 1;
+}
+
+/**
+ * The work-email answer from the guest's Luma registration form, if they gave
+ * one. Luma delivers answers twice — `registration_answers` (an array of
+ * `{ label, value, answer, value_text, question_id }`) and
+ * `registration_answers_by_label` (snake_cased label -> value) — so read the
+ * array first and fall back to the map.
+ *
+ * Matched on the label, never a hardcoded `question_id`: Luma mints a fresh
+ * question id per event, so the same "Work Email" question has a different id
+ * on every event. The best-scoring label wins, so an explicit "Work Email"
+ * question beats a merely work-ish one no matter which order they appear in.
+ */
+function extractWorkEmail(g: Record<string, any>): string | null {
+  const candidates: Array<{ score: number; email: string }> = [];
+
+  const answers = Array.isArray(g.registration_answers) ? g.registration_answers : [];
+  for (const a of answers) {
+    const label = firstString(a?.label, a?.question, a?.name);
+    if (!label) continue;
+    const score = workEmailLabelScore(label);
+    if (score === 0) continue;
+    const email = cleanEmail(firstString(a?.value, a?.answer, a?.value_text));
+    if (email) candidates.push({ score, email });
+  }
+
+  const byLabel = g.registration_answers_by_label;
+  if (byLabel && typeof byLabel === "object" && !Array.isArray(byLabel)) {
+    for (const [key, value] of Object.entries(byLabel)) {
+      const score = workEmailLabelScore(key.replace(/_/g, " "));
+      if (score === 0) continue;
+      const email = cleanEmail(value);
+      if (email) candidates.push({ score, email });
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  // Highest score wins; ties keep source order (array before map).
+  return candidates.reduce((best, c) => (c.score > best.score ? c : best)).email;
+}
+
 /** First item of a runAction result ({ data: [...] } or a bare array). */
 function firstResult(res: any): any {
   if (res && Array.isArray(res.data)) return res.data[0] ?? null;
@@ -96,8 +192,14 @@ function extractEvent(o: Record<string, any>): LumaEvent | null {
 }
 
 interface Guest {
-  email: string;
-  emailLower: string;
+  /** The email on the guest's Luma account — often a personal address. */
+  accountEmail: string;
+  /** The "Work Email" registration answer, when the guest supplied one and it
+   *  differs from their account address. */
+  workEmail: string | null;
+  /** The address that belongs in Notion's `Primary Email`: the work email when
+   *  we have one, else the Luma account address. */
+  primaryEmail: string;
   firstName: string | null;
   lastName: string | null;
   name: string | null;
@@ -110,20 +212,27 @@ interface Guest {
 function extractGuest(raw: unknown): Guest | null {
   const o = (raw ?? {}) as Record<string, any>;
   const g = (o.guest ?? o.data ?? o) as Record<string, any>;
-  const email = firstString(g.email, g.attendee_email, g.attendee?.email);
+  const accountEmail = cleanEmail(
+    firstString(g.email, g.attendee_email, g.attendee?.email),
+  );
   // Empty/malformed payload (e.g. a manual "test" run from the Zapier UI) or a
   // guest with no resolvable event — return null so the workflow exits as a
   // clean no-op rather than a failed run.
-  if (!email) return null;
+  if (!accountEmail) return null;
   const event = extractEvent(g);
   if (!event) return null;
+  const answered = extractWorkEmail(g);
+  // A work-email answer that just repeats the account address is no answer at
+  // all — treat it as absent so nothing gets promoted or duplicated.
+  const workEmail = answered && answered !== accountEmail ? answered : null;
   const tickets = Array.isArray(g.tickets) ? g.tickets : [];
   const checkedIn =
     firstString(g.checked_in_at) !== null ||
     tickets.some((t: any) => firstString(t?.checked_in_at) !== null);
   return {
-    email,
-    emailLower: email.toLowerCase(),
+    accountEmail,
+    workEmail,
+    primaryEmail: workEmail ?? accountEmail,
     firstName: firstString(g.first_name, g.firstName),
     lastName: firstString(g.last_name, g.lastName),
     name: firstString(g.name),
@@ -206,6 +315,80 @@ async function createItemWithTemplate(
   return { pageId, usedTemplate: Boolean(created?.usedTemplate) };
 }
 
+// --- Contact email reconciliation ------------------------------------------
+
+interface ContactEmailState {
+  /** `Primary Email` (an email property), lowercased, or null when empty. */
+  primary: string | null;
+  /** `Secondary Email` multi-select option names, verbatim and in order. */
+  secondaryNames: string[];
+}
+
+/**
+ * Read a contact's current email properties straight from the Notion REST API,
+ * via a raw `sdk.fetch` (the same idiom as the page-cover PATCH below).
+ *
+ * Why not a Notion search action: `Secondary Email` is a multi-select, which
+ * `find_data_source_item` cannot read back, and writing a multi-select REPLACES
+ * the whole option list — so appending an address without first reading the
+ * current list would silently drop every address already on the contact.
+ */
+async function readContactEmails(pageId: string): Promise<ContactEmailState | null> {
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    connection: NOTION_CONNECTION,
+    headers: { "Notion-Version": NOTION_VERSION },
+  });
+  if (!res.ok) return null;
+  const body: any = await res.json();
+  const props = body?.properties ?? {};
+  const secondaryNames = (props["Secondary Email"]?.multi_select ?? [])
+    .map((o: any) => firstString(o?.name))
+    .filter((n: unknown): n is string => typeof n === "string");
+  return {
+    primary: cleanEmail(props["Primary Email"]?.email),
+    secondaryNames,
+  };
+}
+
+/**
+ * Work out the email changes a work-email answer implies for an EXISTING
+ * contact. The rule: the guest's own work-email answer always wins the Primary
+ * slot, and everything it displaces is kept as a Secondary — so no address is
+ * ever lost, even when the contact already had a curated Primary (e.g. one set
+ * by `enrich-contact-records`).
+ *
+ * Existing multi-select options are carried over verbatim rather than
+ * re-normalised, so a stray non-email option isn't silently dropped.
+ * Returns null for a field that needs no write.
+ */
+function planContactEmails(
+  current: ContactEmailState,
+  workEmail: string,
+  accountEmail: string,
+): { primary: string | null; secondaries: string[] | null } {
+  const kept: string[] = [];
+  // The work email is moving to Primary, so it must not also sit in Secondary.
+  const seen = new Set<string>([workEmail]);
+  const push = (name: string) => {
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    kept.push(name);
+  };
+  for (const name of current.secondaryNames) push(name);
+  if (current.primary) push(current.primary);
+  push(accountEmail);
+
+  const secondariesChanged =
+    kept.length !== current.secondaryNames.length ||
+    kept.some((name, i) => name !== current.secondaryNames[i]);
+
+  return {
+    primary: current.primary === workEmail ? null : workEmail,
+    secondaries: secondariesChanged ? kept : null,
+  };
+}
+
 /** Map Luma approval_status to the Notion "Approval Status" select option. */
 function mapApprovalStatus(status: string | null): string {
   switch ((status ?? "").toLowerCase()) {
@@ -237,6 +420,13 @@ function mapApprovalStatus(status: string | null): string {
 // just-created record (Notion search lags, and this account has no unique
 // Table constraint). So creation lives here only; the guest_updated deployment
 // (luma-guest-updated-to-event-attendance) is lookup/update-only.
+//
+// EMAIL IDENTITY: the Luma events ask for a "Work Email" as a registration
+// question, because a guest's Luma account address is often personal. When that
+// answer is present it becomes the contact's `Primary Email`, and the Luma
+// account address is kept in the `Secondary Email` multi-select. The answer wins
+// the Primary slot even against a Primary already on the contact — whatever it
+// displaces moves to Secondary, so no address is ever lost.
 const workflow = defineDurable<unknown, unknown>(
   "luma-guest-registered-to-event-attendance",
   async (ctx, rawInput) => {
@@ -359,30 +549,68 @@ const workflow = defineDurable<unknown, unknown>(
 
     // 2. Resolve the Contact via the email -> page id Zapier Table (covers
     // both Primary and Secondary emails; one row per known address).
+    //
+    // With a work-email answer there are TWO candidate addresses, so look both
+    // up: the work email is the identity we want on the record, but the guest
+    // may already be known under their Luma account address (or, rarely, under
+    // both — on two different contacts).
+    const workEmail = guest.workEmail;
+    const workEmailHit = workEmail
+      ? await ctx.step("find-contact-by-work-email", async () =>
+          sdk.listTableRecords({
+            table: CONTACT_EMAIL_TABLE,
+            keyMode: "names",
+            filters: [{ fieldKey: "Email", operator: "exact", value: workEmail }],
+            pageSize: 1,
+          }),
+        )
+      : null;
+    const workEmailPageId: string | null =
+      firstString(workEmailHit?.data?.[0]?.data?.["Page ID"]) ?? null;
+
     const contactHit = await ctx.step("find-contact-in-table", async () =>
       sdk.listTableRecords({
         table: CONTACT_EMAIL_TABLE,
         keyMode: "names",
         filters: [
-          { fieldKey: "Email", operator: "exact", value: guest.emailLower },
+          { fieldKey: "Email", operator: "exact", value: guest.accountEmail },
         ],
         pageSize: 1,
       }),
     );
-    let contactPageId: string | null =
+    const accountEmailPageId: string | null =
       firstString(contactHit?.data?.[0]?.data?.["Page ID"]) ?? null;
+
+    // Both addresses resolve, but to DIFFERENT contacts — two records for one
+    // person. Treat the work-email contact as canonical (it carries the
+    // identity the guest just told us) and leave both records' emails alone
+    // rather than shuffling addresses between them; the account-email record is
+    // flagged `Duplicate of` below so the collision surfaces in Notion.
+    const emailCollision =
+      workEmailPageId !== null &&
+      accountEmailPageId !== null &&
+      workEmailPageId !== accountEmailPageId;
+
+    let contactPageId: string | null = workEmailPageId ?? accountEmailPageId;
     let contactCreated = false;
 
     if (!contactPageId) {
       const fullName =
         guest.name ||
         [guest.firstName, guest.lastName].filter(Boolean).join(" ") ||
-        guest.email;
+        guest.primaryEmail;
       const createContactInputs: Record<string, unknown> = {
         datasource: CONTACTS_DS,
         "properties|||Name|||title": fullName,
-        "properties|||Primary Email|||email": guest.emailLower,
+        "properties|||Primary Email|||email": guest.primaryEmail,
       };
+      if (workEmail) {
+        // The work email took the Primary slot, so the Luma account address
+        // (often a personal one) is kept as a Secondary.
+        createContactInputs["properties|||Secondary Email|||multi_select"] = [
+          guest.accountEmail,
+        ];
+      }
       if (guest.firstName) {
         createContactInputs["properties|||First Name|||rich_text"] =
           guest.firstName;
@@ -405,24 +633,147 @@ const workflow = defineDurable<unknown, unknown>(
         throw new Error("Contact creation returned no page id");
       }
 
-      // Index the new contact so future lookups resolve from the table.
+      // Index EVERY address now on the contact so future lookups resolve from
+      // the table — an email missing here is what creates a duplicate contact
+      // on the guest's next registration.
       // "Trigger Contact Creation" stays false: the contact already exists.
+      const newContactPageId = contactPageId;
       await ctx.step("index-contact-in-table", async () =>
         sdk.createTableRecords({
           table: CONTACT_EMAIL_TABLE,
           keyMode: "names",
           records: [
-            {
-              data: {
-                Email: guest.emailLower,
-                "Page ID": contactPageId,
-                Type: "Primary",
-                "Trigger Contact Creation": false,
-              },
+            { email: guest.primaryEmail, type: "Primary" as const },
+            ...(workEmail
+              ? [{ email: guest.accountEmail, type: "Secondary" as const }]
+              : []),
+          ].map(({ email, type }) => ({
+            data: {
+              Email: email,
+              "Page ID": newContactPageId,
+              Type: type,
+              "Trigger Contact Creation": false,
             },
-          ],
+          })),
         }),
       );
+    }
+
+    // 2b. A work-email answer against a contact that already existed: promote
+    // the work email into `Primary Email` and keep whatever it displaces (the
+    // old Primary, plus the Luma account address) in the `Secondary Email`
+    // multi-select. Nothing to do when the contact was just created above (it
+    // already has the right emails) or on a cross-contact collision.
+    //
+    // The read and the write live in ONE step so a step retry re-reads the
+    // contact rather than writing a multi-select computed from stale state.
+    let emailsReconciled: {
+      changed: boolean;
+      primarySet: string | null;
+      secondaries: string[] | null;
+      read: boolean;
+    } | null = null;
+
+    if (workEmail && contactPageId && !contactCreated && !emailCollision) {
+      const pageId = contactPageId;
+      emailsReconciled = await ctx.step("reconcile-contact-emails", async () => {
+        const current = await readContactEmails(pageId);
+        if (!current) {
+          // Couldn't read the page — leave the emails alone rather than
+          // clobbering the multi-select from a guess.
+          return { changed: false, primarySet: null, secondaries: null, read: false };
+        }
+        const plan = planContactEmails(current, workEmail, guest.accountEmail);
+        if (plan.primary === null && plan.secondaries === null) {
+          return { changed: false, primarySet: null, secondaries: null, read: true };
+        }
+        const updateInputs: Record<string, unknown> = {
+          datasource: CONTACTS_DS,
+          page: pageId,
+        };
+        // An empty string means "leave unchanged" to the Notion action, which
+        // is exactly what a null plan field wants.
+        if (plan.primary !== null) {
+          updateInputs["properties|||Primary Email|||email"] = plan.primary;
+        }
+        if (plan.secondaries !== null) {
+          updateInputs["properties|||Secondary Email|||multi_select"] =
+            plan.secondaries;
+        }
+        await sdk.runAction({
+          appKey: NOTION_APP_KEY,
+          actionType: "write",
+          actionKey: "update_database_item",
+          connection: NOTION_CONNECTION,
+          inputs: updateInputs,
+        });
+        return {
+          changed: true,
+          primarySet: plan.primary,
+          secondaries: plan.secondaries,
+          read: true,
+        };
+      });
+
+      // Index any address that wasn't already in the table. The Contacts DB
+      // automation behind `contact-emails-to-zapier-table` also indexes these
+      // off the edit above, but it checks for an existing row first and this
+      // workflow must not depend on that timing — a missing row is what creates
+      // duplicate contacts.
+      if (emailsReconciled?.read) {
+        const rows: Array<{ email: string; type: "Primary" | "Secondary" }> = [];
+        if (!workEmailPageId) rows.push({ email: workEmail, type: "Primary" });
+        if (!accountEmailPageId) {
+          rows.push({ email: guest.accountEmail, type: "Secondary" });
+        }
+        if (rows.length > 0) {
+          await ctx.step("index-promoted-emails-in-table", async () =>
+            sdk.createTableRecords({
+              table: CONTACT_EMAIL_TABLE,
+              keyMode: "names",
+              records: rows.map(({ email, type }) => ({
+                data: {
+                  Email: email,
+                  "Page ID": pageId,
+                  Type: type,
+                  "Trigger Contact Creation": false,
+                },
+              })),
+            }),
+          );
+        }
+      }
+    }
+
+    // 2c. Flag the cross-contact collision in Notion so it can be merged by
+    // hand — the same `Duplicate of` convention `contact-emails-to-zapier-table`
+    // uses when an address already belongs to another contact.
+    let markedDuplicateOf: string | null = null;
+    if (emailCollision) {
+      const owner = workEmailPageId as string;
+      const dupe = accountEmailPageId as string;
+      await ctx.step("mark-duplicate-contact", async () => {
+        try {
+          await sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "update_database_item",
+            connection: NOTION_CONNECTION,
+            inputs: {
+              datasource: CONTACTS_DS,
+              page: dupe,
+              "properties|||Duplicate of|||relation": [owner],
+            },
+          });
+          return { marked: true as const };
+        } catch (err) {
+          return {
+            marked: false as const,
+            error: String((err as Error)?.message ?? err),
+          };
+        }
+      });
+      markedDuplicateOf = owner;
     }
 
     // 3. Upsert the Attendance record, deduped on Event + Contact.
@@ -559,12 +910,17 @@ const workflow = defineDurable<unknown, unknown>(
     }
 
     return {
-      email: guest.emailLower,
+      email: guest.primaryEmail,
+      accountEmail: guest.accountEmail,
+      workEmail,
       lumaEventId: ev.id,
       eventPageId,
       eventCreated,
       contactPageId,
       contactCreated,
+      emailsReconciled,
+      emailCollision,
+      markedDuplicateOf,
       attendancePageId,
       attendanceCreated,
       attendanceUpdated,

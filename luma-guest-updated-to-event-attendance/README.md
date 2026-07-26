@@ -6,7 +6,8 @@ changes — approval-status change, check-in, registration edit — onto the exi
 
 > **Pure updater — never creates.** Creation of Event / Contact / Attendance records is owned
 > solely by the sibling [`luma-guest-registered-to-event-attendance`](../luma-guest-registered-to-event-attendance)
-> (trigger `guest_registered`).
+> (trigger `guest_registered`). It does *update* an existing contact's emails — see
+> [Work email → `Primary Email`](#work-email--primary-email) — which is an update, not a create.
 >
 > **Why:** Luma fires `guest.registered` **and** `guest.updated` within ~150ms of a single new
 > registration. When both workflows could create, they raced and produced duplicate Attendance
@@ -18,14 +19,20 @@ changes — approval-status change, check-in, registration edit — onto the exi
 ## What it does
 
 1. Extract the guest: `email` (required), `approval_status`, `checkedIn` (any
-   `tickets[].checked_in_at` set), and the nested `event` id.
+   `tickets[].checked_in_at` set), the **`Work Email` registration answer**, and the nested
+   `event` id.
 2. **Look up the Event** — free `LUMA_EVENT_TABLE` → Notion `Luma ID` search. Not found → skip.
-3. **Look up the Contact** — email → page-id via `CONTACT_EMAIL_TABLE`. Not found → skip.
-4. **Look up the Attendance** — free `ATTENDANCE_TABLE` (`<eventPageId>::<contactPageId>`) →
+3. **Look up the Contact** — work email, then Luma account email, each → page-id via
+   `CONTACT_EMAIL_TABLE`. Neither found → skip.
+4. **Reconcile the contact's emails** if there's a work-email answer — promote it to
+   `Primary Email`, keep whatever it displaces in `Secondary Email`, index any un-indexed
+   address. Runs *before* the attendance lookup, so the email fix lands even when there's no
+   Attendance record yet.
+5. **Look up the Attendance** — free `ATTENDANCE_TABLE` (`<eventPageId>::<contactPageId>`) →
    Notion `find_data_source_item` on `Event` + `Contact` relations. Not found → skip.
-5. **Update** the record: refresh `Approval Status` (mapped from `approval_status`); only ever
+6. **Update** the record: refresh `Approval Status` (mapped from `approval_status`); only ever
    tick `Checked In` true (never un-tick); `Registration Date` untouched.
-6. If resolved via a Notion search (a pre-Table record), backfill the `ATTENDANCE_TABLE` row so
+7. If resolved via a Notion search (a pre-Table record), backfill the `ATTENDANCE_TABLE` row so
    future lookups are free.
 
 ### Approval-status mapping
@@ -33,8 +40,48 @@ changes — approval-status change, check-in, registration edit — onto the exi
 `approved`→Approved · `pending_approval`/`pending`→Pending Approval ·
 `waitlist`→Waitlist · `declined`/`rejected`→Declined · `invited`→Invited · (default Approved)
 
+## Work email → `Primary Email`
+
+Same rule as the [registered workflow](../luma-guest-registered-to-event-attendance#work-email--primary-email),
+which documents it in full: a `Work Email` registration answer becomes the contact's
+`Primary Email`, and whatever it displaces (the old Primary, plus the Luma account address)
+is kept in the `Secondary Email` multi-select, so no address is ever lost.
+
+The label matcher (including the rewording tolerance and the third-party exclusions that stop
+"Your manager's work email" being promoted) is identical in both files and is documented once,
+[there](../luma-guest-registered-to-event-attendance#how-the-answer-is-found). **Keep the two
+copies in sync** — the test battery asserts they score every label identically.
+
+**Why it lives here too:** this is the only workflow that sees a guest **edit** their
+work-email answer after registering — `guest_registered` has already fired by then, so only
+`guest_updated` gets the change. On a brand-new registration both workflows fire ~150ms apart
+and both compute the same target state, so the duplicate write is idempotent and harmless.
+
+Unlike the registered workflow this one never creates a contact, and it doesn't flag
+cross-contact collisions — on a collision (the two addresses resolving to different contacts)
+it uses the work-email contact and leaves both records' emails alone.
+
 **Known limitation:** a guest who never fires `guest_registered` (e.g. invited-but-never-registered,
 or manually added) gets no Attendance record — this workflow won't create one for them.
+
+## Workflow
+
+```mermaid
+flowchart TD
+    A["Luma guest_updated"] --> B["Extract guest<br/>account email · approval_status · checkedIn<br/>Work Email answer · event id"]
+    B -->|"no email or event"| Z["Skip (clean no-op)"]
+    B --> C{"Event in LUMA_EVENT_TABLE,<br/>then Notion Luma ID?"}
+    C -->|miss| Z
+    C -->|hit| D{"Work email, then account email,<br/>in CONTACT_EMAIL_TABLE?"}
+    D -->|"both miss"| Z2["Skip — registered<br/>workflow owns creation"]
+    D -->|hit| E{"Work-email answer?"}
+    E -->|no| G
+    E -->|yes| F["Read Primary + Secondary via GET /v1/pages ·<br/>promote work email to Primary ·<br/>displaced addresses → Secondary ·<br/>index any un-indexed address"] --> G
+    G{"Pair in ATTENDANCE_TABLE,<br/>then Notion relations?"}
+    G -->|miss| Z3["Skip attendance —<br/>emails already reconciled"]
+    G -->|hit| H["Update Attendance<br/>(Approval Status · tick Checked In)"]
+    H --> I["Backfill ATTENDANCE_TABLE<br/>if resolved via Notion"]
+```
 
 ## Connections
 
