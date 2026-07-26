@@ -121,6 +121,35 @@ A person with no matching People row (contractors, service accounts, anyone not
 in the Notion workspace) is a clean no-op on the Notion side — the Table is
 still updated, and the link heals on a later run.
 
+### Known limitation: split identities
+
+Everything is keyed on **email**, so one person with different emails in
+different systems gets **two Table rows**, and the row holding only the odd
+email never links to People.
+
+This bit Peter Gao: he joined Slack under `me@petergao.com`, so the classic
+Slack Zap created a second row there holding `U0ADH45GACR` while everything else
+sat on `peter@work.flowers`. His People row had no Slack ID even though the
+Table "had" it. Fixed 2026-07-26 by moving the ID onto the work-email row; the
+now-empty `me@petergao.com` row is still there and can be deleted.
+
+The durables inherit this — nothing detects that two rows are one person. When a
+People row is missing an ID that ought to exist, **check for a second Table row
+under a personal address before assuming the sync failed.**
+
+Rows currently holding IDs with no People link (audited 2026-07-26):
+
+| Email | Holds | Why unlinked |
+|---|---|---|
+| `aimee@work.flowers` | Slack, Linear | not in the Notion workspace |
+| `aimeehchiuten@gmail.com` | Slack | likely a split of the row above |
+| `agent@work.flowers`, `zapier@work.flowers` | Slack/Linear, Zapier | service accounts |
+| `keat@flourpower.sg`, `info@geniehealth.care` | Slack | external |
+| `*@oauthapp.linear.app`, `*@linear.linear.app` | Linear | Linear OAuth bots |
+
+Only the first two are real people; neither is in Notion, so there is no Notion
+impact today. The rest are correctly unlinked.
+
 ### Idempotency
 
 The People page is read before it is written and skipped when nothing differs,
