@@ -1,3 +1,6 @@
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/luma-event-to-notion
+// Deployed twice from this directory — luma-event-created-to-notion (event_created)
+// and luma-event-updated-to-notion (event_updated). Republish both together.
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
