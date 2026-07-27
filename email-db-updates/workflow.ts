@@ -124,10 +124,16 @@ function findPageText(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null;
   if (typeof value === "string") {
     if (value.includes("<mail>") || value.includes("<page ")) {
-      // The MCP tool may return the full JSON envelope as a string.
+      // The MCP tool may return the full JSON envelope as a string. Descending
+      // into the PARSED envelope restarts the depth budget: the string can sit
+      // 5-6 levels deep in the runAction result, and carrying that depth in
+      // used to exhaust the budget mid-envelope and fall back to the raw JSON
+      // string — whose escaped \n/\t sequences then broke the header parse
+      // (observed on the first live run). Each parse strips one encoding
+      // layer, so this can't recurse unboundedly.
       try {
         const parsed = JSON.parse(value);
-        return findPageText(parsed, depth + 1) ?? value;
+        return findPageText(parsed, 0) ?? value;
       } catch {
         return value;
       }
@@ -451,7 +457,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       return { skipped: true, reason: "no mail block", pageId };
     }
 
-    const meta = parseMailMetadata(pageText);
+    // In a step because `new Date(dateRaw)` trips the determinism guard even
+    // with an argument — the guard intercepts the Date constructor wholesale.
+    const parsedText = pageText;
+    const meta = await ctx.step("parse-mail", async () =>
+      parseMailMetadata(parsedText),
+    );
     if (!meta) {
       console.log(`Mail block on ${pageId} could not be parsed; skipping.`);
       return { skipped: true, reason: "mail block unparseable", pageId };
