@@ -4,7 +4,7 @@ Durable port of the [`notion-worker-email-db-updates`](https://github.com/work-f
 
 ## Trigger
 
-Notion DB automation on the **Emails** data source — **When page added** → **Send to webhook** → this workflow's `trigger_url` (`WebHookCLIAPI@1.1.1` / `hook_v2`, no auth). Payload carries the page under `data.id`; manual runs may pass a bare `{ "pageId": … }`.
+Notion DB automation on the **Emails** data source — **When page added** → **Send to webhook** → this workflow's **catch URL** (`zap.json` → `trigger.webhook_url`, `https://hooks.zapier.com/hooks/catch/…`; `WebHookCLIAPI@1.1.1` / `hook_v2`, no auth). The top-level `trigger_url` (`code-substrate-workflows.zapier.com/…`) is Zapier-internal — manual `trigger-workflow` runs and Zap-to-Zap calls only. Payload carries the page under `data.id`; manual runs may pass a bare `{ "pageId": … }`.
 
 ## What it does
 
@@ -102,7 +102,7 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
 ## Cutover
 
 1. Publish (above) and test with a real page id.
-2. Repoint the Notion **Emails** data source automation (**When page added → Send to webhook**) at this workflow's `trigger_url` (see `zap.json`).
+2. Repoint the Notion **Emails** data source automation (**When page added → Send to webhook**) at this workflow's catch URL: `https://hooks.zapier.com/hooks/catch/20495893/diRTHE6K9IbpbqZW/` (`zap.json` → `trigger.webhook_url` — not the internal `trigger_url`).
 3. Leave the `notion-worker-email-db-updates` Worker deployed for a few days as rollback, then decommission it (`ntn workers` — remove the webhook registration or the Worker itself).
 
 ## References

@@ -6,7 +6,11 @@
   "enabled": true,
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
-    "action": "hook_v2"
+    "action": "hook_v2",
+    "params": {
+      "_zap_static_hook_code": "69e1d85705565ddf"
+    },
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/69e1d85705565ddf/"
   },
   "zapier_durable_version": "0.6.1",
   "dependencies": {

@@ -10,7 +10,8 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "trigger_note": "Notion DB automation on the Emails data source (1e491b07-11ac-80ce-8b86-000b29ba4f68): 'When page added' -> 'Send to webhook' -> the trigger_url above. CUTOVER PENDING: the automation still points at the notion-worker-email-db-updates Worker webhook; repoint it to complete the migration (see README Cutover)."
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/diRTHE6K9IbpbqZW/",
+    "trigger_note": "Notion DB automation on the Emails data source (1e491b07-11ac-80ce-8b86-000b29ba4f68): 'When page added' -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL — NOT the internal trigger_url). CUTOVER PENDING: the automation still points at the notion-worker-email-db-updates Worker webhook; repoint it to complete the migration (see README Cutover)."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
