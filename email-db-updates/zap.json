@@ -1,0 +1,38 @@
+{
+  "name": "email-db-updates",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": true,
+  "status_note": "NOT YET PUBLISHED — source ready, awaiting first publish. Fill workflow_id / current_version_id / trigger_url and flip enabled on publish, then repoint the Notion Emails DB automation webhook (see README Cutover).",
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "trigger_note": "Notion DB automation on the Emails data source (1e491b07-11ac-80ce-8b86-000b29ba4f68): 'When page added' -> 'Send to webhook' -> this workflow's trigger_url."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "notion_mcp": "025ea818-da55-8691-b4d0-5647c50a0e59"
+  },
+  "connectionless_apps": {
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection",
+    "ZapierTables": "email->page-id table 01JYEPSEARXB2Z6BJRCMFGXBC2 (reads + new-contact rows), blocklist table 01KQY6RB1TJ9X7BAYBRRRKB35S (reads)"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "ai_model": {
+    "model_id": "standard/auto",
+    "authentication_id": "0",
+    "note": "Individual-vs-service email classification — squarely Standard's recommended workload (1x tasks vs 3x advanced / 5x premium). Verified offline via run-action harness: 10/10 correct verdicts, identical across two runs; boolean output field round-trips with isOutputArray. Cases table in README. The Worker this replaces used openai/gpt-5-mini via provider passthrough."
+  },
+  "replaces": {
+    "worker": "notion-worker-email-db-updates (Notion Worker at github.com/work-flowers/notion-worker-email-db-updates)",
+    "status": "Worker still live; repoint the Notion Emails DB automation webhook after this workflow is published and tested, keep the Worker a few days as rollback, then decommission."
+  }
+}
