@@ -86,7 +86,7 @@ Which slot an enriched address lands in depends on what the contact already has:
 
 | Existing `Primary Email` | Enriched address | Result | Path |
 |---|---|---|---|
-| empty, or the same address | corporate or consumer | enriched → Primary | D |
+| empty, or the same address (**compared case-insensitively**) | corporate or consumer | enriched → Primary | D |
 | **freemail** (`gmail.com`, `hotmail.co.uk`, `outlook.*`, `yahoo.*`, `icloud.com`, …) | **corporate** | **enriched → Primary, personal → Secondary** | **G-promote** |
 | already corporate | corporate | Primary untouched, enriched → Secondary | G |
 | freemail | also freemail | Primary untouched, enriched → Secondary | G |
@@ -103,6 +103,18 @@ a `Primary Email` someone chose deliberately. A consumer mailbox in Primary is a
 signup artefact, which is the one case where the guess is reliably better. A
 Primary already on a corporate domain is treated as curated and left alone — that
 was Path G's original point and it still holds.
+
+**Addresses compare case-insensitively (added 2026-07-27).** Enrichment sources
+return whatever case the upstream record holds, so `Zoe@automatico.com` and
+`zoe@automatico.com` arrived as different strings and the "same address" test —
+a plain `===` — missed. The address was treated as newly discovered and Path G
+filed the contact's own Primary under Secondary. Nine contacts ended up listing
+their Primary twice before this was caught; they were cleaned up the same day.
+
+Both write paths now run their Secondary list through `dedupeAddresses` and drop
+anything matching the Primary, so an address can appear at most once and never in
+both slots. The Path G filter also strips a redundant Primary an earlier run left
+behind, which means an affected contact heals itself the next time it's enriched.
 
 Freemail detection is a domain list (`FREEMAIL_EXACT` plus `FREEMAIL_PREFIXES`
 for families with many country TLDs). Word boundaries matter: `notgmail.com`,
