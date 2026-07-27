@@ -78,6 +78,29 @@ function firstString(...vals: unknown[]): string | null {
   return null;
 }
 
+/**
+ * Two email addresses are the same address, compared the way a mail server
+ * would rather than the way `===` does.
+ *
+ * Enrichment sources return whatever case the upstream record happens to hold,
+ * so "Zoe@automatico.com" and "zoe@automatico.com" arrive as different strings.
+ * Comparing them exactly is what made this workflow treat a contact's own
+ * Primary as a newly discovered address and file it under Secondary — nine
+ * contacts ended up listing their Primary twice (cleaned up 2026-07-27).
+ */
+function sameAddress(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/** The list with blanks dropped and each address kept once, first occurrence
+ *  winning and case ignored (see `sameAddress`). */
+function dedupeAddresses(addresses: string[]): string[] {
+  return addresses.filter(
+    (e, i, all) =>
+      e.trim() !== "" && all.findIndex((x) => sameAddress(x, e)) === i,
+  );
+}
+
 // --- Contact data extracted from the Notion webhook payload ---------------
 
 interface ContactData {
@@ -306,8 +329,12 @@ async function updateContactRecord(
   // --- Determine email path (mirrors the sub-zap's Path D / Path G logic) ---
   const hasNewEmail = Boolean(enriched.newEmail);
   const hasExistingEmail = Boolean(contact.primaryEmail);
+  // Case-insensitive: an enriched address that differs from the Primary only by
+  // case is the same address, not a new one. See `sameAddress`.
   const sameEmail =
-    hasNewEmail && hasExistingEmail && contact.primaryEmail === enriched.newEmail;
+    hasNewEmail &&
+    hasExistingEmail &&
+    sameAddress(contact.primaryEmail, enriched.newEmail);
   const noPriorEmail = !hasExistingEmail;
   const differentEmail = hasNewEmail && hasExistingEmail && !sameEmail;
 
@@ -349,15 +376,10 @@ async function updateContactRecord(
     // buried the work address in Secondary — inverted on ~26 contacts.
     emailPath = "promote-over-freemail";
     updateInputs["properties|||Primary Email|||email"] = enriched.newEmail;
-    updateInputs["properties|||Secondary Email|||multi_select"] = [
-      ...contact.secondaryEmails.filter(
-        (e) => e.toLowerCase() !== enriched.newEmail.toLowerCase(),
-      ),
+    updateInputs["properties|||Secondary Email|||multi_select"] = dedupeAddresses([
+      ...contact.secondaryEmails,
       contact.primaryEmail,
-    ].filter(
-      (e, i, all) =>
-        all.findIndex((x) => x.toLowerCase() === e.toLowerCase()) === i,
-    );
+    ]).filter((e) => !sameAddress(e, enriched.newEmail));
   } else if (differentEmail) {
     // Path G: the existing Primary is already on a corporate domain (or the
     // enriched address is itself a consumer mailbox), so treat the Primary as
@@ -366,10 +388,13 @@ async function updateContactRecord(
     // must never overwrite a deliberate corporate Primary.
     emailPath = "new-email";
     updateInputs["properties|||Primary Email|||email"] = "";
-    updateInputs["properties|||Secondary Email|||multi_select"] = [
+    // Never let the Primary appear in its own Secondary list, and never list an
+    // address twice. The filter also strips a redundant Primary that some
+    // earlier run already wrote, so a contact heals itself on next enrichment.
+    updateInputs["properties|||Secondary Email|||multi_select"] = dedupeAddresses([
       ...contact.secondaryEmails,
       enriched.newEmail,
-    ];
+    ]).filter((e) => !sameAddress(e, contact.primaryEmail));
   } else {
     // No new email from enrichment; just update the other fields.
     emailPath = "no-new-email";
