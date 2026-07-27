@@ -1,0 +1,59 @@
+{
+  "name": "start-a-timer-from-notion-task",
+  "workflow_id": "019fa2be-dd13-7d17-bdef-356eb7605c65",
+  "current_version_id": "019fa2d9-d958-7251-9da4-1ee8d8811b58",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AchzgHZQJPMsnJzHEuVolA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/C5myxfQnjplFgaa56/",
+    "trigger_note": "The catch URL is what the Notion Tasks DB automation must POST to — NOT trigger_url above, which is Zapier-internal. It first appeared when version 019fa2d9 was published WITH --trigger; the UI migration had left the trigger unclaimed (details: null), so nothing could reach the Zap. Disabling the workflow moves the trigger to status \"released\" but keeps this URL; re-enabling restores \"active\" with the same URL."
+  },
+  "connections": {
+    "harvestcliapi_connection": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+  },
+  "connections_note": "Alias kept as the UI-generated `harvestcliapi_connection` (numeric id 53227756) to match the original deployed binding. Title: \"Harvest dennis@work.flowers : Company Flow Pte. Ltd. (dba Work.Flowers\".",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / create_record — Zapier Tables auth is automatic, no connection and no task cost"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "dependencies_note": "dayjs is deliberately gone — the UI migration pulled it in for a 40-line generated date shim that the rewrite replaces with a fixed-offset one-liner.",
+  "external_ids": {
+    "harvest_user_id": "5171104",
+    "harvest_user_note": "Dennis Chiuten, from GET /v2/users/me on the bound connection. Replaces the unresolved {{=Components.variables['019d489c-35c7-50fd-18ec-c10c03fef69b']}} the migration left in the source.",
+    "harvest_task_id": "23938620",
+    "harvest_task_note": "Harvest task \"Automations (Standard)\". NOTE: is_active is false on the task record — confirm a running timer can still be booked against it.",
+    "notion_actor_id": "121d872b-594c-810b-ba5a-000206eeef1e",
+    "notion_actor_note": "Dennis in the work.flowers Notion workspace. Replaces the unresolved {{=components.variables['019d9007-5623-5f38-9bb1-fc534eea9314']}}. INFERRED — the classic Zap's variable values are not readable via the SDK. Fails safe: if wrong, every run returns { skipped: true, reason: 'triggered by another user' } and nothing is written.",
+    "notion_tasks_data_source": "27a91b07-11ac-81ed-973f-000ba6da1441",
+    "notion_projects_data_source": "407ac9c1-7045-4529-acde-6d71f3b288d5"
+  },
+  "tables": {
+    "01K5060J1B1FHCJEWVVH597B71": "Linear Issue to Harvest Time Entry Mapping — f3 Time Entry ID, f4 Date (datetime), f6 Notion Task Page ID. f1/f2 are Linear-era; f5 is a different (Knoxx) workspace and is not written.",
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f3 is_active, f5 Project Page ID"
+  },
+  "created_at": "2026-07-27T08:44:05.269Z",
+  "version_created_at": "2026-07-27T09:12:24.000Z",
+  "description": "Notion Tasks 'Track Time' button -> start (or restart) a Harvest timer for that task, booked to the Harvest project mapped to the task's Notion Project. One timer per task per day: the (task, day) -> time entry mapping lives in Zapier Table 01K5060J1B1FHCJEWVVH597B71, so a second click the same day restarts the existing entry instead of creating a duplicate. Migrated from the classic Zap of the same name via the Durables UI; the migration output was non-functional and was rewritten (see README).",
+  "version_history": [
+    {
+      "id": "019fa2be-e092-75b2-a57e-952f18721d3b",
+      "created_at": "2026-07-27T08:44:06.164Z",
+      "note": "Durables-UI migration of the classic Zap. Never ran: the source does not parse (TS1005/TS1160), four Zapier template expressions were left unresolved as literal strings, two step outputs were mis-bound to `input`, and the trigger was left unclaimed."
+    },
+    {
+      "id": "019fa2d9-d958-7251-9da4-1ee8d8811b58",
+      "created_at": "2026-07-27T09:12:24.000Z",
+      "note": "Rewrite of the migration. Fixes all eleven defects in the README table, resolves both user ids, claims the trigger, moves 0.8.0 -> 0.10.1, and drops dayjs. Typechecks; the actor-guard and no-project paths verified with run-durable against the live runner (no writes)."
+    }
+  ]
+}
