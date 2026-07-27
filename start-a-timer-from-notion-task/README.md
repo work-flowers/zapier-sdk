@@ -4,7 +4,7 @@ Clicking **Track Time** on a Notion task starts a Harvest timer for it — booke
 
 One timer per task per day. The `(task, day) → Harvest time entry` mapping lives in Zapier Table `01K5060J1B1FHCJEWVVH597B71`, so clicking the button again later the same day **restarts** the existing entry rather than opening a duplicate.
 
-**Status:** ✅ Enabled on Zapier, trigger claimed. **Cutover is not finished** — the Notion Tasks DB automation still has to be pointed at the catch URL below, and two items in [Remaining work](#remaining-work) are open.
+**Status:** ✅ Enabled on Zapier, trigger claimed, and the Notion Tasks DB automation posts to the catch URL. Cutover completed 2026-07-27. One thing is still unconfirmed — see [Remaining work](#remaining-work).
 
 ## What it does
 
@@ -87,11 +87,12 @@ zapier-sdk --experimental publish-workflow-version 019fa2be-dd13-7d17-bdef-356eb
 
 ## Remaining work
 
-1. **Point the Notion Tasks DB automation at the catch URL** above. Until then the Zap is enabled but receives nothing.
-2. **Fix the `WF-10` row** in Zapier Table `01K8A2KV9X1W95GAB6Y69D7G4C`: "SCW - AI Ops Retainer" has `project_id: "WF-10"`, which is the Notion *Project ID*, not a numeric Harvest project id. Starting a timer on that project will fail until it's corrected.
+**Confirm the first real run.** As of the cutover the workflow has never fired (`list-workflow-runs` returns empty), so one contract is still untested: `timeEntryIdFrom()`, which reads the new Harvest time entry id out of the custom action's response. The action is UI-authored, so its output shape isn't introspectable from the SDK, and verifying it means starting a live timer.
 
-Open questions, none blocking:
+On the first click, check the run output carries a `timeEntryId`. If the shape is wrong the run throws with the raw payload — which will show where the id actually lives — and the timer is left running in Harvest but unindexed, so the next day's click would start a duplicate until the row is added.
+
+Accepted, not blocking:
 
 - **The Notion actor id is inferred.** `121d872b-594c-810b-ba5a-000206eeef1e` is Dennis's user id in the work.flowers workspace and matches what a button-click automation sends, but the classic Zap's `components.variables` values aren't readable through the SDK, so it hasn't been checked against the original. Fails safe: if wrong, every run returns `{ skipped: true, reason: "triggered by another user" }` and nothing is written. The Harvest user id `5171104` *is* confirmed, from `/v2/users/me` on the bound connection.
-- **Harvest task `23938620` ("Automations (Standard)") has `is_active: false`.** Worth confirming a timer can still be booked against it.
-- **On the first real run, check the output carries a `timeEntryId`** — that's the one contract (`timeEntryIdFrom()`) that couldn't be verified without starting a live timer. If it's wrong the run throws with the raw payload, which will show where the id actually lives.
+- **Harvest task `23938620` ("Automations (Standard)") has `is_active: false`.** Not yet confirmed that a running timer can be booked against it.
+- **Zapier Table `01K8A2KV9X1W95GAB6Y69D7G4C` has a bad row** — "SCW - AI Ops Retainer" carries `project_id: "WF-10"`, the Notion *Project ID*, where a numeric Harvest project id belongs. Starting a timer on that one project will fail. Known and deliberately left as-is (2026-07-27); fix the row if that project ever needs time tracked against it.
