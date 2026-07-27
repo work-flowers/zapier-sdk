@@ -15,6 +15,7 @@ Notion DB automation on the **Emails** data source — **When page added** → *
    - Unknown addresses are classified with AI by Zapier (individual vs. service account); a Contact page is created for each individual (capped at 10 per run, `Primary Email` only), **with the Contacts default template applied** (repo rule 5), and its address indexed straight into the Table so back-to-back emails from the same new sender can't race the sync durable into a duplicate contact.
    - Internal addresses (`@work.flowers`) → Notion workspace user IDs via `users.list`.
 4. **Patches the page**: `From` (email), `To` / `Cc` (multi-select), `Gmail Message ID`, `Gmail Thread ID` (falls back to the message ID), `Date Received` (only if Notion didn't already set it), `Contacts` (**merged** with any relations Notion set natively — never overwritten), `Internal Recipients` and `Comment Access` (people; Comment Access is deliberately overwritten, same as the Worker and Zap).
+5. **Inherits `Companies` and `Deals` from the linked contacts** — each contact's `Related Company` and `Deals` relations are merged onto the email (existing links are never dropped). This replaces the native "set Companies when a contact is linked" Emails DB automation, which **does not fire on API-driven property updates** (the same finding recorded in the meeting-note worker). When the run created a brand-new contact, it waits 90s first so [`enrich-contact-records`](../enrich-contact-records/) has time to fill in the contact's `Related Company` (the wait is free while the durable is suspended).
 
 ```mermaid
 flowchart TD
@@ -31,6 +32,9 @@ flowchart TD
     D --> K
     G --> K
     I --> K["Patch Email page:<br/>From/To/Cc, IDs, Date,<br/>Contacts (merged),<br/>Internal Recipients,<br/>Comment Access"]
+    K --> L{"New contact<br/>created this run?"}
+    L -- "yes: wait 90s<br/>(enrichment settles)" --> M
+    L -- no --> M["Inherit from contacts:<br/>Related Company → Companies,<br/>Deals → Deals (merged,<br/>never dropped)"]
 ```
 
 ## Differences from the Worker, on purpose
@@ -39,6 +43,7 @@ flowchart TD
 - **New Contact pages apply the Contacts default template** (blue user-circle icon; repo rule 5). The Worker created bare pages.
 - **New contacts are indexed into the Table immediately** rather than waiting on the `contact-emails-to-zapier-table` sync (whose upsert treats the pre-written row as a no-op).
 - **The classifier runs on AI by Zapier `standard/auto`** (repo convention) instead of `openai/gpt-5-mini` via the AI action's provider passthrough.
+- **`Companies` / `Deals` inheritance is new** — neither the Worker nor the original Zap did it; a native Emails DB automation used to set `Companies`, but it never fires on these API-driven updates, so the linking moved into the workflow.
 
 Carried over from the Worker (differences from the original Zap): the `Contacts` relation is merged, not replaced; the audit table is dropped (run history replaces it); internal user IDs come from `users.list`, not the "Internal User IDs" Zapier table.
 

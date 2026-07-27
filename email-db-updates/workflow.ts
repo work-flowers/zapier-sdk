@@ -40,6 +40,20 @@ const BLOCKLIST_TABLE = "01KQY6RB1TJ9X7BAYBRRRKB35S";
 // Notion data sources.
 const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 
+// Contact -> Email relation inheritance. A native Emails DB automation used to
+// set `Companies` when a contact was linked, but Notion DB automations don't
+// reliably fire on API-driven property updates (same finding as the
+// meeting-note worker's icon-sync), so the linking happens here explicitly:
+// each linked contact's Related Company / Deals are merged onto the email.
+const CONTACT_COMPANY_PROP = "Related Company";
+const CONTACT_DEALS_PROP = "Deals";
+const EMAIL_COMPANIES_PROP = "Companies";
+const EMAIL_DEALS_PROP = "Deals";
+
+/** How long to let enrich-contact-records fill in a brand-new contact's
+ *  Related Company before inheriting. Free while the durable is suspended. */
+const ENRICHMENT_SETTLE_SECONDS = 90;
+
 const INTERNAL_DOMAIN = "@work.flowers";
 
 /** New Contact pages created per run, at most (parity with the Worker and the
@@ -717,6 +731,111 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       `Updated ${pageId}: contacts=${mergedContactIds.length} (existing=${meta.existingContactIds.length}, resolved=${existingPageIds.length}, created=${createdContacts.length}), internal=${internalUserIds.length}`,
     );
 
+    // 7. Inherit Companies / Deals from the linked contacts. Runs after the
+    // Contacts patch, replacing the native "set Companies when a contact is
+    // linked" DB automation, which does not fire on API-driven updates.
+    let inherited: {
+      companiesAdded: number;
+      dealsAdded: number;
+      companies: string[];
+      deals: string[];
+    } | null = null;
+    if (mergedContactIds.length > 0) {
+      if (createdContacts.length > 0) {
+        // A contact created seconds ago has no Related Company yet —
+        // enrich-contact-records fills it in within about a minute.
+        await ctx.wait("enrichment-settle", ENRICHMENT_SETTLE_SECONDS);
+      }
+
+      const contactIds = mergedContactIds;
+      const emailPageId = pageId;
+      // Reads and the conditional write live in ONE step so a retry re-reads
+      // current state rather than writing relations computed from stale data.
+      inherited = await ctx.step("inherit-companies-deals", async () => {
+        const getPage = async (id: string): Promise<any> => {
+          const res = await sdk.fetch(`${NOTION_API}/pages/${id}`, {
+            connection: NOTION_CONNECTION,
+            headers: { "Notion-Version": NOTION_VERSION },
+          });
+          if (!res.ok) {
+            throw new Error(
+              `Notion get page ${id} failed: ${res.status} ${await res.text()}`,
+            );
+          }
+          return res.json();
+        };
+        const relationIds = (page: any, prop: string): string[] =>
+          (page?.properties?.[prop]?.relation ?? [])
+            .map((r: any) => String(r?.id ?? ""))
+            .filter(Boolean);
+
+        const companies = new Set<string>();
+        const deals = new Set<string>();
+        for (const contactId of contactIds) {
+          let contact: any;
+          try {
+            contact = await getPage(contactId);
+          } catch (err) {
+            // One unreadable contact shouldn't lose the rest's inheritance.
+            console.log(
+              `Could not read contact ${contactId}: ${(err as Error)?.message ?? err}`,
+            );
+            continue;
+          }
+          for (const id of relationIds(contact, CONTACT_COMPANY_PROP)) companies.add(id);
+          for (const id of relationIds(contact, CONTACT_DEALS_PROP)) deals.add(id);
+        }
+
+        // Merge with what's already on the email — never drop a relation
+        // someone set by hand (same rule as Contacts above).
+        const emailPage = await getPage(emailPageId);
+        const currentCompanies = relationIds(emailPage, EMAIL_COMPANIES_PROP);
+        const currentDeals = relationIds(emailPage, EMAIL_DEALS_PROP);
+        const mergedCompanies = [...new Set([...currentCompanies, ...companies])];
+        const mergedDeals = [...new Set([...currentDeals, ...deals])];
+        const companiesAdded = mergedCompanies.length - currentCompanies.length;
+        const dealsAdded = mergedDeals.length - currentDeals.length;
+
+        if (companiesAdded > 0 || dealsAdded > 0) {
+          const patch: Record<string, any> = {};
+          if (companiesAdded > 0) {
+            patch[EMAIL_COMPANIES_PROP] = {
+              relation: mergedCompanies.map((id) => ({ id })),
+            };
+          }
+          if (dealsAdded > 0) {
+            patch[EMAIL_DEALS_PROP] = {
+              relation: mergedDeals.map((id) => ({ id })),
+            };
+          }
+          const res = await sdk.fetch(`${NOTION_API}/pages/${emailPageId}`, {
+            connection: NOTION_CONNECTION,
+            method: "PATCH",
+            headers: {
+              "Notion-Version": NOTION_VERSION,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ properties: patch }),
+          });
+          if (!res.ok) {
+            throw new Error(
+              `Notion pages.update (companies/deals) failed: ${res.status} ${await res.text()}`,
+            );
+          }
+        }
+
+        console.log(
+          `Inherited relations: +${companiesAdded} companies, +${dealsAdded} deals (from ${contactIds.length} contact(s))`,
+        );
+        return {
+          companiesAdded,
+          dealsAdded,
+          companies: mergedCompanies,
+          deals: mergedDeals,
+        };
+      });
+    }
+
     return {
       pageId,
       from: meta.from,
@@ -730,6 +849,10 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       contactsTotal: mergedContactIds.length,
       internalRecipients: internalUserIds.length,
       newEmailsClassified: newEmails,
+      companiesLinked: inherited?.companies.length ?? 0,
+      companiesAdded: inherited?.companiesAdded ?? 0,
+      dealsLinked: inherited?.deals.length ?? 0,
+      dealsAdded: inherited?.dealsAdded ?? 0,
     };
   },
 );

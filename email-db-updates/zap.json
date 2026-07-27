@@ -1,7 +1,7 @@
 {
   "name": "email-db-updates",
   "workflow_id": "019fa277-464d-7258-86c2-e440f60a5211",
-  "current_version_id": "019fa27f-277e-7f10-8d39-3da575280f28",
+  "current_version_id": "019fa2b1-6634-7208-91ad-f5586dfbc42f",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcT98vVzpYgqLa7c5wb1CA",
   "enabled": true,
   "is_private": true,
@@ -32,7 +32,7 @@
     "note": "Individual-vs-service email classification — squarely Standard's recommended workload (1x tasks vs 3x advanced / 5x premium). Verified offline via run-action harness: 10/10 correct verdicts, identical across two runs; boolean output field round-trips with isOutputArray. Cases table in README. The Worker this replaces used openai/gpt-5-mini via provider passthrough."
   },
   "created_at": "2026-07-27T07:25:53.614Z",
-  "version_created_at": "2026-07-27T07:33:08.265Z",
+  "version_created_at": "2026-07-27T08:29:00.000Z",
   "version_history": [
     {
       "id": "019fa277-8638-7d29-bd0e-867c0ab610c0",
@@ -48,6 +48,11 @@
       "id": "019fa27f-277e-7f10-8d39-3da575280f28",
       "created_at": "2026-07-27T07:38:32.000Z",
       "note": "parseMailMetadata moved into a ctx.step: new Date(dateRaw) trips the determinism guard even with an argument. Verified end-to-end against a real Email page — full parity with the Worker, idempotent re-run, 3/3 contacts resolved from the Table with no AI call and no creations."
+    },
+    {
+      "id": "019fa2b1-6634-7208-91ad-f5586dfbc42f",
+      "created_at": "2026-07-27T08:29:00.000Z",
+      "note": "Inherit Companies/Deals onto the email from each linked contact's Related Company/Deals (merged, never dropped), replacing the native Emails DB automation that doesn't fire on API-driven updates. Waits 90s before inheriting when the run created a contact, so enrich-contact-records can set Related Company first."
     }
   ],
   "replaces": {
