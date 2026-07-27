@@ -18,7 +18,7 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
 
 1. Extract the guest: `email` (required), name, `approval_status`, `registered_at`,
    `checkedIn` (any `tickets[].checked_in_at` set), the **`Work Email` registration
-   answer** (see below), and the nested `event`.
+   answer** and the **newsletter opt-in answer** (both below), and the nested `event`.
 2. **Resolve the Event** — free `LUMA_EVENT_TABLE` lookup → Notion `Luma ID` search →
    create from the guest's `event` object (rich, incl. page cover) and index the table.
 3. **Resolve the Contact** — work email, then Luma account email, each → page-id via
@@ -38,6 +38,9 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
      un-tick on a later non-checkin update); `Registration Date` left untouched.
    - **Index** the pair into `ATTENDANCE_TABLE` unless it was already resolved from
      there — so repeat guest triggers for the same pair cost zero Notion reads.
+5. **Newsletter opt-in → Buttondown** — if the guest ticked the newsletter question,
+   upsert them as a Buttondown subscriber under the address that went into
+   `Primary Email` (see below).
 
 ### Approval-status mapping
 
@@ -135,11 +138,78 @@ multi-select back either, so the current state comes from a raw
 and the write share **one** `ctx.step`, so a step retry re-reads the contact rather than
 writing a multi-select computed from stale state.
 
+## Newsletter opt-in → Buttondown
+
+The registration form also carries a boolean **"sign me up to the newsletter"** question.
+When it's ticked, the guest is upserted as a Buttondown subscriber via
+`App240106CLIAPI write/create_update_subscriber` (the same custom integration
+[`notion-newsletter-to-buttondown`](../notion-newsletter-to-buttondown) uses). The action is
+create-**or**-update on the address, so a repeat registration is a no-op rather than an error.
+
+**Which address:** the **work email**, when the guest gave one — it's the address that ends up
+in `Primary Email`, so the subscriber and the contact line up. The one exception is a
+`reconcile-contact-emails` step that couldn't read the contact page (`read: false`): it writes
+and indexes nothing, so the work email isn't on the contact yet and the Luma **account
+address** — the one that resolved the contact — is used instead.
+
+**Only `email_address` is sent.** The action updates an existing subscriber, and Buttondown
+notes / tags / metadata are maintained by hand and by other automations; passing them here
+would overwrite a returning subscriber's.
+
+### Why it runs last
+
+> A separate automation upserts a Notion **Contact** whenever a new subscriber appears in
+> Buttondown, resolving the address through `CONTACT_EMAIL_TABLE`. Subscribe *before* this
+> workflow has created the contact and indexed its addresses and that automation matches
+> nothing — so it creates a **second contact** for the same person.
+
+So the Buttondown call is the **last** thing the workflow does: contact create/resolve, email
+reconciliation, address indexing and the attendance upsert are all settled first. Running it
+after the attendance upsert (rather than merely after contact resolution) also means a
+Buttondown outage can never block the CRM records — the step is deliberately *not* wrapped in
+a try/catch, so a genuine failure retries and then surfaces as a failed run, with every Notion
+step already durably committed and memoised.
+
+### How the answer is found
+
+Same two sources and the same label-not-`question_id` matching as the work email, but the label
+match is deliberately **narrower**. A false positive on a work-email question just discards an
+address that doesn't parse; a false positive here **subscribes someone who never asked**. So a
+generic "would you like updates about future events?" must *not* match — the label has to name
+the newsletter or explicitly say subscribe:
+
+| Matches | Doesn't match |
+|---|---|
+| `Newsletter` · `Join our mailing list` · `Add me to the email list` · `Sign up for Flow Statements` · `Would you like to subscribe to our monthly email?` · `Opt in to email updates` | `Would you like updates about future events?` · `How did you hear about us?` · `Work Email` |
+
+A label that asks the **opposite** (`unsubscribe`, `opt out`, `do not`, `don't`, `no thanks` —
+e.g. "Untick to unsubscribe") is skipped entirely, since ticking one of those is a *no*.
+
+The answer is then read generously, because Luma delivers a boolean question's answer as a real
+boolean, as `"yes"`/`"no"`, or — when the form renders it as a tick box — as the option's own
+text:
+
+- **Yes** — `true`, `1`, a leading `yes`/`y`/`on`/`checked`/`agree`/`accept`/`sure`/`ok`, or a
+  phrase like `sign me up` / `subscribe` / `opt in` / `count me in` / `I agree` (`Yes, sign me
+  up!` covers both). Arrays are matched element-wise.
+- **No** — everything else, including `maybe`, an empty answer, and anything starting
+  `no`/`n`/`off`/`none`/`nope`/`not now`. **Defaulting to no is the point:** a wrong yes
+  subscribes someone without consent.
+
+Either source may carry the yes — the `by_label` map's snake_cased key can lose punctuation the
+array's label keeps.
+
+> **Registration only, by design.** The sibling
+> [`luma-guest-updated-to-event-attendance`](../luma-guest-updated-to-event-attendance) does
+> *not* subscribe, unlike the work-email promotion it shares. Luma doesn't re-submit
+> registration answers when a guest's status changes, so a `guest_updated` payload has no
+> newsletter answer to act on.
+
 ## Workflow
 
 ```mermaid
 flowchart TD
-    A["Luma guest_registered"] --> B["Extract guest<br/>account email · name · approval_status<br/>Work Email answer · nested event"]
+    A["Luma guest_registered"] --> B["Extract guest<br/>account email · name · approval_status<br/>Work Email answer · newsletter opt-in<br/>nested event"]
     B -->|"no email or event"| Z["Skip (clean no-op)"]
     B --> C{"Event in<br/>LUMA_EVENT_TABLE?"}
     C -->|hit| G["eventPageId"]
@@ -165,7 +235,14 @@ flowchart TD
     T -->|miss| S
     S --> U["Index the pair in ATTENDANCE_TABLE"]
     R --> U
+
+    U --> V{"Newsletter<br/>opt-in ticked?"}
+    V -->|no| W["Done"]
+    V -->|yes| X["Buttondown create_update_subscriber<br/>(work email if it's on the contact,<br/>else account email)"] --> W
 ```
+
+The Buttondown call sits at the very end on purpose — see
+[Why it runs last](#why-it-runs-last).
 
 ## Notion default templates
 
@@ -193,6 +270,7 @@ workflow now carries the template icon while keeping its own Name/email.
 | Alias | App key | Connection |
 |---|---|---|
 | `notion_wf` | `NotionCLIAPI` | Notion (work.flowers \| Dennis) — `02b73654-15c8-85c3-b16a-07304d2beb17` |
+| `buttondown` | `App240106CLIAPI` | Buttondown Unofficial #2 — `02a9a6e8-4c09-8cdb-a798-4d65af16d32a` |
 
 Trigger source connection (`authentication_id`): Luma **Calendar · workFlowers Events**
 `020ea5fc-59b8-8042-b128-49a6d0ed6f48`.
@@ -213,10 +291,13 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
-  --input '{"email":"…","first_name":"…","approval_status":"approved","registered_at":"…","tickets":[{"checked_in_at":null}],"registration_answers":[{"label":"Work Email","value":"…"}],"event":{"id":"evt-…","name":"…","start_at":"…"}}' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"buttondown":{"connectionId":"02a9a6e8-4c09-8cdb-a798-4d65af16d32a"}}' \
+  --input '{"email":"…","first_name":"…","approval_status":"approved","registered_at":"…","tickets":[{"checked_in_at":null}],"registration_answers":[{"label":"Work Email","value":"…"},{"label":"Sign me up to the newsletter","value":"yes"}],"event":{"id":"evt-…","name":"…","start_at":"…"}}' \
   --private
 ```
+
+A test run with the newsletter answer set creates a **real Buttondown subscriber** — use a
+throwaway address and delete it afterwards.
 
 Verified end-to-end 2026-07-26 against the real `evt-9jYYQfY4U8I0jDJ` event with throwaway
 `@wf-probe.invalid` addresses: a new guest with a work-email answer got Primary = work
@@ -235,7 +316,7 @@ zapier-sdk --experimental create-workflow "luma-guest-registered-to-event-attend
 zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"buttondown":{"connectionId":"02a9a6e8-4c09-8cdb-a798-4d65af16d32a"}}' \
   --trigger '{"selected_api":"LumaCLIAPI@6.1.0","action":"guest_registered","authentication_id":"020ea5fc-59b8-8042-b128-49a6d0ed6f48","params":{}}' \
   --enabled --json
 ```
