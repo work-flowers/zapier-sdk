@@ -49,6 +49,16 @@ const CONTACT_COMPANY_PROP = "Related Company";
 const CONTACT_DEALS_PROP = "Deals";
 const EMAIL_COMPANIES_PROP = "Companies";
 const EMAIL_DEALS_PROP = "Deals";
+const DEAL_STATUS_PROP = "Status";
+
+/**
+ * A deal is only inherited while it's OPEN. The closed statuses are enumerated
+ * (rather than the open ones) so a future open-pipeline status is included
+ * automatically; a deal whose Status can't be read counts as open, because a
+ * long-lived contact's closed deals are the noise this filter exists to keep
+ * off every new email.
+ */
+const CLOSED_DEAL_STATUSES = ["closed won", "closed lost", "declined"];
 
 /** How long to let enrich-contact-records fill in a brand-new contact's
  *  Related Company before inheriting. Free while the durable is suspended. */
@@ -792,9 +802,36 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         const currentCompanies = relationIds(emailPage, EMAIL_COMPANIES_PROP);
         const currentDeals = relationIds(emailPage, EMAIL_DEALS_PROP);
         const mergedCompanies = [...new Set([...currentCompanies, ...companies])];
-        const mergedDeals = [...new Set([...currentDeals, ...deals])];
         const companiesAdded = mergedCompanies.length - currentCompanies.length;
-        const dealsAdded = mergedDeals.length - currentDeals.length;
+
+        // Deals: only link candidates that are still open. A deal already on
+        // the email stays regardless (merge, never drop).
+        const dealCandidates = [...deals].filter(
+          (id) => !currentDeals.includes(id),
+        );
+        const openDeals: string[] = [];
+        for (const dealId of dealCandidates) {
+          let deal: any;
+          try {
+            deal = await getPage(dealId);
+          } catch (err) {
+            // Can't confirm it's open — count it as open per the bias above,
+            // but say so in the logs.
+            console.log(
+              `Could not read deal ${dealId}; linking it unverified: ${(err as Error)?.message ?? err}`,
+            );
+            openDeals.push(dealId);
+            continue;
+          }
+          const statusProp = deal?.properties?.[DEAL_STATUS_PROP];
+          const statusName = String(
+            statusProp?.status?.name ?? statusProp?.select?.name ?? "",
+          ).toLowerCase();
+          if (CLOSED_DEAL_STATUSES.includes(statusName)) continue;
+          openDeals.push(dealId);
+        }
+        const mergedDeals = [...currentDeals, ...openDeals];
+        const dealsAdded = openDeals.length;
 
         if (companiesAdded > 0 || dealsAdded > 0) {
           const patch: Record<string, any> = {};
