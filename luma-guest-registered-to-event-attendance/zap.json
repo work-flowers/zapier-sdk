@@ -1,7 +1,7 @@
 {
   "name": "luma-guest-registered-to-event-attendance",
   "workflow_id": "019f8d53-34a4-7b10-b52e-3fc9c0cdb2b3",
-  "current_version_id": "019f9e41-96ad-70b3-a996-36cfa10de760",
+  "current_version_id": "019fa17d-29f6-70d7-ad07-f56b341db6b7",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AeidphQ8j39PEFZUyoipMg",
   "enabled": true,
   "trigger": {
@@ -10,7 +10,8 @@
     "authentication_id": "020ea5fc-59b8-8042-b128-49a6d0ed6f48"
   },
   "connections": {
-    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "buttondown": "02a9a6e8-4c09-8cdb-a798-4d65af16d32a"
   },
   "zapier_durable_version": "0.9.1",
   "dependencies": {
@@ -18,6 +19,6 @@
     "@zapier/zapier-sdk": "0.86.0"
   },
   "created_at": "2026-07-23T04:54:28.262Z",
-  "version_created_at": "2026-07-26T11:48:46.382Z",
-  "description": "Luma guest registered -> upsert Notion Event Attendance (resolve event + contact, set Approval Status). A Work Email registration answer becomes the contact's Primary Email; the Luma account address is kept as a Secondary."
+  "version_created_at": "2026-07-27T02:52:42.359Z",
+  "description": "Luma guest registered -> upsert Notion Event Attendance (resolve event + contact, set Approval Status). A Work Email registration answer becomes the contact's Primary Email; the Luma account address is kept as a Secondary. A ticked newsletter opt-in answer subscribes the guest in Buttondown, last, so the Buttondown -> Contacts automation can't race this one into a duplicate contact."
 }

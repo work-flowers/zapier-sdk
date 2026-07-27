@@ -12,6 +12,12 @@ const NOTION_CONNECTION = "notion_wf";
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 
+// Buttondown (the custom "Buttondown Unofficial" integration, same app/alias as
+// notion-newsletter-to-buttondown). `create_update_subscriber` is create-or-
+// update on the email address, so a repeat call is a no-op rather than an error.
+const BUTTONDOWN_APP_KEY = "App240106CLIAPI";
+const BUTTONDOWN_CONNECTION = "buttondown";
+
 // Marketing Events workspace data sources.
 const EVENTS_DS = "65490a1e-aa79-4884-932b-60e88db67042";
 const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
@@ -152,6 +158,89 @@ function extractWorkEmail(g: Record<string, any>): string | null {
   return candidates.reduce((best, c) => (c.score > best.score ? c : best)).email;
 }
 
+/**
+ * Marks a question as the newsletter opt-in.
+ *
+ * Deliberately NARROWER than the work-email match. A false positive on a
+ * work-email question just means an address is discarded for not parsing; a
+ * false positive here subscribes someone to the newsletter who never asked, so
+ * a generic "would you like updates about future events?" must NOT match — the
+ * label has to name the newsletter/mailing list or explicitly say subscribe.
+ */
+const NEWSLETTER_RE =
+  /\b(newsletter|newsletters|mailing list|email list|flow statements)\b|\b(subscribe|subscribed|sign me up|sign up|opt-? ?in)\b[^.?!]*\b(email|emails|list|news|updates)\b/;
+
+/** A label that asks the OPPOSITE ("uncheck to unsubscribe", "opt out of…").
+ *  Ticking one of those is a no, so the question is left alone entirely. */
+const NEWSLETTER_NEGATED_RE = /\b(unsubscribe|opt-? ?out|do not|don'?t|no thanks)\b/;
+
+function isNewsletterLabel(label: string): boolean {
+  const l = normalizeLabel(label);
+  if (NEWSLETTER_NEGATED_RE.test(l)) return false;
+  return NEWSLETTER_RE.test(l);
+}
+
+/** First value that is present at all — unlike `firstString`, keeps booleans
+ *  and arrays intact, which a boolean question's answer may well be. */
+function firstDefined(...vals: unknown[]): unknown {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && v !== "") return v;
+  }
+  return undefined;
+}
+
+const NO_ANSWER_RE = /^(false|no|n|0|off|none|nope|not now|unchecked)\b/;
+const YES_ANSWER_RE =
+  /^(true|yes|y|1|on|checked|agree|agreed|accept|accepted|sure|yep|yeah|ok|okay)\b/;
+const YES_PHRASE_RE =
+  /\b(sign me up|subscribe|opt-? ?in|count me in|i agree|i consent|i'd like|i would like)\b/;
+
+/**
+ * Whether a registration answer reads as "yes". The question is a boolean, but
+ * Luma can deliver the answer as a real boolean, as `"yes"`/`"no"`, or — when
+ * the form renders it as a tick box — as the option's own text ("Yes, sign me
+ * up"). So: real booleans first, then an explicit no/yes word, then an
+ * affirmative phrase. Anything else counts as NO, because a wrong "yes"
+ * subscribes someone who didn't consent.
+ */
+function isAffirmative(v: unknown): boolean {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v === 1;
+  if (Array.isArray(v)) return v.some(isAffirmative);
+  if (typeof v !== "string") return false;
+  const s = normalizeLabel(v);
+  if (s === "" || NO_ANSWER_RE.test(s)) return false;
+  return YES_ANSWER_RE.test(s) || YES_PHRASE_RE.test(s);
+}
+
+/**
+ * Did the guest tick the "sign me up to the newsletter" question? Read from the
+ * same two places as the work-email answer (`registration_answers` array, then
+ * `registration_answers_by_label` map) and matched on the label's meaning, not
+ * a `question_id` — Luma mints a fresh id per event.
+ *
+ * Any affirmative wins: the two sources describe the same answer, and the map's
+ * snake_cased key can lose punctuation the array's label keeps.
+ */
+function extractNewsletterOptIn(g: Record<string, any>): boolean {
+  const answers = Array.isArray(g.registration_answers) ? g.registration_answers : [];
+  for (const a of answers) {
+    const label = firstString(a?.label, a?.question, a?.name);
+    if (!label || !isNewsletterLabel(label)) continue;
+    if (isAffirmative(firstDefined(a?.value, a?.answer, a?.value_text))) return true;
+  }
+
+  const byLabel = g.registration_answers_by_label;
+  if (byLabel && typeof byLabel === "object" && !Array.isArray(byLabel)) {
+    for (const [key, value] of Object.entries(byLabel)) {
+      if (!isNewsletterLabel(key.replace(/_/g, " "))) continue;
+      if (isAffirmative(value)) return true;
+    }
+  }
+
+  return false;
+}
+
 /** First item of a runAction result ({ data: [...] } or a bare array). */
 function firstResult(res: any): any {
   if (res && Array.isArray(res.data)) return res.data[0] ?? null;
@@ -200,6 +289,8 @@ interface Guest {
   /** The address that belongs in Notion's `Primary Email`: the work email when
    *  we have one, else the Luma account address. */
   primaryEmail: string;
+  /** The guest ticked the newsletter opt-in registration question. */
+  newsletterOptIn: boolean;
   firstName: string | null;
   lastName: string | null;
   name: string | null;
@@ -233,6 +324,7 @@ function extractGuest(raw: unknown): Guest | null {
     accountEmail,
     workEmail,
     primaryEmail: workEmail ?? accountEmail,
+    newsletterOptIn: extractNewsletterOptIn(g),
     firstName: firstString(g.first_name, g.firstName),
     lastName: firstString(g.last_name, g.lastName),
     name: firstString(g.name),
@@ -427,6 +519,13 @@ function mapApprovalStatus(status: string | null): string {
 // account address is kept in the `Secondary Email` multi-select. The answer wins
 // the Primary slot even against a Primary already on the contact — whatever it
 // displaces moves to Secondary, so no address is ever lost.
+//
+// NEWSLETTER: the registration form also carries a boolean "sign me up to the
+// newsletter" question. When it's ticked, the guest is upserted as a Buttondown
+// subscriber under the same address that went into `Primary Email` — but only
+// once the contact exists and its addresses are indexed, because a sibling
+// automation turns new Buttondown subscribers into Notion Contacts and would
+// otherwise create a duplicate. See step 4.
 const workflow = defineDurable<unknown, unknown>(
   "luma-guest-registered-to-event-attendance",
   async (ctx, rawInput) => {
@@ -909,6 +1008,46 @@ const workflow = defineDurable<unknown, unknown>(
       });
     }
 
+    // 4. Newsletter opt-in -> Buttondown subscriber.
+    //
+    // ORDERING IS THE POINT. A separate automation upserts a Notion Contact
+    // whenever a subscriber appears in Buttondown, resolving the address
+    // through CONTACT_EMAIL_TABLE. Subscribe before this workflow has created
+    // the contact and indexed its addresses and that automation finds nothing
+    // to match — so it creates a SECOND contact for the same person. Everything
+    // above (contact create/resolve, email reconcile, table indexing, and the
+    // attendance upsert) is therefore settled before the call goes out.
+    //
+    // Which address: the work email, as it's the one that belongs on the
+    // contact — but only when it's actually indexed against `contactPageId`.
+    // The one path where it isn't is a `reconcile-contact-emails` that couldn't
+    // read the page (`read: false`), which writes and indexes nothing; the Luma
+    // account address is the resolved contact's known-indexed address there.
+    const workEmailOnContact =
+      workEmail !== null &&
+      (contactCreated || workEmailPageId !== null || emailsReconciled?.read === true);
+    const newsletterEmail = workEmailOnContact
+      ? (workEmail as string)
+      : guest.accountEmail;
+
+    // Only `email_address` is sent. `create_update_subscriber` UPDATES an
+    // existing subscriber, and Buttondown's notes/tags/metadata are set by
+    // hand and by other automations — passing them here would overwrite a
+    // returning subscriber's.
+    let newsletterSubscriberId: string | null = null;
+    if (guest.newsletterOptIn) {
+      const subscribed = await ctx.step("subscribe-to-newsletter", async () =>
+        sdk.runAction({
+          appKey: BUTTONDOWN_APP_KEY,
+          actionType: "write",
+          actionKey: "create_update_subscriber",
+          connection: BUTTONDOWN_CONNECTION,
+          inputs: { email_address: newsletterEmail },
+        }),
+      );
+      newsletterSubscriberId = firstString(firstResult(subscribed)?.id);
+    }
+
     return {
       email: guest.primaryEmail,
       accountEmail: guest.accountEmail,
@@ -927,6 +1066,9 @@ const workflow = defineDurable<unknown, unknown>(
       attendanceFoundViaTable: foundViaTable,
       approvalStatus,
       checkedIn: guest.checkedIn,
+      newsletterOptIn: guest.newsletterOptIn,
+      newsletterEmail: guest.newsletterOptIn ? newsletterEmail : null,
+      newsletterSubscriberId,
     };
   },
 );
