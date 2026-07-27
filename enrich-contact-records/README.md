@@ -9,7 +9,10 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 1. **Trigger** — Notion webhook on the Contacts DB (same `hook_v2` trigger as
    the original Zap).
 2. **Enrich** — Two-source cascade with the contact's email, name, domain, and
-   LinkedIn URL:
+   LinkedIn URL. When the `First Name` / `Last Name` properties are empty, the
+   name is parsed from the page **title** instead (auto-created contacts often
+   carry the person's name only there); a title that is just an email address
+   is not treated as a name. (Added 2026-07-27, TKT-811.)
    - **Primary — Apollo.io** (`POST https://api.apollo.io/api/v1/people/match`):
      called through Apollo's native **API Request (Beta)** action
      (`_zap_raw_request`), which issues the raw HTTP request *with the
@@ -21,6 +24,19 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    - **Fallback — NinjaPear** (`App243984CLIAPI.search.find_person_profile`):
      used only when Apollo errors (e.g. invalid key / no credits on the free
      tier), returns a non-2xx, or returns no usable match.
+
+     **NinjaPear rejects personal-email lookups** (data-privacy policy), and a
+     personal address in `work_email` sinks the whole request even when another
+     identifier could match on its own. So (added 2026-07-27, TKT-811): a
+     **freemail** Primary is stripped from the NinjaPear inputs, and the call is
+     skipped entirely when no viable identifier combo remains — viable meaning a
+     (corporate) work email, an employer website + first name, or a LinkedIn
+     profile URL. A skipped call surfaces in the outcome comment as
+     `NinjaPear: skipped — only a personal email available…`, which is more
+     actionable than a false "no profile found". `isFreemail` is list-based, so
+     an unlisted consumer domain still goes through and fails like any other
+     no-match. Apollo is unaffected — it indexes personal emails, so the
+     primary path keeps sending them.
 
    Each source runs inside a step that **catches its own errors and returns a
    value instead of throwing**, so a failing source does not trigger the
@@ -53,7 +69,16 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    - which source did the enrichment (**Apollo** or **NinjaPear**);
    - when NinjaPear was used as a fallback, a short note on **why Apollo failed**
      (e.g. `Apollo unavailable: HTTP 401 — Invalid API key…`);
-   - when nothing enriched, the skip reason.
+   - when nothing enriched, **one clause per source tried**, each labelled and
+     trimmed on its own, with JSON/HTML error wrapping stripped — e.g.
+     `Enrichment skipped — Apollo: HTTP 422 — You have insufficient credits! …;
+     NinjaPear: no profile found.`
+
+   Skip reasons were originally joined first and truncated after, so Apollo's
+   verbose out-of-credits blob (a JSON body with an inline `<a>` tag) ate the
+   whole 160-char budget and hid the `ninjapear returned no result` clause —
+   making the fallback look like it never ran (TKT-811, fixed 2026-07-27; the
+   run record's `reason` field always carried the full detail).
 
    If the webhook was triggered by a button click and the payload included the
    user's Notion ID, the comment mentions that user for better visibility.
@@ -63,10 +88,12 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 
 ```mermaid
 flowchart TD
-    A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> B["Extract contact page + optional<br/>triggering user's Notion ID"]
+    A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title)"]
     B --> AP["Primary: Apollo people/match<br/>with email, name, domain, LinkedIn URL"]
     AP -- "usable match" --> E
-    AP -- "error / no credits / no match" --> NP["Fallback: NinjaPear<br/>find_person_profile"]
+    AP -- "error / no credits / no match" --> NPG{"Viable NinjaPear identifiers?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
+    NPG -- "work email, LinkedIn URL,<br/>or domain + first name" --> NP["Fallback: NinjaPear<br/>find_person_profile"]
+    NPG -- "no (personal email only)" --> D
     NP -- "profile found" --> E{"Enriched email vs existing<br/>Primary Email?"}
     NP -- "error / no result" --> D(["Log, comment outcome, return<br/>(no retry)"])
     E -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]

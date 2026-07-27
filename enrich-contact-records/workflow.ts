@@ -156,10 +156,27 @@ function extractContactData(raw: unknown): ContactData {
     data?.userId,
   );
 
+  // Auto-created contacts (e.g. from an event registration) often carry the
+  // person's name only in the page title — the First/Last Name rich_text
+  // properties arrive empty. Fall back to splitting the title so the
+  // enrichment sources get a name to match on. A title that is just an email
+  // address (the placeholder for a contact created from a bare registration)
+  // is not a name.
+  let firstName = plainText(props["First Name"]?.rich_text).trim();
+  let lastName = plainText(props["Last Name"]?.rich_text).trim();
+  if (!firstName && !lastName) {
+    const title = plainText(props["Name"]?.title).trim();
+    if (title && !title.includes("@")) {
+      const parts = title.split(/\s+/);
+      firstName = parts[0] ?? "";
+      lastName = parts.slice(1).join(" ");
+    }
+  }
+
   return {
     pageId,
-    firstName: plainText(props["First Name"]?.rich_text).trim(),
-    lastName: plainText(props["Last Name"]?.rich_text).trim(),
+    firstName,
+    lastName,
     primaryEmail: props["Primary Email"]?.email ?? "",
     domain,
     linkedinUrl: props["Linkedin"]?.url ?? "",
@@ -510,20 +527,45 @@ interface WorkflowResult {
    *  outcome comment so a maintainer can see why NinjaPear was used. */
   apolloError?: string;
   reason?: string;
+  /** Per-source failure notes when nothing enriched, one entry per source
+   *  tried (in order). Kept separate so the outcome comment can show each
+   *  source's failure on its own — joining them first and truncating after is
+   *  what hid "ninjapear returned no result" behind Apollo's verbose
+   *  out-of-credits blob and made the fallback look like it never ran
+   *  (TKT-811). */
+  reasons?: string[];
   emailPath?: string;
   iconUpdated?: boolean;
 }
 
-/** Trim an internal Apollo failure reason down to a short, human-readable
- *  phrase for the outcome comment (e.g. "HTTP 401 — Invalid API key…"). */
-function briefReason(why: string): string {
-  let s = why
-    .replace(/^apollo\s+/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  s = s.replace(/^http\s+(\d+):\s*/i, "HTTP $1 — ");
+/** A single source's failure reason parsed into a source label ("Apollo",
+ *  "NinjaPear", or null) and a short human-readable phrase. Unwraps the JSON
+ *  error body and strips the HTML that upstream errors arrive in — Apollo's
+ *  out-of-credits body is a JSON blob with an inline <a> tag. */
+function parseFailure(why: string): { source: string | null; brief: string } {
+  let s = why.replace(/\s+/g, " ").trim();
+  let source: string | null = null;
+  const src = s.match(/^(apollo|ninjapear)\s+/i);
+  if (src) {
+    source = src[1].toLowerCase() === "apollo" ? "Apollo" : "NinjaPear";
+    s = s.slice(src[0].length);
+  }
   s = s.replace(/^error:\s*/i, "");
-  return s.length > 160 ? s.slice(0, 159).trimEnd() + "…" : s;
+  const http = s.match(/^http\s+(\d+):\s*(.*)$/i);
+  let status = "";
+  if (http) {
+    status = http[1];
+    s = http[2];
+  }
+  // Prefer the message inside a JSON error body over the raw blob, and drop
+  // any markup embedded in it.
+  s = s.match(/"error"\s*:\s*"([^"]+)"/i)?.[1] ?? s;
+  s = s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  if (/^returned no result$/i.test(s)) s = "no profile found";
+  if (/^returned no usable match$/i.test(s)) s = "no usable match";
+  if (status) s = s ? `HTTP ${status} — ${s}` : `HTTP ${status}`;
+  if (s.length > 140) s = s.slice(0, 139).trimEnd() + "…";
+  return { source, brief: s || "unknown error" };
 }
 
 async function addOutcomeComment(
@@ -548,10 +590,19 @@ async function addOutcomeComment(
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
     // When the fallback (NinjaPear) did the work, note why Apollo was skipped.
     if (result.source === "ninjapear" && result.apolloError) {
-      summary += ` (Apollo unavailable: ${briefReason(result.apolloError)})`;
+      summary += ` (Apollo unavailable: ${parseFailure(result.apolloError).brief})`;
     }
   } else {
-    summary = `Enrichment skipped: ${briefReason(result.reason ?? "no data found")}.`;
+    // One clause per source tried, each labelled and trimmed on its own, so
+    // that a verbose primary-source error can never hide the fact that the
+    // fallback also ran.
+    const parts = (
+      result.reasons?.length ? result.reasons : [result.reason ?? "no data found"]
+    ).map((r) => {
+      const { source, brief } = parseFailure(r);
+      return source ? `${source}: ${brief}` : brief;
+    });
+    summary = `Enrichment skipped — ${parts.join("; ")}.`;
   }
 
   // Build the rich_text array. If we know who triggered the run, mention
@@ -703,40 +754,66 @@ const workflow = defineDurable<unknown, unknown>(
       );
 
       // --- Fallback: NinjaPear find_person_profile.
-      const ninja = await ctx.step("find-person-profile", async () => {
-        try {
-          const result = await sdk.runAction({
-            appKey: ENRICHMENT_APP_KEY,
-            actionType: "search",
-            actionKey: "find_person_profile",
-            connection: ENRICHMENT_CONNECTION,
-            inputs: {
-              work_email: contact.primaryEmail,
-              first_name: contact.firstName,
-              last_name: contact.lastName,
-              employer_website: contact.domain,
-              linkedin_profile_url: contact.linkedinUrl,
-            },
-          });
-          return { result: firstResult(result), error: null as string | null };
-        } catch (err) {
-          return {
-            result: null,
-            error: String((err as Error)?.message ?? err),
-          };
-        }
-      });
+      // NinjaPear rejects lookups on personal email addresses for data-privacy
+      // reasons, and a personal address in `work_email` sinks the whole request
+      // even when another identifier (LinkedIn URL, employer website) could
+      // match on its own. So a freemail Primary is stripped from the inputs,
+      // and the call is skipped entirely when no viable identifier combo
+      // remains — per the action's field docs that's: a work email, an
+      // employer website + first name, or a LinkedIn profile URL. isFreemail
+      // is list-based, so an unlisted consumer domain still goes through and
+      // fails like any other no-match (the pre-guard behaviour).
+      const ninjaEmail = isFreemail(contact.primaryEmail)
+        ? ""
+        : contact.primaryEmail;
+      const ninjaViable = Boolean(
+        ninjaEmail ||
+          contact.linkedinUrl ||
+          (contact.domain && contact.firstName),
+      );
 
-      if (ninja.result) {
-        enrichedData = extractEnrichedFromNinjaPear(ninja.result);
-        source = "ninjapear";
-        console.log(`NinjaPear enriched ${contact.pageId}`);
+      if (!ninjaViable) {
+        const why = contact.primaryEmail
+          ? "skipped — only a personal email available (personal-email lookups are rejected)"
+          : "skipped — no usable identifiers (need a work email, LinkedIn URL, or company domain)";
+        reasons.push(`ninjapear ${why}`);
+        console.log(`NinjaPear ${why} for ${contact.pageId}`);
       } else {
-        reasons.push(
-          ninja.error
-            ? `ninjapear error: ${ninja.error}`
-            : "ninjapear returned no result",
-        );
+        const ninja = await ctx.step("find-person-profile", async () => {
+          try {
+            const result = await sdk.runAction({
+              appKey: ENRICHMENT_APP_KEY,
+              actionType: "search",
+              actionKey: "find_person_profile",
+              connection: ENRICHMENT_CONNECTION,
+              inputs: {
+                work_email: ninjaEmail,
+                first_name: contact.firstName,
+                last_name: contact.lastName,
+                employer_website: contact.domain,
+                linkedin_profile_url: contact.linkedinUrl,
+              },
+            });
+            return { result: firstResult(result), error: null as string | null };
+          } catch (err) {
+            return {
+              result: null,
+              error: String((err as Error)?.message ?? err),
+            };
+          }
+        });
+
+        if (ninja.result) {
+          enrichedData = extractEnrichedFromNinjaPear(ninja.result);
+          source = "ninjapear";
+          console.log(`NinjaPear enriched ${contact.pageId}`);
+        } else {
+          reasons.push(
+            ninja.error
+              ? `ninjapear error: ${ninja.error}`
+              : "ninjapear returned no result",
+          );
+        }
       }
     }
 
@@ -747,6 +824,7 @@ const workflow = defineDurable<unknown, unknown>(
         pageId: contact.pageId,
         enriched: false,
         reason: reasons.join("; ") || "no result from enrichment",
+        reasons,
       };
     } else {
       // 2. Update the contact record (inline sub-zap logic).
