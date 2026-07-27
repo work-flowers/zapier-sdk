@@ -6,7 +6,7 @@ Turns a Notion **Newsletter Issues** page into a Buttondown draft or scheduled e
 
 ## What it does
 
-Fetches the Notion page, exports its body via Notion's **native markdown export** (structurally faithful, unlike the lossy Zapier block converter), converts Notion pseudo-tags (callouts, columns, spacers, spans) to email-safe markdown, pulls the canonical URL and description from the related Blog post, then creates or updates the Buttondown email — scheduled when the page has a Send Date. Finally it writes the Buttondown ID/URL/Status back to the Notion page and best-effort logs the page → email mapping to a Zapier Table.
+Fetches the Notion page, exports its body via Notion's **native markdown export** (structurally faithful, unlike the lossy Zapier block converter), converts Notion pseudo-tags (callouts, columns, spacers, spans) to email-safe markdown, surfaces image captions as visible lines, pulls the canonical URL and description from the related Blog post, then creates or updates the Buttondown email — scheduled when the page has a Send Date. Finally it writes the Buttondown ID/URL/Status back to the Notion page and best-effort logs the page → email mapping to a Zapier Table.
 
 ## Workflow
 
@@ -39,4 +39,5 @@ Webhooks by Zapier Catch Hook (`hook_v2`) — the "Send to Buttondown" button on
 - Connection aliases `notion_wf` (Notion) and `buttondown` (custom Buttondown integration, `App240106CLIAPI`), resolved at publish time via `--connections`.
 - The Buttondown `create_draft` action re-hosts cover and inline images, so expiring Notion file URLs don't break in the email.
 - The markdown conversion handles fenced code blocks specially — indentation inside fences is preserved while Notion's structural tab indentation elsewhere is stripped.
+- **Image captions.** Notion's export puts a block's caption in the Markdown alt-text slot (`![caption](url)`), where it is invisible to sighted readers. The conversion mirrors it into an italic line under the image and keeps the alt attribute, so the caption is both visible and accessible. Uncaptioned images (`![](url)`), inline images mid-sentence, and images inside code fences are left untouched. A caption containing brackets — a link, say — is left as alt text only, since it can't be parsed unambiguously out of the alt slot; if that becomes common, read `caption` off the image blocks via the blocks API instead of the markdown.
 - Mapping log lives in Zapier Table `01KNJN2MSBAJVXRME6M1Y65F5B` (Page ID → Buttondown Email ID), keyed on Page ID so re-runs refresh rather than duplicate.

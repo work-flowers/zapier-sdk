@@ -135,6 +135,32 @@ function notionMarkdownToEmail(md: string): string {
     out = lines.join("\n");
   }
 
+  // Notion exports an image caption into the Markdown alt-text slot: ![caption](url).
+  // Alt text only surfaces for screen readers or when the image fails to load, so
+  // mirror it into a visible italic line under the image while keeping the alt
+  // attribute intact. Uncaptioned images export as ![](url) and are left alone, as
+  // are inline images (the line must be nothing but the image) and anything inside
+  // a code fence. A caption containing brackets — e.g. a link — is left as-is
+  // rather than risk mangling it; alt text still carries it.
+  // Runs AFTER the tab strip above: images inside Notion column layouts arrive
+  // indented, and would not match an anchored ^!\[ before those tabs are gone.
+  {
+    const lines = out.split("\n");
+    let inFence = false;
+    const result: string[] = [];
+    for (const line of lines) {
+      if (/^\s*(```|~~~)/.test(line)) {
+        inFence = !inFence;
+        result.push(line);
+        continue;
+      }
+      const m = inFence ? null : line.match(/^!\[([^\]]+)\]\(([^)]+)\)[ \t]*$/);
+      result.push(line);
+      if (m) result.push("", `*${m[1]}*`);
+    }
+    out = result.join("\n");
+  }
+
   // Notion's native export separates EVERY block with a single newline, which
   // Markdown collapses into one paragraph (soft break). Insert a blank line
   // between adjacent blocks so each renders on its own — but keep list items and
