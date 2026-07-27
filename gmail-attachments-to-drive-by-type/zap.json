@@ -1,0 +1,67 @@
+{
+  "name": "gmail-attachments-to-drive-by-type",
+  "workflow_id": "019fa1a7-56b8-7a92-bcef-e276ccf409d3",
+  "current_version_id": "019fa1c9-5b0e-7d17-91c8-90ee3afc6048",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac3NgVbpd6LybyXHk36LAg",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleMailV2CLIAPI@2.14.0",
+    "action": "search",
+    "authentication_id": "02a57b11-742e-8601-a7d4-99004bd654c7",
+    "authentication_note": "Gmail dennis@work.flowers (the non-shared connection). The Gmail credential lives HERE, not in --connections — the workflow code never calls Gmail.",
+    "params": {
+      "query": "has:attachment filename:pdf -in:sent -in:drafts -in:chats -in:trash -in:spam -from:no-reply.1tdl9c@zapiermail.com"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger, one run per EMAIL (not per attachment) — that is what lets the classifier see an invoice alongside the receipt that settles it. The query only narrows what Gmail polls; the authoritative filters are BLOCKED_SENDERS / BLOCKED_SUBJECTS / BLOCKED_LABELS in workflow.ts."
+  },
+  "connections": {
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f"
+  },
+  "connectionless_apps": {
+    "FilesByZapierCLIAPI": "text_from_file_new — built-in, no connection",
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "drive_folders": {
+    "Invoices": "14RpcjSzye4BVZPS_1OzspabmQzDwFVRE",
+    "Paid Receipts": "1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC",
+    "Signed Agreements": "1-1HCfTIdnngXv_1fhUHuPpjI6Nupk7-K",
+    "Financial Reporting": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo"
+  },
+  "created_at": "2026-07-27T03:38:46.329Z",
+  "version_created_at": "2026-07-27T04:03:00.000Z",
+  "ai_model": {
+    "model_id": "standard/auto",
+    "authentication_id": "0",
+    "note": "Tier drives task cost: standard 1x, advanced 3x, premium 5x tasks per run (plus the same multiplier per tool call; this step makes none). Those three sentinels are the only valid values — anything else errors with 'Unknown tier sentinel'. Standard reaches the same routing verdict as Advanced on every case in the README's verified table, including SimplePay's statement-history inference. Re-run those cases before changing tier."
+  },
+  "description": "Gmail email with PDF attachments -> classify every attachment in ONE AI by Zapier call (email context + all extracted PDF text) -> file each into Invoices / Paid Receipts / Signed Agreements / Financial Reporting. Migration of the classic 'Gmail Attachments to Google Drive by Type' Zap. The Invoices folder holds only outstanding bills: an invoice is withheld when a receipt on the same email settles it (matched on invoice number), when the classifier matches a sibling receipt on vendor+amount+date, when a sibling account statement shows the vendor auto-clearing every prior invoice with a same-day card payment, or when the invoice itself carries paid markers. The classic Zap's 'due date == invoice date' proxy is deliberately gone — due-on-receipt invoices are often genuinely unpaid.",
+  "version_history": [
+    {
+      "id": "019fa1a7-c94b-7ce7-9a03-9ee90bf20863",
+      "created_at": "2026-07-27T03:39:15.660Z",
+      "note": "Initial migration."
+    },
+    {
+      "id": "019fa1b3-10bd-79d7-aaeb-e6262b6a7cf8",
+      "created_at": "2026-07-27T03:51:34.846Z",
+      "note": "Added the recurring-auto-charge signal (Auto-Paid By Recurring Charge) after SimplePay's monthly invoice+statement email filed to Invoices. No receipt exists in that email; the evidence is the statement's history of same-day card payments."
+    },
+    {
+      "id": "019fa1c9-5b0e-7d17-91c8-90ee3afc6048",
+      "created_at": "2026-07-27T04:03:00.000Z",
+      "note": "Model tier advanced/auto -> standard/auto (3x -> 1x tasks per run) after verifying identical routing verdicts on every test case. Also gated the superseded-by-receipt signal on a Receipt actually being present: on SimplePay the model reported it with only a statement attached, reaching the right verdict but recording evidence that did not exist."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Gmail Attachments to Google Drive by Type",
+    "old_trigger": "GoogleMailV2CLIAPI attachment (New Attachment) — fired once per attachment",
+    "status": "Every node after the trigger was already paused. Turn the classic Zap off entirely once this workflow has run for a few days."
+  }
+}
