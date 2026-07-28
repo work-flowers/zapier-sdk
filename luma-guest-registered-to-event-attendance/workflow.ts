@@ -475,6 +475,90 @@ async function readPossibleDuplicateLinks(
   return links;
 }
 
+/** Notion page ids compare hyphen- and case-insensitively: the same id reaches
+ *  us in both spellings depending on which API or Table row it came from. */
+function sameNotionId(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  return a.replace(/-/g, "").toLowerCase() === b.replace(/-/g, "").toLowerCase();
+}
+
+/**
+ * A comparable name key: lowercased, punctuation-stripped, tokens SORTED.
+ *
+ * Sorting is the point. Luma sends whatever the guest typed, and the order is
+ * not reliable — Lionel Sim registered as "Sim Lionel" on 2026-07-24, so an
+ * exact title comparison would have missed his existing contact. Returns "" for
+ * anything with fewer than two tokens: a lone "Grace" is far too weak to flag a
+ * stranger's record on.
+ */
+function normalizeNameKey(name: string): string {
+  const tokens = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .sort();
+  return tokens.length >= 2 ? tokens.join(" ") : "";
+}
+
+/**
+ * Live contacts whose Name is name-equivalent to `fullName`.
+ *
+ * Why this exists: contacts are resolved ONLY through the email -> page-id
+ * Table, so a guest registering with an address that isn't indexed yet gets a
+ * brand-new contact even when they are already in the CRM under a different
+ * address. That is how the duplicate Lionel Sim page appeared on 2026-07-24,
+ * and every downstream mess followed from it — the address could not have
+ * resolved, because his record did not carry it.
+ *
+ * A name match is NOT treated as proof and never reuses the record: two
+ * different people share a name often enough that attaching a registration to
+ * the wrong contact would be the same false-positive this repo has just spent a
+ * day undoing. The new contact is still created; it is only FLAGGED, so a
+ * person decides. See POSSIBLE_DUPLICATE_PROP.
+ *
+ * Queried against the data source endpoint directly: `find_data_source_item`
+ * returns a single hit, and a name needle can legitimately match several.
+ */
+async function findNameMatchedContacts(fullName: string): Promise<string[]> {
+  const key = normalizeNameKey(fullName);
+  if (!key) return [];
+  // Search on the longest token — the most selective one, and the one least
+  // likely to be a common given name.
+  const needle = key.split(" ").reduce((a, b) => (b.length > a.length ? b : a));
+  if (needle.length < 3) return [];
+
+  const res = await sdk.fetch(`${NOTION_API}/data_sources/${CONTACTS_DS}/query`, {
+    method: "POST",
+    connection: NOTION_CONNECTION,
+    headers: {
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      filter: { property: "Name", title: { contains: needle } },
+      page_size: 100,
+    }),
+  });
+  // Best-effort: a registration must never fail because the duplicate check
+  // could not run.
+  if (!res.ok) return [];
+  const body: any = await res.json();
+
+  const matches: string[] = [];
+  for (const page of body?.results ?? []) {
+    if (page?.in_trash === true || page?.archived === true) continue;
+    const title = (page?.properties?.Name?.title ?? [])
+      .map((t: any) => firstString(t?.plain_text))
+      .filter(Boolean)
+      .join(" ");
+    if (normalizeNameKey(title) !== key) continue;
+    const id = firstString(page?.id);
+    if (id && !matches.includes(id)) matches.push(id);
+  }
+  return matches;
+}
+
 /**
  * Work out the email changes a work-email answer implies for an EXISTING
  * contact. The rule: the guest's own work-email answer always wins the Primary
@@ -726,6 +810,8 @@ const workflow = defineDurable<unknown, unknown>(
 
     let contactPageId: string | null = workEmailPageId ?? accountEmailPageId;
     let contactCreated = false;
+    /** Existing contacts a newly-created one was flagged against by name. */
+    let nameMatchedFlags: string[] = [];
 
     if (!contactPageId) {
       const fullName =
@@ -790,6 +876,39 @@ const workflow = defineDurable<unknown, unknown>(
           })),
         }),
       );
+
+      // A brand-new contact for someone who may already be in the CRM under an
+      // address we had never indexed. Flag it against every name-equivalent
+      // record so it surfaces for review instead of quietly becoming the second
+      // copy that later collides. Best-effort — never fails the registration.
+      nameMatchedFlags = await ctx.step("flag-name-matched-contacts", async () => {
+        const matches = (await findNameMatchedContacts(fullName)).filter(
+          (id) => !sameNotionId(id, newContactPageId),
+        );
+        if (matches.length === 0) return [];
+        const existing = (await readPossibleDuplicateLinks(newContactPageId)) ?? [];
+        const union = [...existing];
+        for (const m of matches) {
+          if (!union.some((l) => sameNotionId(l, m))) union.push(m);
+        }
+        if (union.length === existing.length) return [];
+        try {
+          await sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "update_database_item",
+            connection: NOTION_CONNECTION,
+            inputs: {
+              datasource: CONTACTS_DS,
+              page: newContactPageId,
+              [`properties|||${POSSIBLE_DUPLICATE_PROP}|||relation`]: union,
+            },
+          });
+        } catch {
+          return [];
+        }
+        return matches;
+      });
     }
 
     // 2b. A work-email answer against a contact that already existed: promote
@@ -1102,6 +1221,7 @@ const workflow = defineDurable<unknown, unknown>(
       eventCreated,
       contactPageId,
       contactCreated,
+      nameMatchedFlags,
       emailsReconciled,
       emailCollision,
       markedPossibleDuplicateOf,
