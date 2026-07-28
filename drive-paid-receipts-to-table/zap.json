@@ -1,0 +1,77 @@
+{
+  "name": "drive-paid-receipts-to-table",
+  "workflow_id": "019fa8ae-d589-7b80-befb-5ed77334e29a",
+  "current_version_id": "019fa8af-53af-7250-b7bf-432e8adc42ab",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS_Mp9rcT5jL4YKMIyPKMA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.22.0",
+    "action": "file_in_folder_v2",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "authentication_note": "Google Drive dennis@work.flowers. The SAME connection is needed twice: here on the trigger (which polls the folder) and as the `gdrive` alias in --connections, because the workflow code renames the file.",
+    "params": {
+      "drive": "0AHY_MJFjT0WtUk9PVA",
+      "folder": "1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC",
+      "includeDeleted": "false"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New File in Folder), one run per file added to the Paid Receipts folder. No webhook_url — nothing external needs a catch URL, so cutover is just turning the classic Zap off."
+  },
+  "connections": {
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f"
+  },
+  "connectionless_apps": {
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection",
+    "TableCLIAPI": "search_or_write/find_record + write/update_record — Zapier Tables need no connection"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "drive_folders": {
+    "Paid Receipts": "1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC"
+  },
+  "drive_shared_drive": {
+    "id": "0AHY_MJFjT0WtUk9PVA",
+    "name": "Work.Flowers HQ"
+  },
+  "tables": {
+    "receipts": {
+      "id": "01KJKDRB9P8ZP7NP9HE6NS3YFQ",
+      "name": "[Table] Receipts",
+      "role": "Sole owner. One row per receipt file, keyed on File ID (f1).",
+      "fields": {
+        "f1": "File ID",
+        "f2": "File Name",
+        "f3": "Currency",
+        "f4": "Amount",
+        "f5": "Date",
+        "f6": "Vendor Name"
+      },
+      "datetime_note": "f5 (Date) is written as `<invoiceDate>T00:00:00Z` — a bare YYYY-MM-DD is read in the account's local timezone and silently shifts."
+    }
+  },
+  "ai_model": {
+    "model_id": "standard/auto",
+    "authentication_id": "0",
+    "note": "Tier drives task cost: standard 1x, advanced 3x, premium 5x tasks per run. Standard correctly extracted vendor/date/currency/amount from a real receipt (Anthropic, PBC) tested via run-action on 2026-07-28 — see the README's verified-cases table. This step makes no tool calls, which is the main reason Zapier's own default is Advanced.",
+    "file_input_note": "The PDF is passed to the model as a file input (inputFieldConfig_Invoice_isFileUrl), using the Drive trigger's `file` hydrate reference."
+  },
+  "description": "Google Drive receipt PDF added to Paid Receipts -> AI by Zapier extracts vendor/date/currency/amount -> rename file '<invoice date> <vendor>' -> find-or-create its row in the [Table] Receipts Zapier Table, keyed on file ID, then sync the Table's File Name field to the file's actual post-rename title. Migration of the classic Zap 'Google Drive receipts processing and analysis'.",
+  "version_history": [
+    {
+      "id": "019fa8af-53af-7250-b7bf-432e8adc42ab",
+      "created_at": "2026-07-28T12:24:50.352Z",
+      "note": "Initial migration."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Google Drive receipts processing and analysis",
+    "old_shape": "Drive file_in_folder_v2 trigger -> Filter 'PDFs only' -> AI get_completion (AICLIAPI@4.0.17, standard/auto) -> Drive update_file_name -> Table find_record (search_or_write) -> Table update_record (re-syncs File Name to the post-rename title)",
+    "status": "Dennis is turning the classic Zap off."
+  },
+  "created_at": "2026-07-28T12:24:18.059Z",
+  "version_created_at": "2026-07-28T12:24:50.352Z"
+}
