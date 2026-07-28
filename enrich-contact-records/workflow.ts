@@ -132,12 +132,29 @@ function extractContactData(raw: unknown): ContactData {
     );
   }
 
-  // Domain is a rollup of URL fields on the linked Company page.
+  const primaryEmail = props["Primary Email"]?.email ?? "";
+
+  // Domain is a rollup of URL fields on the linked Company page. Take the first
+  // entry that is a real corporate host rather than joining them: the rollup
+  // can carry several URLs, and consumer domains sneak in from loosely-linked
+  // companies, so concatenation produced strings like
+  // "https://hotmail.compangolin.net" that match nothing anywhere.
   const domainRollup = props["Domain"]?.rollup?.array ?? [];
-  const domain = domainRollup
-    .map((r: any) => r?.url)
-    .filter(Boolean)
-    .join("");
+  const rollupDomains: string[] = domainRollup
+    .map((r: any) => normalizeDomain(r?.url))
+    .filter((d: string) => d !== "" && !isFreemail(`x@${d}`));
+
+  // A NinjaPear lookup only ever resolves on employer_website + a name —
+  // neither a work email nor a LinkedIn profile URL matches on its own
+  // (verified 2026-07-28; see "Why the NinjaPear fallback misses" in the
+  // README). That makes the domain the load-bearing identifier, so when the
+  // Company relation is missing or unusable, fall back to the Primary Email's
+  // own host: for any non-consumer address that IS the employer's domain.
+  const domain =
+    rollupDomains[0] ??
+    (isFreemail(primaryEmail)
+      ? ""
+      : normalizeDomain(primaryEmail.slice(primaryEmail.lastIndexOf("@") + 1)));
 
   // Extract the Notion user ID of whoever triggered the webhook (e.g. by
   // clicking a button on the page). Notion DB automations put the acting
@@ -177,7 +194,7 @@ function extractContactData(raw: unknown): ContactData {
     pageId,
     firstName,
     lastName,
-    primaryEmail: props["Primary Email"]?.email ?? "",
+    primaryEmail,
     domain,
     linkedinUrl: props["Linkedin"]?.url ?? "",
     secondaryEmails: (props["Secondary Email"]?.multi_select ?? [])
@@ -261,6 +278,20 @@ function isFreemail(email: string | null | undefined): boolean {
   if (!domain) return false;
   if (FREEMAIL_EXACT.has(domain)) return true;
   return FREEMAIL_PREFIXES.some((p) => domain.startsWith(p));
+}
+
+/** A bare lowercase host from a URL, domain or email host — scheme, `www.`,
+ *  port, path and query stripped. Returns "" for anything without a dot, so
+ *  junk like "n/a" or a bare company name never reaches an enrichment call. */
+function normalizeDomain(value: string | null | undefined): string {
+  let v = (value ?? "").trim().toLowerCase();
+  if (v === "") return "";
+  v = v.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  v = v.split(/[/?#]/)[0] ?? "";
+  v = v.split("@").pop() ?? "";
+  v = v.split(":")[0] ?? "";
+  v = v.replace(/^www\./, "").replace(/\.$/, "");
+  return v.includes(".") ? v : "";
 }
 
 /** Apollo returns a placeholder like `email_not_unlocked@domain.com` when the
@@ -754,28 +785,35 @@ const workflow = defineDurable<unknown, unknown>(
       );
 
       // --- Fallback: NinjaPear find_person_profile.
-      // NinjaPear rejects lookups on personal email addresses for data-privacy
-      // reasons, and a personal address in `work_email` sinks the whole request
-      // even when another identifier (LinkedIn URL, employer website) could
-      // match on its own. So a freemail Primary is stripped from the inputs,
-      // and the call is skipped entirely when no viable identifier combo
-      // remains — per the action's field docs that's: a work email, an
-      // employer website + first name, or a LinkedIn profile URL. isFreemail
-      // is list-based, so an unlisted consumer domain still goes through and
-      // fails like any other no-match (the pre-guard behaviour).
+      // The ONLY input combination that actually resolves a profile is
+      // `employer_website` + a name. Verified 2026-07-28 against two profiles
+      // NinjaPear demonstrably holds (Megan Anderson, Sachin Kolekar): a lookup
+      // by work_email alone, by linkedin_profile_url alone, and by
+      // name + linkedin_profile_url each returned an empty result, while
+      // name + employer_website matched both times — including for a profile
+      // whose own record carries the exact LinkedIn URL we queried with.
+      // The action's field docs claim a work email is sufficient; it is not.
+      //
+      // The LinkedIn URL and the work email are still passed — they cost
+      // nothing, may sharpen a match, and may start resolving if NinjaPear
+      // fixes it — but neither is treated as a usable identifier on its own.
+      // A personal address in `work_email` additionally sinks the whole
+      // request (NinjaPear rejects personal-email lookups for data-privacy
+      // reasons), so a freemail Primary is stripped from the inputs.
+      // isFreemail is list-based, so an unlisted consumer domain still goes
+      // through and fails like any other no-match.
       const ninjaEmail = isFreemail(contact.primaryEmail)
         ? ""
         : contact.primaryEmail;
-      const ninjaViable = Boolean(
-        ninjaEmail ||
-          contact.linkedinUrl ||
-          (contact.domain && contact.firstName),
-      );
+      const ninjaName = contact.firstName || contact.lastName;
+      const ninjaViable = Boolean(contact.domain && ninjaName);
 
       if (!ninjaViable) {
-        const why = contact.primaryEmail
-          ? "skipped — only a personal email available (personal-email lookups are rejected)"
-          : "skipped — no usable identifiers (need a work email, LinkedIn URL, or company domain)";
+        const why = !contact.domain
+          ? isFreemail(contact.primaryEmail)
+            ? "skipped — no company domain (a personal email yields none, and email-only lookups do not resolve)"
+            : "skipped — no company domain, from the Company relation or the Primary Email"
+          : "skipped — no name to pair with the company domain";
         reasons.push(`ninjapear ${why}`);
         console.log(`NinjaPear ${why} for ${contact.pageId}`);
       } else {
@@ -792,6 +830,16 @@ const workflow = defineDurable<unknown, unknown>(
                 last_name: contact.lastName,
                 employer_website: contact.domain,
                 linkedin_profile_url: contact.linkedinUrl,
+                // `detailed` is needed for work_experience, which is where the
+                // company and role come from; `fast` returns before that lands.
+                enrichment: "detailed",
+                // The action runs in a 30s Lambda, but NinjaPear's default
+                // `if-recent` re-scrapes live whenever the cache is over 29
+                // days old and a live enrichment takes 30–60s — that is what
+                // timed out a run on 2026-07-27. `if-present` serves any cached
+                // profile immediately and only goes live for one we have never
+                // seen, so the recency re-scrape can no longer blow the budget.
+                use_cache: "if-present",
               },
             });
             return { result: firstResult(result), error: null as string | null };

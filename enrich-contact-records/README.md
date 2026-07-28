@@ -13,6 +13,16 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    name is parsed from the page **title** instead (auto-created contacts often
    carry the person's name only there); a title that is just an email address
    is not treated as a name. (Added 2026-07-27, TKT-811.)
+
+   **Domain** comes from the `Domain` rollup on the linked Company page, taking
+   the **first entry that is a real corporate host** — the rollup often carries
+   several URLs and consumer domains leak in from loosely-linked companies, and
+   the previous `.join("")` concatenated them into strings like
+   `https://hotmail.compangolin.net` that match nothing. When the rollup is
+   empty or unusable, the domain falls back to the **Primary Email's own host**
+   (skipped for freemail addresses, which name no employer). Contacts with a
+   perfectly good corporate email but no linked Company page were previously
+   unenrichable by the fallback for want of a domain. (Added 2026-07-28.)
    - **Primary — Apollo.io** (`POST https://api.apollo.io/api/v1/people/match`):
      called through Apollo's native **API Request (Beta)** action
      (`_zap_raw_request`), which issues the raw HTTP request *with the
@@ -28,15 +38,19 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      **NinjaPear rejects personal-email lookups** (data-privacy policy), and a
      personal address in `work_email` sinks the whole request even when another
      identifier could match on its own. So (added 2026-07-27, TKT-811): a
-     **freemail** Primary is stripped from the NinjaPear inputs, and the call is
-     skipped entirely when no viable identifier combo remains — viable meaning a
-     (corporate) work email, an employer website + first name, or a LinkedIn
-     profile URL. A skipped call surfaces in the outcome comment as
-     `NinjaPear: skipped — only a personal email available…`, which is more
-     actionable than a false "no profile found". `isFreemail` is list-based, so
-     an unlisted consumer domain still goes through and fails like any other
-     no-match. Apollo is unaffected — it indexes personal emails, so the
-     primary path keeps sending them.
+     **freemail** Primary is stripped from the NinjaPear inputs.
+     `isFreemail` is list-based, so an unlisted consumer domain still goes
+     through and fails like any other no-match. Apollo is unaffected — it
+     indexes personal emails, so the primary path keeps sending them.
+
+     **Only `employer_website` + a name actually resolves a profile** — see
+     [Why the NinjaPear fallback misses](#why-the-ninjapear-fallback-misses).
+     The call is skipped when the contact has no company domain or no name, and
+     a skipped call surfaces in the outcome comment as
+     `NinjaPear: skipped — no company domain…`, which is more actionable than a
+     false "no profile found". The call sets `enrichment: detailed` (needed for
+     `work_experience`, the source of company and role) and
+     `use_cache: if-present` (see the same section for why).
 
    Each source runs inside a step that **catches its own errors and returns a
    value instead of throwing**, so a failing source does not trigger the
@@ -88,12 +102,12 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 
 ```mermaid
 flowchart TD
-    A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title)"]
+    A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title;<br/>domain falls back to email host)"]
     B --> AP["Primary: Apollo people/match<br/>with email, name, domain, LinkedIn URL"]
     AP -- "usable match" --> E
-    AP -- "error / no credits / no match" --> NPG{"Viable NinjaPear identifiers?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
-    NPG -- "work email, LinkedIn URL,<br/>or domain + first name" --> NP["Fallback: NinjaPear<br/>find_person_profile"]
-    NPG -- "no (personal email only)" --> D
+    AP -- "error / no credits / no match" --> NPG{"Company domain AND a name?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
+    NPG -- "yes" --> NP["Fallback: NinjaPear<br/>find_person_profile<br/>(domain + name is the only<br/>combo that resolves)"]
+    NPG -- "no domain, or no name" --> D
     NP -- "profile found" --> E{"Enriched email vs existing<br/>Primary Email?"}
     NP -- "error / no result" --> D(["Log, comment outcome, return<br/>(no retry)"])
     E -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
@@ -106,6 +120,72 @@ flowchart TD
     H -- no --> J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
     J --> K(["Return pageId, enriched, source, emailPath, iconUpdated"])
 ```
+
+## Why the NinjaPear fallback misses
+
+Investigated 2026-07-28, after "no profile found" became the near-universal
+outcome. Two separate causes.
+
+**1. Apollo ran out of credits on 2026-07-26 at ~13:40.** The 7 runs immediately
+before that timestamp all enriched via Apollo; every run after it returns
+`apollo http 422: "You have insufficient credits!"` and falls through. Apollo is
+the source doing the real work — **top it up first**; everything below is about
+making the fallback less bad, not about replacing it.
+
+**2. `linkedin_profile_url` and `work_email` do not resolve on their own.** The
+action's field docs claim a work email is sufficient and offer the LinkedIn URL
+as a standalone lookup key. Neither holds. Measured against two profiles
+NinjaPear demonstrably holds:
+
+| Inputs | Megan Anderson | Sachin Kolekar |
+|---|---|---|
+| `work_email` + name + `employer_website` + LinkedIn | **match** | **match** |
+| name + `employer_website` | **match** | **match** |
+| `work_email` alone | empty | — |
+| `linkedin_profile_url` alone | empty | empty |
+| name + `linkedin_profile_url` | empty | — |
+
+Megan's own NinjaPear record carries `linkedin_profile_url:
+https://www.linkedin.com/in/megananderson` — the exact URL queried with, tried
+both with and without the trailing slash. It still returns nothing.
+
+So **`employer_website` + a name is the only combination that works**, which is
+why the domain fallback above matters so much: a contact with no linked Company
+page had no domain, and therefore no way to match at all. The LinkedIn URL and
+work email are still sent — they cost nothing, may sharpen a match, and may
+start resolving if NinjaPear fixes it — but neither gates the call any more.
+
+**Timeouts — partly unfixable.** The action runs in a 30s Lambda, while
+NinjaPear's default `use_cache: if-recent` triggers a **live** re-scrape whenever
+the cached profile is over 29 days old, and a live enrichment takes 30–60s. That
+timed out a run on 2026-07-27 (`Task timed out after 30.00 seconds`). The call
+now passes `use_cache: if-present`, which serves any cached profile immediately
+and only goes live for a profile never seen before.
+
+That removes the stale-cache re-scrape as a cause, but **not** the uncached case:
+re-running the timed-out contact with `if-present` timed out again, and
+`if-present-only` returned empty, proving the profile simply isn't cached.
+**A contact NinjaPear has never seen cannot be enriched within the 30s budget**
+— there is no input tuning that fixes it. It is recorded as a reason, not a
+crash, and does not retry.
+
+### Verified cases (2026-07-28, post-change)
+
+Run via `run-action` against the real action, not the durable, so nothing writes
+to Notion. Each is a contact whose last real run returned nothing.
+
+| Contact | `employer_website` sent | Result | Read as |
+|---|---|---|---|
+| Megan Anderson | `securecodewarrior.com` | **match** (International Tax Manager @ Secure Code Warrior) | regression check — the working path still works with the new params |
+| Alex Mg | `kinnai.com` (**newly** derived from email; was empty) | timeout at 30s; `if-present-only` → empty | not in NinjaPear's cache; unfixable within the Lambda budget |
+| Kerrie Zeng | `securecodewarrior.com` (unchanged) | empty | genuine gap in NinjaPear's index |
+| Amy Yang | `securecodewarrior.com` (unchanged) | empty | genuine gap in NinjaPear's index |
+
+**None of the previously-failing contacts now resolve.** The changes fix *routing*
+— a usable domain is derived where one exists, and calls that could never match
+are skipped with an honest reason instead of burning a credit — but they do not
+conjure coverage NinjaPear doesn't have. Restoring Apollo credits is the only
+change that meaningfully raises the enrichment rate.
 
 ## Email paths
 
