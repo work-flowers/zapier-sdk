@@ -35,6 +35,26 @@ Read the whole document before answering. Every figure you return must appear on
 - `Tax Applied` is true only when the invoice actually charges a tax line (GST, VAT, sales tax). A zero-rated, exempt, or reverse-charge invoice is false.
 - `Line Amounts Are` describes the unit prices in the line-item table: `Inclusive` when they already contain the tax, `Exclusive` when tax is added on top, `NoTax` when the invoice charges no tax at all. This decides whether Xero adds tax on top of the figures you return, so read the table's own labelling rather than assuming.
 
+## Vendor details
+
+These populate the vendor's contact record in Xero. They describe **the vendor** — the party issuing the invoice — and never the recipient (Company Flow Pte. Ltd. / workFlowers), whose own address and bank account also appear on many invoices. When a document shows two addresses, the vendor's is the one next to the vendor's name in the header or footer, not the one under "Bill to", "Sold to" or "Customer".
+
+**Leave a field blank rather than guessing.** A blank field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
+
+- `Vendor Address Line 1` / `Vendor Address Line 2` — the street address as printed, split across the two lines the way the invoice splits it. Do not repeat the city, state, postal code or country here; they have their own fields.
+- `Vendor City` — city or town.
+- `Vendor State/Region` — state, province or region. Blank where the address has none.
+- `Vendor Postal Code` — postal or ZIP code, exactly as printed.
+- `Vendor Country` — country name. Blank when the invoice does not state one; do not infer it from a currency, phone code or postal format.
+- `Vendor Phone` — the vendor's telephone number, digits and separators as printed.
+- `Vendor Tax Number` — the vendor's own tax registration number: GST, VAT, UEN, ABN, EIN or the local equivalent, whatever the invoice calls it. Never the recipient's, and never the invoice number.
+
+Bank details are for paying the vendor, so read them only from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice" or "Payment instructions" section:
+
+- `Vendor Bank Account Number` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid.
+- `Vendor Bank Name` — the bank holding that account.
+- `Vendor Bank SWIFT/BIC` — the SWIFT or BIC code for that account.
+
 ## Line items
 
 `Line Items` must be a **JSON array only** — no prose, no markdown fence, no trailing commas. One object per billable line in the invoice's line-item table, in the order printed, each with exactly these keys:
