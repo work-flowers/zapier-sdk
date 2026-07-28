@@ -1,0 +1,38 @@
+{
+  "name": "register-zapier-partner-lead",
+  "workflow_id": "019fa7a7-72b7-7378-a8de-65599cbea6ea",
+  "current_version_id": "019fa7ac-44ba-76eb-8489-7b2f4b3fa611",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZyqavdBR8zeHHJPw0XeLQ",
+  "enabled": true,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/Cpw1RVzven0oltapo/",
+    "trigger_note": "Notion DB automation on the Companies data source (21991b07-11ac-80b0-b787-000b3d3995f6, in Core CRM Objects): the 'Register Lead' button -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL, NOT the internal trigger_url). CUTOVER PENDING: the button still posts to the classic 'Register Zapier Lead' Zap; repoint it to complete the migration (see README Cutover)."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "zapier_partner": "02a5085e-1d27-853d-89b7-115a57fc4d32"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "tables": {
+    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table \u2014 client id -> Notion Company page id, plus the submission log. Read by zapier-partner-lead-status-to-notion.",
+    "01JM3J9SG5X6S8GBSSC8AS28AT": "User IDs \u2014 Notion user id -> Zapier partner contact id (read-only here)."
+  },
+  "partner_app": {
+    "app_key": "App227952CLIAPI",
+    "app_version": "1.5.0",
+    "action": "write/submit_client",
+    "note": "Solution Partner Operations Tool (private, invite-only). The classic Zap ran on 1.4.1; the bound connection's implementation_id still reads App227952CLIAPI@1.4.1 and resolves fine against 1.5.0 actions. submit_client is create-or-reuse on (partner account, client email) and does NOT update an existing client's details \u2014 which is why a repeat click is skipped in code rather than left to the tool."
+  },
+  "created_at": "2026-07-28T07:36:36.844Z",
+  "version_created_at": "2026-07-28T07:41:52.699Z",
+  "description": "Notion Companies 'Register Lead' button -> submit the company's Zapier account owner to the Zapier partner program as a managed-revenue client, index client id -> Notion page id in the lead Table, and stamp the client id + Submitted status back on the company record. Migration of the classic 'Register Zapier Lead' Zap.",
+  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes."
+}
