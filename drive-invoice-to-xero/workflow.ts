@@ -675,6 +675,8 @@ These populate the vendor's contact record in Xero. They describe **the vendor**
 
 **Leave a field blank rather than guessing.** A blank field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
 
+Almost every invoice prints **both** parties' details, and a two-column header often sets them side by side so that the vendor's street and the recipient's street alternate line by line. Read the layout, not the reading order. The same goes for tax numbers: two on one page is normal. The vendor's is the one that belongs to the issuing entity — it frequently reappears in the payment instructions, for instance as a PayNow UEN — and it can be printed right next to the recipient's name, so proximity alone does not settle it.
+
 - \`Vendor Address Line 1\` / \`Vendor Address Line 2\` — the street address as printed, split across the two lines the way the invoice splits it. Do not repeat the city, state, postal code or country here; they have their own fields.
 - \`Vendor City\` — city or town.
 - \`Vendor State/Region\` — state, province or region. Blank where the address has none.
@@ -685,8 +687,8 @@ These populate the vendor's contact record in Xero. They describe **the vendor**
 
 Bank details are for paying the vendor, so read them only from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice" or "Payment instructions" section:
 
-- \`Vendor Bank Account Number\` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid.
-- \`Vendor Bank Name\` — the bank holding that account.
+- \`Vendor Bank Account Number\` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid. A postal **address** for mailing a cheque — often headed "Payment address" — is not a bank account: leave all three bank fields blank unless an actual account number or IBAN is printed. A routing, sort or ABA code is not an account number either.
+- \`Vendor Bank Name\` — the bank holding that account, **only if the invoice prints it**. Do not derive it from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; blank is the correct answer there.
 - \`Vendor Bank SWIFT/BIC\` — the SWIFT or BIC code for that account.
 
 ## Line items
