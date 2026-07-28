@@ -1,0 +1,78 @@
+{
+  "name": "xero-bank-transactions-to-zapier-table",
+  "workflow_id": "019fa885-7d5e-73a8-b601-4ec31290bf4a",
+  "current_version_id": "019fa885-b4c5-764e-9cc8-7cb86ecb284e",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaVB57afDcrtlFL0dbihDA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "XeroCLIAPI@2.20.5",
+    "action": "bank_transaction",
+    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "authentication_note": "Xero work.flowers. The Xero credential lives HERE only — the workflow body never calls Xero, it only writes the Zapier Table.",
+    "params": {
+      "organization": "62699a8c-3351-40e8-9265-bdca5e037b03"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New Bank Transaction), one run per transaction. Fires on transaction CREATION, not reconciliation — despite the classic Zap's title 'Process New Reconciled Transactions'. Proof: 26 of 93 rows sampled have a Reference in Xero but '' in the Table, because Xero fills Reference in at reconciliation, after this trigger has already fired. The classic Zap also carried polling_interval_override: 5, which the durable --trigger payload has no field for; the default interval applies."
+  },
+  "connections": {},
+  "connections_note": "None. The workflow uses no connection aliases — Zapier Tables need no connection, and the Xero credential is on the trigger. --connections was omitted at publish.",
+  "connectionless_apps": {
+    "ZapierTables": "read/write via sdk.listTableRecords / createTableRecords / updateTableRecords / deleteTableRecords — no connection, no task cost"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.11.0 was npm-latest at build time but only ~20h old; the runtime rejects dependencies younger than 24h at RUN time, not publish. Pinned to 0.10.1.",
+  "tables": {
+    "bank_transactions": {
+      "id": "01KCDV6Y17F31J2Q6S1EMYZC8K",
+      "name": "Xero Bank Transactions",
+      "role": "Owned and written by this workflow.",
+      "key_field": "bank_transaction_id",
+      "fields": {
+        "bank_transaction_id": "id (== Xero BankTransactionID)",
+        "date": "Date, pinned to YYYY-MM-DDT00:00:00Z",
+        "bank_account_id": "BankAccount.AccountID",
+        "reference": "Reference",
+        "contact_id": "Contact.ContactID (empty on transfers)",
+        "contact_name": "Contact.Name (empty on transfers)",
+        "type": "Type (labeled_string — a plain string is normalised to {value,label})",
+        "currency_code": "CurrencyCode (labeled_string)",
+        "currency_rate": "CurrencyRate — NEW: the classic Zap never mapped f9, so this column was null on all 651 rows despite being populated on ~36% of transactions",
+        "total": "Total",
+        "has_attachments": "HasAttachments"
+      },
+      "downstream": "drive-invoice-to-xero reads this Table to decide whether an invoice has already been paid. A pause here is a silent production fault there — it produces duplicate draft bills with no error. Treat this workflow as load-bearing."
+    }
+  },
+  "date_coercion_note": "The `date` column is written as YYYY-MM-DDT00:00:00Z. A bare YYYY-MM-DD is interpreted in the account's local timezone (Asia/Singapore) and lands 8 hours off, which shifts every date-window query run against this Table by a day at the boundaries.",
+  "description": "New Xero bank transaction -> find-or-create its row in the 'Xero Bank Transactions' Zapier Table, keyed on bank_transaction_id. Migration of the classic Zap 'Process New Reconciled Transactions', which created unconditionally. Adds: find-or-create, race-safe dedupe of concurrent creates (converge on the earliest ULID), refresh of an existing row when a mirrored field has actually changed, and the previously-unmapped currency_rate column.",
+  "version_history": [
+    {
+      "id": "019fa885-b4c5-764e-9cc8-7cb86ecb284e",
+      "created_at": "2026-07-28T11:36:00.000Z",
+      "note": "Initial migration."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Process New Reconciled Transactions",
+    "old_shape": "XeroCLIAPI@2.20.5 bank_transaction trigger -> TableCLIAPI@1.25.0 create_record (unconditional), mapping f1-f8, f10, f11",
+    "known_issues_fixed": [
+      "Created unconditionally, so a re-delivery duplicated the row — the Table holds 4 duplicate pairs across 651 distinct transactions.",
+      "f9 (currency_rate) was never mapped.",
+      "No way to correct a row after Xero restated the transaction or an invoice was attached to it."
+    ],
+    "status": "Its create step was PAUSED, which is why the Table fell ~5 days behind and drive-invoice-to-xero began raising duplicate draft bills. Turn the classic Zap off entirely — do not simply unpause it, or both it and this workflow will write the same rows."
+  },
+  "known_gaps": {
+    "no_backfill_by_design": "Enabling this workflow does NOT recover the gap the pause created — a Zapier polling trigger primes its dedupe on first poll, so only transactions created from now on are delivered. The ~7 SPEND transactions missing from 2026-07-21..2026-07-26 (including Anthropic 2026-07-25 SGD 104.58) stay missing, and that is accepted: they were reconciled against their receipts in Xero by hand, and their invoices have already passed through the Drive Invoices folder, which that trigger will not re-deliver. No backfill is planned.",
+    "stale_columns": "Existing rows carry stale values Xero fills in after the trigger fires: sampled over 93 transactions, 32 had a stale currency_rate, 26 a stale reference, 14 a stale has_attachments, 1 a renamed contact. The update path only corrects a row when the trigger re-delivers that transaction, which for a polling trigger is rare, so these persist. Accepted — no consumer reads those columns today (drive-invoice-to-xero matches on contact_name, type, currency_code, total and date, none of which drift).",
+    "next_incident": "The mechanic worth remembering: a pause here is silent, and re-enabling restores the flow but never the gap. If a future gap does need recovering, scripts/backfill-zapier-partner-leads.mjs is the house pattern (plan-only unless --commit)."
+  },
+  "created_at": "2026-07-28T11:35:00.000Z",
+  "version_created_at": "2026-07-28T11:36:00.000Z"
+}
