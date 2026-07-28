@@ -192,8 +192,54 @@ The full read of the matched contact is needed because `summaryOnly=true` omits 
    (contacts can be archived but not hard-deleted, so a test contact leaves a residue). The
    fill-empty-only rule is designed so the answer doesn't change correctness, but it should be
    confirmed against a throwaway contact before anyone relaxes that rule.
-2. **Extraction quality for the new fields is unproven at `standard/auto`.** Address and bank blocks
-   sit in invoice footers in wildly varying layouts. Per repo rule 7 the tier is not to be raised
-   without a failing test; the verified-cases table in the README needs a column for these fields,
-   run against the real PDFs.
+2. **Extraction quality for the new fields is unproven at `standard/auto`.** Per repo rule 7 the
+   tier is not to be raised without a failing test; the README's verified-cases table needs a
+   column for these fields. See "What the real invoices actually contain" below for the ground
+   truth to check against, and "Testing the extraction" for how to run it.
 3. **Pagination.** 130 contacts fit one page at `pageSize=200`. Past ~1000 this needs a loop.
+
+## What the real invoices actually contain
+
+Read directly off the PDFs in the Drive **Invoices** folder, 2026-07-28. This is the ground truth
+to check any extraction run against, and it reframes where the risk actually sits.
+
+| Invoice | Bank block | Traps it sets |
+| --- | --- | --- |
+| `2026-07-28 Lantern Labs Pte. Ltd.` | Account `8311123520`, SWIFT `CMFGUS33`, US routing `026073008` | **Names no bank at all** — the correct `Vendor Bank Name` is blank. Inferring "Community Federal Savings Bank" from the BIC breaks the never-infer rule. Also offers a Wise payment link alongside the transfer block, and prints the recipient's address. |
+| `2026-06-26 EUGENE THURAISINGAM ASIA LLC` | `DBS Account No.: 072-144543-3`, SWIFT `DBSSSGSG`, PayNow UEN | The **vendor's** GST registration `202552813M` is printed directly beside "Dennis Chiuten", so proximity to the recipient's name points the wrong way. The PayNow UEN repeats it, which is the reliable tell. |
+| `2026-07-24 Anthropic, PBC` | **None** — a Stripe link and a cheque "PAYMENT ADDRESS" PO Box | Two tax numbers on the page (Anthropic's `M90375715E`, workFlowers' `202442050M`). Vendor and recipient addresses interleave line-by-line in a two-column header. The "PAYMENT ADDRESS" heading reads like a remittance block but carries no account. |
+
+Three things follow:
+
+- **Bank details are real, not hypothetical.** Two of three carry a genuine account number, so the
+  write-once rule and the mismatch tripwire earn their keep from day one.
+- **The dominant risk is attribution, not fabrication.** Every one of these prints both parties'
+  details; two carry two tax numbers. Nothing here needs inventing — it needs correctly assigning.
+- **Passing the PDF as a rendered file matters.** Text extraction collapses Anthropic's two-column
+  header into alternating lines of two different addresses. The prompt now says to read layout
+  rather than reading order, but the file input is what makes that possible at all.
+
+All three traps were folded into `invoice-extraction-prompt.md` after this reading.
+
+## Testing the extraction
+
+Testing must not write to Xero, so it cannot be done by running this workflow. Two routes:
+
+1. **`run-action` against `AICLIAPI`/`get_completion` directly**, as the repo convention prescribes.
+   Needs Zapier CLI credentials. *Note: the Zapier MCP connector cannot substitute here — it
+   rejects `get_completion` with "Missing argument values for required properties: `instructions`"
+   even when `instructions` is present, on payloads of any size.*
+2. **A throwaway durable that runs only the extraction step** and returns the raw fields, fired with
+   a Drive hydrate reference as input. This is publishable through the MCP connector's
+   `publish_workflow_version`, and writes nothing anywhere. Get a hydrate ref from Google Drive's
+   `file_or_folder_by_id` action (`.file` in the response); it stays valid for hours. Delete the
+   workflow afterwards with `delete_workflow`.
+
+   One such harness is already published and left in place:
+   **`019fab22-1baf-79c7-9d7a-f960420c7599`** — *"TEMP invoice-extraction-harness (delete me)"*,
+   version `019fab23-5ed0-7708-963b-664bff5f5d03`. It carries the current prompt and all 21 output
+   fields, takes `{"label": "...", "invoice": "<hydrate url>"}`, and returns the vendor fields flat.
+   It is webhook-only, so it never fires by itself. Three runs were queued against it (Lantern Labs,
+   Eugene Thuraisingam, Anthropic) and were **still pending with no operations recorded ~8 minutes
+   later** — cold start or a queue stall, not diagnosed. Poll with
+   `get_trigger_run` → `get_run_output`, or re-fire with `run_workflow`. **Delete it when done.**
