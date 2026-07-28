@@ -92,3 +92,22 @@ Reference docs:
 
 - [Zapier SDK API reference](https://docs.zapier.com/sdk/reference)
 - [SDK changelog](https://docs.zapier.com/sdk/changelog) (Zapier ships near-daily — check here when a command's behaviour seems off)
+
+### Agent skills
+
+Zapier's own agent skills are vendored here so a session doesn't have to work from memory — `zapier-sdk` (from `zapier/sdk`) plus `workflows-create` / `-modify` / `-doctor` / `-list` / `-history` / `-install` (from `zapier/agent-skills`). Versions are pinned by content hash in [`skills-lock.json`](skills-lock.json).
+
+```bash
+npx skills add zapier/sdk --skill zapier-sdk       # install or reinstall one
+npx skills update --project                        # refresh all of them
+```
+
+They install to **`.agents/skills/`** — the cross-agent location, readable by Cursor and Codex as well. Claude Code only discovers project skills under **`.claude/skills/`**, so each is committed there as a relative symlink:
+
+```
+.claude/skills/zapier-sdk -> ../../.agents/skills/zapier-sdk
+```
+
+That is what makes them invocable as `/zapier-sdk`, `/workflows-modify` and so on; without it they sit on disk unused and `Skill(zapier-sdk)` fails with `Unknown skill`. The [`link-agent-skills.sh`](.claude/hooks/link-agent-skills.sh) SessionStart hook keeps the two in step — it creates links for newly installed skills, repairs broken ones (including a clone that materialised the symlink as a plain text file), prunes links to skills that are gone, and still warns when `zapier-sdk` isn't installed at all. A skill linked mid-session may only appear in the skill list after a restart.
+
+> **`.agents/skills/` is the source of truth — don't edit a skill through the link.** `npx skills add`/`update` rewrites that directory and `skills-lock.json` wholesale, and would discard the change.

@@ -1,4 +1,7 @@
 /.claude/*
 !/.claude/settings.json
 !/.claude/hooks/
+# Symlinks into .agents/skills, so Claude Code can discover skills that
+# skills.sh installs. Committed so a fresh clone has them in session one.
+!/.claude/skills/
 node_modules/
