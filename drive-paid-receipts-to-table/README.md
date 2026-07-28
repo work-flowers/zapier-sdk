@@ -43,6 +43,30 @@ plus the code's close structural match to the already-verified
 [`drive-invoice-to-xero`](../drive-invoice-to-xero/) migration. Worth a spot-check against the
 next real receipt that lands in the folder.
 
+## ⚠️ `new Date()` in the workflow body is a hard error
+
+The first published version (`019fa8af`) carried two `Date` constructions in the workflow body and
+**would have failed on the first receipt PDF** with `DeterminismViolation: Non-deterministic API
+"new Date()" called in GUARDED mode`. It never did, only because no receipt landed in the folder
+while that version was live — the fault was latent, not benign. It was found by
+[`drive-invoice-to-xero`](../drive-invoice-to-xero/) hitting the identical bug in production
+(same `toIsoDate` helper, same position right after the AI step) and is fixed the same way.
+
+The durable runtime replaces `Date` with a Proxy before your code runs, and its `construct` trap
+throws **before** it inspects its arguments — so `new Date(Date.UTC(y, m, d))`, which is perfectly
+deterministic, is rejected exactly as hard as a clock read. Hence:
+
+- **Validating and formatting dates is integer arithmetic** — `daysInMonth`, `isoDateFromEpochMs`.
+- **Reading the clock goes in a `ctx.step`** — the `today` step, which runs only when the model
+  gave no usable receipt date, so its value is fixed for every retry of a run.
+
+Note the guard is a runtime component of `@zapier/zapier-durable`, not a lint or publish-time
+check: `tsc` passes and the publish succeeds either way. See that Zap's README for the full write-up.
+
+`toIsoDate` also got stricter as a side effect. Its old NaN check never fired — `Date.UTC`
+normalises overflow instead of failing, so `2026-13-05` rolled into 2027 and the *original* string
+came back. An impossible month or day is now rejected and falls through to the `today` fallback.
+
 ## Model tier
 
 `standard/auto` — 1× tasks per run. Standard correctly read the test receipt above, and this step
@@ -65,4 +89,10 @@ Zapier's Advanced default.
   cutover is just turning the classic Zap off.
 - Missing vendor/date from the AI step fall back to `"Unknown Vendor"` / today's date rather than
   skipping, since a rename-and-log audit trail is lower-stakes than the bill-creation flow in
-  `drive-invoice-to-xero` — a wrong file name is easy to spot and fix by hand.
+  `drive-invoice-to-xero` — a wrong file name is easy to spot and fix by hand. Today's date comes
+  from the `today` step, not `new Date()`; see the determinism section above.
+- **Never write `new Date` in the workflow body.** Integer date helpers are already here; use them.
+- **This Zap has still never processed a real receipt.** The determinism fix is verified by unit
+  checks over the date helpers (1970..2100 against native `Date`) and by the identical fix running
+  green end-to-end in `drive-invoice-to-xero`, but no receipt PDF has been through this workflow on
+  any version. Watch the first live run.

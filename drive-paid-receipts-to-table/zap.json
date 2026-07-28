@@ -1,7 +1,7 @@
 {
   "name": "drive-paid-receipts-to-table",
   "workflow_id": "019fa8ae-d589-7b80-befb-5ed77334e29a",
-  "current_version_id": "019fa8af-53af-7250-b7bf-432e8adc42ab",
+  "current_version_id": "019faae4-87f0-7764-9008-88803127ff79",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS_Mp9rcT5jL4YKMIyPKMA",
   "enabled": true,
   "is_private": false,
@@ -60,11 +60,17 @@
     "file_input_note": "The PDF is passed to the model as a file input (inputFieldConfig_Invoice_isFileUrl), using the Drive trigger's `file` hydrate reference."
   },
   "description": "Google Drive receipt PDF added to Paid Receipts -> AI by Zapier extracts vendor/date/currency/amount -> rename file '<invoice date> <vendor>' -> find-or-create its row in the [Table] Receipts Zapier Table, keyed on file ID, then sync the Table's File Name field to the file's actual post-rename title. Migration of the classic Zap 'Google Drive receipts processing and analysis'.",
+  "determinism_note": "The workflow body runs in the durable runtime's GUARDED mode, where the `Date` constructor is proxied and its `construct` trap throws DeterminismViolation *before* inspecting its arguments — so even a deterministic `new Date(Date.UTC(y, m, d))` is rejected. This Zap shipped with two such calls (a NaN check inside `toIsoDate`, and a `?? new Date()` fallback for a missing receipt date) and would have failed on the first receipt PDF; it had had no runs, so the fault was latent rather than observed. Date handling is now integer arithmetic and the clock is read inside a `today` step. Verified against native `Date` over 1970..2100 before publishing.",
   "version_history": [
     {
       "id": "019fa8af-53af-7250-b7bf-432e8adc42ab",
       "created_at": "2026-07-28T12:24:50.352Z",
-      "note": "Initial migration."
+      "note": "Initial migration. Carried a latent DeterminismViolation — see determinism_note. Never ran."
+    },
+    {
+      "id": "019faae4-87f0-7764-9008-88803127ff79",
+      "created_at": "2026-07-28T22:42:11.571Z",
+      "note": "Fix the guarded-mode `new Date()` calls: integer date arithmetic, clock moved into a `today` step. `toIsoDate` now genuinely rejects an impossible date (the old NaN check never fired, because Date.UTC normalises overflow instead of failing)."
     }
   ],
   "replaces_classic_zap": {
@@ -73,5 +79,5 @@
     "status": "Dennis is turning the classic Zap off."
   },
   "created_at": "2026-07-28T12:24:18.059Z",
-  "version_created_at": "2026-07-28T12:24:50.352Z"
+  "version_created_at": "2026-07-28T22:42:11.571Z"
 }

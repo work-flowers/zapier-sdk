@@ -145,6 +145,48 @@ Vendor-suffix normalisation, line-item parsing, reconciliation and the match rul
 unit checks run against this same data; all passed. A non-PDF payload was run through the deployed
 runtime (`run-durable`) and skipped correctly.
 
+## ⚠️ `new Date()` in the workflow body is a hard error
+
+The first published version (`019fa878`) **failed on every PDF invoice** with:
+
+```
+DeterminismViolation: Non-deterministic API "new Date()" called in GUARDED mode.
+  at toIsoDate (workflow.ts:187)
+```
+
+The durable runtime replaces `Date` with a Proxy before your code runs, and its `construct` trap
+calls `assert()` **before** it looks at the arguments — so `new Date(Date.UTC(y, m, d))`, which is
+perfectly deterministic, is rejected exactly as hard as a clock read. `Date.now()` is guarded too
+(via the `get` trap); `Date.UTC` happens not to be, but this file no longer relies on that.
+
+The fix, and the rule for anything added here:
+
+- **Calendar arithmetic is integer arithmetic.** `daysFromCivil` / `isoDateFromEpochMs` (Hinnant's
+  civil-from-days pair, also in [`xero-overdue-invoice-to-gmail-reminder`](../xero-overdue-invoice-to-gmail-reminder/))
+  and `daysInMonth`. **`Date` is not referenced anywhere in this file.** Don't reintroduce it.
+- **Reading the clock goes in a `ctx.step`.** The `today` step is the only place a current time is
+  obtained, so its value is fixed for every retry of a run. It runs only when the model gave no
+  usable invoice date.
+
+Two things made this invisible until production, both worth remembering:
+
+1. **Nothing upstream catches it.** The guard is a runtime component of `@zapier/zapier-durable`,
+   not a lint or a publish-time check, so `tsc` passed and `publish-workflow-version` succeeded.
+2. **The pre-publish test missed it by construction.** The only end-to-end `run-durable` test was a
+   non-PDF payload, which returns at the PDF gate — before the AI step, and therefore before the
+   line that threw. A skip-path test cannot exercise the main path. Test with a real PDF payload.
+
+`toIsoDate` also got stricter as a side effect. Its old NaN check never actually fired: `Date.UTC`
+normalises overflow instead of failing, so `2026-13-05` rolled into 2027 and the *original* string
+was returned and passed to Xero as a bill date. An impossible month or day is now rejected and
+falls through to the `today` fallback.
+
+**Replayed after the fix.** The failed Lantern Labs run was re-fired with its original trigger
+payload on version `019faae7`: all five steps completed, the file was renamed to
+`2026-07-28 Lantern Labs Pte. Ltd.`, no bank-transaction match was found (correctly — the invoice
+is unpaid, due 2026-08-28), and draft bill `99ea5905-aa60-4327-bcb7-984c1013e3e3` was raised for
+USD 7,750.00 with the PDF attached.
+
 ## Model tier
 
 `standard/auto` — 1× tasks per run. Standard read every invoice above correctly, including
@@ -169,3 +211,10 @@ replaces that. Re-run the table above before changing tier.
   ~20h old, and the runtime rejects dependencies younger than 24h at *run* time, not publish.
 - The classic Zap renamed files to `" <date> <vendor>"` with a leading space; this one doesn't,
   and strips `/` from vendor names.
+- **Never write `new Date` in the workflow body** — see the determinism section above. Integer date
+  helpers are already here; use them.
+- **A polling trigger consumes a file once.** A run that fails is not retried (a
+  `DeterminismViolation` is a terminal *user* error, not a transient one) and the trigger will not
+  re-deliver that file, so a fix has to be paired with a manual replay: re-fire the workflow with
+  the failed run's original trigger payload. The `file` hydrate reference in that payload was still
+  valid ~7 hours later.
