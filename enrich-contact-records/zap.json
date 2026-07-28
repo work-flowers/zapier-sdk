@@ -1,7 +1,7 @@
 {
   "name": "enrich-contact-records",
   "workflow_id": "019f878c-64ff-7332-92df-58e39f803836",
-  "current_version_id": "019fa143-dd14-7fb5-8ddd-5f5b12312443",
+  "current_version_id": "019fa69a-695b-7993-98f4-df6ea78232a9",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AW11SY4tM7eAkPQzytW3yg",
   "enabled": true,
   "trigger": {
@@ -15,6 +15,6 @@
     "@zapier/zapier-sdk": "0.79.0"
   },
   "created_at": "2026-07-22T01:59:12.898Z",
-  "version_created_at": "2026-07-27T01:50:07.125Z",
-  "description": "Enrich Notion contact records with person profile data. An enriched work address takes Primary Email when the existing Primary is a consumer mailbox (Path G-promote); a corporate Primary is treated as curated and left alone. Addresses compare case-insensitively, so an address never lands in both Primary and Secondary. Name falls back to the page title when the name properties are empty, and the skip comment lists each enrichment source's failure separately. NinjaPear is never queried with a personal email (privacy-rejected): a freemail Primary is stripped from its inputs, and the call is skipped with an explicit reason when no other identifier remains."
+  "version_created_at": "2026-07-28T02:42:45.213Z",
+  "description": "Enrich Notion contact records with person profile data. An enriched work address takes Primary Email when the existing Primary is a consumer mailbox (Path G-promote); a corporate Primary is treated as curated and left alone. Addresses compare case-insensitively, so an address never lands in both Primary and Secondary. Name falls back to the page title when the name properties are empty, and the skip comment lists each enrichment source's failure separately. NinjaPear is never queried with a personal email (privacy-rejected). The company domain is taken from the first corporate host in the Company rollup, falling back to the Primary Email's own host, and the NinjaPear call is gated on domain + name — the only input combination that actually resolves a profile."
 }
