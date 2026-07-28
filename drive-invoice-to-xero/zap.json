@@ -1,0 +1,86 @@
+{
+  "name": "drive-invoice-to-xero",
+  "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
+  "current_version_id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.22.0",
+    "action": "file_in_folder_v2",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "authentication_note": "Google Drive dennis@work.flowers. The SAME connection is needed twice: here on the trigger (which polls the folder) and as the `gdrive` alias in --connections, because the workflow code renames the file.",
+    "params": {
+      "drive": "0AHY_MJFjT0WtUk9PVA",
+      "folder": "14RpcjSzye4BVZPS_1OzspabmQzDwFVRE",
+      "includeDeleted": "false"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New File in Folder), one run per file added to the Invoices folder. No webhook_url — nothing external needs a catch URL, so there is no cutover step beyond turning the classic Zap off. Disabling the workflow moves the trigger to `released`; re-enabling reclaims it as `active` (verified 2026-07-28)."
+  },
+  "connections": {
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "connectionless_apps": {
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection",
+    "ZapierTables": "read via sdk.listTableRecords, not a TableCLIAPI action — no connection and no task cost"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.11.0 was npm-latest at build time but only ~20h old. The runtime installs with pnpm --config.minimumReleaseAge=1440, so a dependency younger than 24h fails at RUN time, not publish. Pinned to 0.10.1.",
+  "drive_folders": {
+    "Invoices": "14RpcjSzye4BVZPS_1OzspabmQzDwFVRE"
+  },
+  "xero": {
+    "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+    "organization_name": "work.flowers",
+    "organization_note": "Used both as the `organization` input on Xero actions and as the `Xero-Tenant-Id` header on the raw request. _zap_raw_request has NO `organization` field in its schema (additionalProperties: false) and silently strips one — org-scoped calls fail with 'Please select an organization to perform this step on.' unless the header is set.",
+    "bill_status": "draft",
+    "tax_types": {
+      "tax_applied": "INPUTY24 (Standard-Rated Purchases)",
+      "no_tax": "NONE"
+    },
+    "bill_number_note": "Zapier's new_bill `number` field maps to Xero's InvoiceNumber (not Reference) — verified against bills the classic Zap created."
+  },
+  "tables": {
+    "bank_transactions": {
+      "id": "01KCDV6Y17F31J2Q6S1EMYZC8K",
+      "name": "Xero Bank Transactions",
+      "role": "Read-only here. The match source for 'has this invoice already been paid?'. Chosen over a live Xero API query because Table reads cost no tasks.",
+      "owned_by": "the classic Zap 'Process New Reconciled Transactions' (Xero bank_transaction trigger -> TableCLIAPI create_record)",
+      "coupling_warning": "This workflow is only as correct as that Zap is current. On 2026-07-28 that Zap's create step was paused, so the Table had fallen ~5 days behind: 7 of 43 live SPEND transactions in 2026-06-01..2026-07-28 were missing, all of them the newest. The visible symptom was NOT an error — it was duplicate draft bills in Xero, deleted by hand. `tableStale` in the run output is the tripwire."
+    }
+  },
+  "ai_model": {
+    "model_id": "standard/auto",
+    "authentication_id": "0",
+    "note": "Tier drives task cost: standard 1x, advanced 3x, premium 5x tasks per run (plus the same multiplier per tool call; this step makes none). Those three sentinels are the only valid values — anything else errors with 'Unknown tier sentinel'. Standard read every invoice in the README's verified table correctly, including the full line-item tables (19 rows on Vanta) and the tax-basis call. The classic Zap pinned google/gemini-2.5-flash-lite explicitly; the tier sentinel on built-in credentials replaces it. Re-run those cases before changing tier.",
+    "file_input_note": "The PDF is passed to the model as a file input (inputFieldConfig_Invoice_isFileUrl), using the Drive trigger's `file` hydrate reference. Standard reads rendered PDFs directly, so no Files by Zapier text-extraction step is needed — which is what makes the line-item table legible."
+  },
+  "matching": {
+    "rule": "vendor (legal-suffix-normalised) AND exact total AND same currency AND SPEND, within +/-7 days of the invoice date or its due date",
+    "window_days": 7,
+    "amount_epsilon": 0.005,
+    "note": "Amount and currency are REQUIRED, not tiebreakers as the classic Zap's Agent had it. Anthropic had 3 transactions within 4 days of one invoice (104.58 / 133.58 / 99.00) — only the amount distinguishes the right one. SimplePay bills SGD 12 every month, so the date window is what stops a match against the wrong month. A split payment (Aspire FT 45.90 settled by 4.92 + 40.98) correctly fails to match rather than attaching to half of it."
+  },
+  "description": "Invoice PDF added to the Google Drive Invoices folder -> ONE AI by Zapier call extracts the header and the line items -> rename the file to '<invoice date> <vendor>' -> look for a matching SPEND bank transaction in the Xero Bank Transactions Zapier Table. Matched: attach the PDF to that transaction in Xero. Not matched: raise a DRAFT bill (guarded against duplicates by invoice number). Migration of the classic Zap 'Record New Bills in Xero'. Replaces its AI Agent step with deterministic code, requires an amount+currency match rather than treating amount as optional, merges its two AI calls into one, and reconciles extracted line items against the invoice total so a draft bill always adds up.",
+  "version_history": [
+    {
+      "id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
+      "created_at": "2026-07-28T11:24:27.030Z",
+      "note": "Initial migration."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Record New Bills in Xero",
+    "old_shape": "Drive trigger -> PDFs-only filter -> AI invoice header -> rename -> AI Agent 'Xero Invoice Transaction Matcher' (run_behavior, App222036CLIAPI@3.1.0, agent d9d3381a-6aeb-4221-b5f4-3623f68ea7cc) -> Paths -> second AI call for line items -> Paths on tax -> two Create Bill branches / Upload Attachment",
+    "agent_note": "The Agent searched this same Zapier Table as a knowledge source; it existed to do fuzzy vendor-name matching across legal suffixes. `normalizeVendor` does that in code for free. The Agent also missed matches that were present in the Table — SimplePay 1148057 SGD 12 had an exact same-day transaction and still got a duplicate bill.",
+    "status": "Dennis is turning the classic Zap off. Both were subscribed to the same folder."
+  },
+  "created_at": "2026-07-28T11:24:08.773Z",
+  "version_created_at": "2026-07-28T11:24:27.030Z"
+}
