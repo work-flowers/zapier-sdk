@@ -1,0 +1,33 @@
+{
+  "name": "new-buttondown-subscriber-update-in-notion",
+  "workflow_id": "019fa804-6b6d-7890-987a-f390195bde3f",
+  "current_version_id": "019fa830-6bd4-7a3a-afe2-47cfed3b9edd",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZBrBTy4uZICoYTPphCUfg",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "ButtondownCLIAPI@2.0.4",
+    "action": "confirmedSubscriber",
+    "authentication_id": "63486162",
+    "params": {}
+  },
+  "connections": {
+    "notioncliapi_connection": {
+      "connection_id": 50656433
+    }
+  },
+  "app_versions": {
+    "NotionCLIAPI": {
+      "implementation_name": "NotionCLIAPI",
+      "version": "2.39.1"
+    }
+  },
+  "zapier_durable_version": "0.8.0",
+  "dependencies": {
+    "zod": "4.3.6",
+    "@zapier/zapier-sdk": "0.70.2"
+  },
+  "created_at": "2026-07-28T09:18:09.775Z",
+  "version_created_at": "2026-07-28T10:06:13.462Z",
+  "description": "Buttondown confirmed-subscriber -> Notion Contacts upsert, keyed on the email->page-id Zapier Table lookup. Migrated from the classic Zapier UI to a Durable, then swapped the raw Notion query for the shared Zapier Table lookup."
+}
