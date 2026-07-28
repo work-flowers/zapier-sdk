@@ -1,0 +1,46 @@
+{
+  "name": "zapier-partner-lead-status-to-notion",
+  "workflow_id": "019fa7a7-8553-722c-b176-049b03cc5227",
+  "current_version_id": "019fa7ac-364d-7030-9633-7398a3233471",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af8rM_j5kB_jN-LgYBDLaw",
+  "enabled": true,
+  "trigger": {
+    "selected_api": "App227952CLIAPI@1.5.0",
+    "action": "referral_lead_status_change",
+    "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
+    "params": {},
+    "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger \u2014 the workflow code never calls the partner tool, so it is not in --connections.",
+    "trigger_note": "Polling trigger, one run per lead status change, deduped on `<lead_id>_<lead_status_modified_on>`. A poll returns the current state of every lead on the account (247 as at 2026-07-28), so the account's whole lead history is 'available' on the first poll \u2014 Zapier records the first poll as already-seen rather than firing it. Verified quiet after publish; watch `list-workflow-runs` if it is ever disabled and re-enabled."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "tables": {
+    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table \u2014 read to resolve client id -> Notion Company page id; Status refreshed on an existing row, and a row created when a fallback path resolved the company.",
+    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> Contact page id, owned by contact-emails-to-zapier-table (read-only here; the third resolution path)."
+  },
+  "notion_schema_added": {
+    "date": "2026-07-28",
+    "data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "select_options": {
+      "Zapier Lead Status": "Added 'Converted' (green) and 'Expired' (orange) \u2014 the trigger emits five statuses (Submitted, Approved, Converted, Rejected, Expired) and only three had options. Legacy 'Accepted' left in place but never written; the API has never emitted it."
+    },
+    "properties": [
+      "Zapier Lead Expires (date)",
+      "Zapier Lead Status Reason (rich_text)",
+      "Zapier Lead Converted On (date)",
+      "Zapier Commission % (number, percent format)",
+      "Zapier Payout Year 1 (date range)",
+      "Zapier Payout Year 2 (date range)"
+    ]
+  },
+  "created_at": "2026-07-28T07:36:41.043Z",
+  "version_created_at": "2026-07-28T07:41:49.007Z",
+  "description": "Zapier partner tool referral lead status change -> resolve the Notion Companies record (lead Table, then Zapier Client Id, then the lead email via the contact Table) and write status, reason, expiry, converted date, commission and payout windows onto it. Backfills the lead Table so repeat events resolve for free. Migration of the classic 'Capture Zapier Lead Status Change' Zap.",
+  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes."
+}
