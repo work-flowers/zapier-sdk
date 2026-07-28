@@ -1,0 +1,111 @@
+{
+  "name": "xero-overdue-invoice-to-gmail-reminder",
+  "workflow_id": "019fa8bc-2f55-7163-b4e6-4e6f90e8751c",
+  "current_version_id": "019fa8c6-c93a-7b2a-ad8d-47b78d0b3944",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUT0oeOhPFSNE2FX3moYtg",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "XeroCLIAPI@2.20.5",
+    "action": "overdue_sales_invoice",
+    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "authentication_note": "Xero work.flowers. The same credential is ALSO bound as the `xero_wf` connection alias, because the workflow body re-reads the invoice.",
+    "params": {
+      "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+      "days_overdue": 1
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (Overdue Sales Invoice), one run per invoice. `days_overdue` is sent as the NUMBER 1, not the string \"1\" the classic Zap carried: `list-trigger-input-fields` gives it `type: number`, and a scalar/array or string/number mismatch in trigger params makes the trigger claim fail SILENTLY at publish — the publish returns success and the workflow just stays disabled. Confirmed claimed here (`status: active`). The classic Zap also carried polling_interval_override: 15, which the durable --trigger payload has no field for; the default interval applies."
+  },
+  "connections": {
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
+  },
+  "connections_note": "gmail_wf is the shared `dennis@work.flowers` connection (GoogleMailV2CLIAPI@2.14.0), matching the classic Zap's Gmail step version. The other Gmail connection in the account, `Gmail dennis@work.flowers` (02a57b11-…), is pinned to GoogleMailV2CLIAPI@1.1.12 and is the one gmail-attachments-to-drive-by-type uses on its trigger — do not swap them.",
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "version_pinning_note": "Matches every other Durable in this repo. All three are the newest versions published at least 24h before build time, which is what the Vercel sandbox's `pnpm install --config.minimumReleaseAge=1440` requires.",
+  "tasks_per_run": {
+    "every_delivery": "1 (Xero find_invoice_by_id)",
+    "on_draft": "+1 (Gmail create_draft)",
+    "note": "Same as the classic Zap, which also spent a lookup plus a Gmail step."
+  },
+  "email": {
+    "action": "GoogleMailV2CLIAPI write `draft_v2` (Create Draft) — NEVER sends",
+    "why_draft": "Preserved from the classic Zap. A debt-chasing email goes out only after a person has read it. Nothing in this workflow can send.",
+    "from": "Not set. The Gmail connection is dennis@work.flowers, so the default sender is already right, and `from` is a dynamic enum that rejects an unvalidated literal.",
+    "to": "Contact.EmailAddress. If the contact has none but its contact persons do, they are promoted to To rather than drafting a Cc-only email.",
+    "cc": "Every Contact.ContactPersons[].EmailAddress with IncludeInEmails !== false, minus anyone already in To.",
+    "attachment": "The invoice PDF, from find_invoice_by_id with include_pdf: true (an opaque Zapier `hydrate|||…|||hydrate` file ref passed straight to Gmail's `file` input).",
+    "body_type": "plain"
+  },
+  "verified_cases": [
+    {
+      "case": "Still awaiting payment — composes the reminder (dry run, no draft)",
+      "invoice": "INV-0077 (Secure Code Warrior Limited, AUTHORISED, USD 7,398.17, due 2026-08-02)",
+      "run": "019fa8c1-7d40-7c53-b18d-41ce2860c57f",
+      "result": "outcome 'dry-run'. to ap.scw@securecodewarrior.com, cc jaap@scw.io (from ContactPersons, IncludeInEmails true), attachedPdf true, due date rendered 2026-08-02."
+    },
+    {
+      "case": "No longer awaiting payment — the guard",
+      "invoice": "INV-0075 (Secure Code Warrior Limited, PAID, 0.00 due)",
+      "run": "019fa8c2-6e4f-742e-9b1e-a42a7eeacec3",
+      "result": "skipped, reason 'invoice is no longer awaiting payment'. No draft. This is the case where the classic Zap would have chased a customer who had already paid."
+    },
+    {
+      "case": "Real draft, end to end, with the PDF attached",
+      "invoice": "INV-0077",
+      "run": "019fa8c7-11b6-74d0-9645-de1f2b4e11c4",
+      "result": "outcome 'reminder-drafted', draft 19fa8c76377a87ba. Confirmed present in Gmail with the composed body, to ap.scw@securecodewarrior.com, cc jaap@scw.io. Deleted afterwards (it was a test against an invoice that is not actually overdue) — verified gone from Drafts."
+    }
+  ],
+  "dry_run_note": "A manual run accepts `{\"InvoiceID\": \"<guid or INV-nnnn>\", \"dryRun\": true}` and returns the composed reminder without creating a draft. The Xero trigger never sets `dryRun`.",
+  "description": "Xero sales invoice 1 day overdue -> re-read the invoice for its online-invoice URL and PDF and, only if it is still awaiting payment, create a Gmail DRAFT reminder to the customer with the invoice PDF attached. Never sends. Migration of the classic Zap 'Overdue Invoice Reminders (1 Day)'. Fixes the PDF attachment (which pointed at a non-existent trigger field), the body line that told customers their invoice came from themselves, and adds a still-owed guard.",
+  "version_history": [
+    {
+      "id": "019fa8bf-2343-7d2d-8bf4-81f7ab495a74",
+      "created_at": "2026-07-28T12:42:06.532Z",
+      "note": "Initial migration, published disabled for testing. Superseded: its toIsoDate used `new Date(ms)`, which the durable runtime rejects."
+    },
+    {
+      "id": "019fa8c6-c93a-7b2a-ad8d-47b78d0b3944",
+      "created_at": "2026-07-28T12:50:27.771Z",
+      "note": "Replaced `new Date(ms)` with integer civil-from-days arithmetic and enabled. The sibling Zap hit `DeterminismViolation: Non-deterministic API \"new Date()\" called in GUARDED mode` on that code path; this workflow had the same latent fault, reached whenever a date arrives as `/Date(ms)/` with no `…String` variant. The replacement was checked against native Date across a 50,000-day sweep plus 2000-02-29 and 2100-02-28."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Overdue Invoice Reminders (1 Day)",
+    "old_shape": "XeroCLIAPI@2.20.5 overdue_sales_invoice (days_overdue: \"1\") -> XeroCLIAPI find_invoice_by_id (include_pdf: false, include_online_url: true) -> GoogleMailV2CLIAPI@2.14.0 write `draft_v2`.",
+    "status": "The trigger was live (`paused: false`) but BOTH action steps were `paused: true`, so the Zap polled Xero and then did nothing. Turn it off rather than unpausing, or it and this workflow will both draft the same reminder.",
+    "known_issues_fixed": [
+      "The draft's attachment was mapped to `gives[trigger].InvoicePDF` — the TRIGGER's output, not the lookup's — while the lookup was configured with `include_pdf: false`. So no PDF was fetched and the field referenced did not exist: the reminder never carried the invoice. Now `include_pdf: true` and the returned file ref is attached (verified: draft 19fa8c76377a87ba).",
+      "The body read 'the following invoice from {{Contact.Name}} is now overdue', interpolating the CUSTOMER's own name — so it told them their invoice came from themselves. Now reads 'from workFlowers'.",
+      "No check that the invoice was still owed. The trigger polls a due-date window, so an invoice paid, voided or credited between the poll and the run would still have been chased. Verified against INV-0075, which the durable declines.",
+      "`Cc` was every contact person including one whose address is the contact's own, so a customer could be both To'd and Cc'd. Now deduped case-insensitively.",
+      "Xero's IncludeInEmails flag on a contact person was ignored.",
+      "A contact with no email address at all produced a draft addressed to nobody. Now skipped with a reason.",
+      "`DueDateString` was pasted raw into the body, rendering as `2026-08-02T00:00:00`. Now `2026-08-02`.",
+      "`AmountDue` was pasted raw, so a float could render as `7398.170000000001`. Now two decimal places, thousands-separated.",
+      "`days_overdue` was the string \"1\" against a number-typed field (see trigger_note)."
+    ],
+    "deliberately_preserved": [
+      "Create Draft, not Send Email — nothing is sent automatically.",
+      "The body wording, the `Hi <FirstName>,` opening and the `Dennis` sign-off, verbatim apart from the issuer-name fix.",
+      "The online-invoice URL line.",
+      "Plain-text body, signature delimiter on, signature not rendered as HTML."
+    ],
+    "added_beyond_the_classic_zap": [
+      "A `Reference: <PO number>` line in the body when the invoice has one. The classic Zap did not include it. It is here because an AP team matches a reminder against their PO, which is the whole point of the email — but it IS an addition to customer-facing copy, so it is called out here to be easy to remove: delete the `if (inv.reference)` push in buildBody."
+    ]
+  },
+  "known_gaps": {
+    "one_reminder_per_invoice_only": "This is the 1-day Zap, and the trigger delivers an invoice once as it crosses 1 day overdue. There is no 7-day or 30-day escalation. The classic Zap's name ('(1 Day)') implies siblings were intended; none were in the export. Adding one means another workflow with the same source and `days_overdue` changed — deploy it from this directory as a second entry in this file, the way luma-event-to-notion does.",
+    "repeat_drafts": "No record is kept of invoices already drafted. A polling trigger re-delivering the same invoice would produce a second draft. Harmless — drafts do not send themselves, and a duplicate is visible in Drafts — so no Table was added.",
+    "no_overdue_invoices_at_migration_time": "At 2026-07-28 Xero reported overdue_total 0.00 / overdue_count 0 (4 invoices awaiting payment, all due in August). So the happy path was verified by firing the workflow manually against INV-0077, a real but not-yet-overdue invoice, rather than by waiting for a genuine trigger delivery. The trigger itself is claimed and active; the first real delivery will be the earliest of the August invoices going a day past due."
+  },
+  "created_at": "2026-07-28T12:38:53.014Z",
+  "version_created_at": "2026-07-28T12:50:27.771Z"
+}

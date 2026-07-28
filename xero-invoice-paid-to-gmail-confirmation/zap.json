@@ -1,0 +1,98 @@
+{
+  "name": "xero-invoice-paid-to-gmail-confirmation",
+  "workflow_id": "019fa8bc-1af5-7e65-a948-210c3e4319e3",
+  "current_version_id": "019fa8c5-9112-7243-9027-bf6ceb75c282",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbZ0tBGWjaIPwaZw35rX7A",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "XeroCLIAPI@2.20.5",
+    "action": "updated_invoice_v2",
+    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "authentication_note": "Xero work.flowers. The same credential is ALSO bound as the `xero_wf` connection alias, because the workflow body re-reads the invoice.",
+    "params": {
+      "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+      "change": "paid",
+      "trigger_preference": "detailed"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (Updated Sales Invoice), one run per invoice update. `trigger_preference: \"detailed\"` is NEW — the classic Zap left it unset, which defaults to \"asap\". Zapier's own field help says it is notified of an invoice update almost immediately but Xero takes time to reflect the change in the invoice's History, and that you should pick \"detailed\" when knowing what changed matters. This Zap filters on `change: \"paid\"`, so it matters. The classic Zap's change filter was therefore evaluated against History that may not have caught up yet. The code-side paid-in-full guard means an over-delivery is harmless either way."
+  },
+  "connections": {
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
+  },
+  "connections_note": "gmail_wf is the shared `dennis@work.flowers` connection (GoogleMailV2CLIAPI@2.14.0), matching the classic Zap's Gmail step version. The other Gmail connection in the account, `Gmail dennis@work.flowers` (02a57b11-…), is pinned to GoogleMailV2CLIAPI@1.1.12 and is the one gmail-attachments-to-drive-by-type uses on its trigger — do not swap them.",
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "version_pinning_note": "Matches every other Durable in this repo. All three are the newest versions published at least 24h before build time, which is what the Vercel sandbox's `pnpm install --config.minimumReleaseAge=1440` requires.",
+  "tasks_per_run": {
+    "every_delivery": "1 (Xero find_invoice_by_id)",
+    "on_send": "+1 (Gmail send_email)",
+    "note": "The classic Zap spent 1 task per delivery (Gmail only) and never re-read the invoice. The extra Xero read is what makes the paid-in-full guard possible; it is the price of not telling a customer their invoice is settled when it is not."
+  },
+  "email": {
+    "action": "GoogleMailV2CLIAPI write `message` (Send Email) — sends, does not draft",
+    "from": "Not set. The Gmail connection is dennis@work.flowers, so the default sender is already right, and `from` is a dynamic enum that rejects an unvalidated literal.",
+    "to": "Contact.EmailAddress plus every Contact.ContactPersons[].EmailAddress with IncludeInEmails !== false, deduped case-insensitively.",
+    "bcc": ["dennis@work.flowers"],
+    "body_type": "plain"
+  },
+  "verified_cases": [
+    {
+      "case": "Not settled in full — the guard",
+      "invoice": "INV-0077 (Secure Code Warrior Limited, AUTHORISED, USD 7,398.17 due)",
+      "run": "019fa8c1-8e26-7e1a-87ba-e59972d7d61b",
+      "result": "skipped, reason 'invoice is not paid in full'. No email. This is the exact case the classic Zap had no defence against."
+    },
+    {
+      "case": "Settled in full — composes the confirmation (dry run, nothing sent)",
+      "invoice": "INV-0075 (Secure Code Warrior Limited, PAID, SGD 6,300.00, fully paid 2026-07-16)",
+      "run": "019fa8c7-00bb-7d62-8829-b1beaf34376f",
+      "result": "outcome 'dry-run'. Subject 'Payment Received - Invoice INV-0075'; to ap.scw@securecodewarrior.com; bcc dennis@work.flowers; body carries SGD 6,300.00, Payment Date 2026-07-16, Reference PO944."
+    }
+  ],
+  "send_path_note": "The Gmail send step itself has NOT been fired against a real customer — doing so would have emailed Secure Code Warrior a spurious payment confirmation. What is verified: the composed message (above), and the identical Gmail input shape exercised for real by the sibling Zap xero-overdue-invoice-to-gmail-reminder, whose `draft_v2` call takes the same to/cc/subject/body/body_type/signature fields and succeeded (draft 19fa8c76377a87ba). Every confirmation is bcc'd to dennis@work.flowers, so the first live send is self-verifying — check that bcc arrives.",
+  "dry_run_note": "A manual run accepts `{\"InvoiceID\": \"<guid or INV-nnnn>\", \"dryRun\": true}` and returns the composed message without sending. The Xero trigger never sets `dryRun`, so production is unaffected. Use this rather than firing a real send when testing.",
+  "description": "Xero sales invoice marked paid -> re-read the invoice from Xero and, only if it is settled in full, email the customer a payment confirmation (bcc dennis@work.flowers). Migration of the classic Zap 'Send Gmail payment confirmation when invoice paid in Xero'. Adds a paid-in-full guard, a real recipient list built from the contact and its contact persons, and readable dates and amounts.",
+  "version_history": [
+    {
+      "id": "019fa8bd-bda0-7429-9414-e7afb1a2f5fb",
+      "created_at": "2026-07-28T12:40:34.977Z",
+      "note": "Initial migration, published disabled for testing. Superseded: its toIsoDate used `new Date(ms)`, which the durable runtime rejects (see next entry)."
+    },
+    {
+      "id": "019fa8c5-9112-7243-9027-bf6ceb75c282",
+      "created_at": "2026-07-28T12:49:07.859Z",
+      "note": "Replaced `new Date(ms)` with integer civil-from-days arithmetic and enabled. The first version failed at run time with `DeterminismViolation: Non-deterministic API \"new Date()\" called in GUARDED mode` on a PAID invoice — the durable runtime blocks the Date constructor outside a step even when the argument makes it deterministic. Found by testing against INV-0075, whose FullyPaidOnDate is `/Date(1784160000000+0000)/` with no FullyPaidOnDateString beside it, so the .NET-date branch is load-bearing rather than defensive."
+    }
+  ],
+  "replaces_classic_zap": {
+    "title": "Send Gmail payment confirmation when invoice paid in Xero",
+    "old_shape": "XeroCLIAPI@2.20.5 updated_invoice_v2 (change: paid) -> GoogleMailV2CLIAPI@2.14.0 write `message`. Two nodes, no lookup, no conditions.",
+    "status": "BOTH nodes were `paused: true` in the export, so the Zap was entirely off and had never sent a confirmation. Turn it off (or delete it) rather than unpausing, or it and this workflow will both email the customer.",
+    "known_issues_fixed": [
+      "No paid-in-full check. The trigger fires on a change to the invoice and the email asserts payment was received, but nothing confirmed it — a part-payment would have produced 'Thank you for your payment!' quoting only the part paid, with no confirmation when the balance was settled. Verified against INV-0077, which the durable declines.",
+      "`To` was two hardcoded mappings: `invoice.Contact.ContactPersons.ContactPerson.EmailAddress` and `invoice.Contact.EmailAddress`. A contact with no contact persons sent an empty recipient; a contact person sharing the main address sent it twice. The Gmail node carried `has_automatic_issues: true`, consistent with that mapping being broken.",
+      "Xero's IncludeInEmails flag on a contact person was ignored, so someone the customer had deliberately taken off invoice emails would have been mailed anyway.",
+      "`FullyPaidOnDateString` was pasted raw into the body, rendering as `2026-07-16T00:00:00`. Now `2026-07-16`.",
+      "`AmountPaid` was pasted raw, so a float could render as `7398.170000000001`. Now two decimal places, thousands-separated.",
+      "An invoice with no Reference left a dangling `- Reference:` line. The line is now dropped."
+    ],
+    "deliberately_preserved": [
+      "The body wording, the `Hi team,` opening and the `workFlowers Team` sign-off, verbatim.",
+      "The bcc to dennis@work.flowers.",
+      "Plain-text body, signature delimiter on, signature not rendered as HTML."
+    ]
+  },
+  "known_gaps": {
+    "repeat_confirmation": "There is no persistent record of which invoices have been confirmed. A single payment settling an invoice delivers once, and the paid-in-full guard absorbs part-payments, but a payment applied to an ALREADY-paid invoice (an overpayment, or a credit note re-allocated onto it) would produce a second confirmation. Judged acceptable for this volume; a Zapier Table keyed on invoice id would close it at no task cost if it ever happens.",
+    "contact_persons_vary_per_invoice": "Xero embeds a per-invoice snapshot of the contact, and that snapshot is not consistent: the same contact (Secure Code Warrior Limited, ContactID 90655e02-…, identical UpdatedDateUTC) came back with `ContactPersons: [{Jaap Singh}]` on INV-0077 and `ContactPersons: []` on INV-0075. So a confirmation can reach fewer people than a reminder for the same customer. The primary Contact.EmailAddress is always present, so nobody is missed entirely. Reading the contact separately would cost another task and was not judged worth it.",
+    "no_backfill": "Enabling this does not confirm invoices paid before now — a Zapier polling trigger primes its dedupe on first poll. That is the intended behaviour here: the classic Zap never sent anything, so there is no gap to make up, and back-mailing historical payments would be worse than silence."
+  },
+  "created_at": "2026-07-28T12:38:47.799Z",
+  "version_created_at": "2026-07-28T12:49:07.859Z"
+}
