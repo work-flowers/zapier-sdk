@@ -1,7 +1,7 @@
 {
   "name": "zapier-partner-lead-status-to-notion",
   "workflow_id": "019fa7a7-8553-722c-b176-049b03cc5227",
-  "current_version_id": "019fa7ac-364d-7030-9633-7398a3233471",
+  "current_version_id": "019fa7e7-c8cc-71de-95e3-f10ef6d8a00a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af8rM_j5kB_jN-LgYBDLaw",
   "enabled": true,
   "trigger": {
@@ -40,7 +40,13 @@
     ]
   },
   "created_at": "2026-07-28T07:36:41.043Z",
-  "version_created_at": "2026-07-28T07:41:49.007Z",
+  "version_created_at": "2026-07-28T08:27:00.000Z",
   "description": "Zapier partner tool referral lead status change -> resolve the Notion Companies record (lead Table, then Zapier Client Id, then the lead email via the contact Table) and write status, reason, expiry, converted date, commission and payout windows onto it. Backfills the lead Table so repeat events resolve for free. Migration of the classic 'Capture Zapier Lead Status Change' Zap.",
-  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes."
+  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes.",
+  "adoption_policy": {
+    "adoption_statuses": [
+      "Converted"
+    ],
+    "note": "A lead already TRACKED (a lead Table row, or a company carrying its Zapier Client Id) is written at any status. An UNTRACKED lead is only adopted into the CRM at a status in adoption_statuses \u2014 see ADOPTION_STATUSES in workflow.ts. Rationale: of 45 leads sampled evenly across all 247, 45 carried source 'mdfRequest-\u2026' (one bulk event submission) and 78% reported zapier_account_status 'No Account Found'. Those ~209 Approved leads also share a 90-day expiry, so they will nearly all flip to Expired at once \u2014 without the gate that single wave would adopt the whole attendee list. Widening the list is NOT retroactive; replay via scripts/backfill-zapier-partner-leads.mjs with a matching --adopt-statuses."
+  }
 }

@@ -24,9 +24,24 @@
 // The durable is idempotent — it writes the lead's current state and never
 // clears a field — so re-running this is safe.
 //
+// WHAT IT REPLAYS, AND WHY NOT EVERYTHING
+// The workflow only adopts an *untracked* lead into the CRM at a status that
+// says it matters — `Converted` (see ADOPTION_STATUSES in the workflow). The
+// account's lead history is essentially one bulk event submission: 45 of 45
+// leads sampled across it carried `source: mdfRequest-…` and 78% had no Zapier
+// account at all. Replaying those would just produce "not adopted" skips.
+//
+// So by default this fires only the leads that can actually land:
+//   * any lead whose status is in --adopt-statuses (default Converted), and
+//   * any lead already tracked — one with a lead Table row, or whose company
+//     already carries its `Zapier Client Id` — regardless of status.
+//
+// Use --all to replay everything anyway (the workflow still gates; you'll just
+// pay for the skips).
+//
 // COST
-// One durable run per lead, each doing up to a few Notion calls. Replaying ~240
-// leads is a few hundred tasks. Nothing is fired without --commit.
+// One durable run per lead, each doing up to a few Notion calls. Nothing is
+// fired without --commit.
 //
 // USAGE
 //   node scripts/backfill-zapier-partner-leads.mjs                  # plan only
@@ -36,7 +51,12 @@
 //
 //   --commit              actually fire the runs (default: plan and exit)
 //   --limit N             only the first N candidates (newest status change first)
-//   --status A,B          only these lead statuses
+//   --adopt-statuses A,B  statuses that let an untracked lead through
+//                         (default Converted — keep in step with the workflow's
+//                         ADOPTION_STATUSES, or the plan will promise writes the
+//                         workflow then refuses)
+//   --all                 replay every lead regardless of status or tracking
+//   --status A,B          only these lead statuses (applied after the above)
 //   --include-linked      replay leads already linked in Notion too. Worth doing
 //                         once: the leads the CLASSIC Zap linked carry only a
 //                         status, client id and lead id — it never captured the
@@ -63,6 +83,7 @@ const PARTNER_APP_KEY = "App227952CLIAPI";
 const PARTNER_CONNECTION = "02a5085e-1d27-853d-89b7-115a57fc4d32";
 const NOTION_CONNECTION = "02b73654-15c8-85c3-b16a-07304d2beb17";
 const COMPANIES_DS = "21991b07-11ac-80b0-b787-000b3d3995f6";
+const LEAD_TABLE = "01KPZFHX4RP6SER3AEK4YJ62BF";
 const NOTION_VERSION = "2026-03-11";
 
 // --- CLI plumbing ----------------------------------------------------------
@@ -72,6 +93,8 @@ function parseArgs(argv) {
     commit: false,
     limit: Infinity,
     status: null,
+    adoptStatuses: ["Converted"],
+    all: false,
     includeLinked: false,
     delayMs: 1500,
     settleMs: 900_000,
@@ -83,7 +106,9 @@ function parseArgs(argv) {
     const a = argv[i];
     const next = () => argv[++i];
     if (a === "--commit") opts.commit = true;
+    else if (a === "--all") opts.all = true;
     else if (a === "--include-linked") opts.includeLinked = true;
+    else if (a === "--adopt-statuses") opts.adoptStatuses = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--limit") opts.limit = Number(next());
     else if (a === "--status") opts.status = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--delay-ms") opts.delayMs = Number(next());
@@ -195,6 +220,50 @@ async function fetchLinkedLeads() {
   return linked;
 }
 
+/**
+ * Client ids this system already tracks — from a Notion company carrying the id,
+ * or a row in the lead Table. These are exactly the leads the workflow resolves
+ * without needing to adopt anything, so they are replayed at any status.
+ */
+async function fetchTrackedClientIds() {
+  const tracked = new Set();
+
+  let cursor = null;
+  do {
+    const body = {
+      filter: { property: "Zapier Client Id", rich_text: { is_not_empty: true } },
+      page_size: 100,
+      ...(cursor ? { start_cursor: cursor } : {}),
+    };
+    const out = await cli([
+      "curl", `https://api.notion.com/v1/data_sources/${COMPANIES_DS}/query`,
+      "--connection", NOTION_CONNECTION,
+      "-X", "POST",
+      "-H", `Notion-Version: ${NOTION_VERSION}`,
+      "--json", JSON.stringify(body),
+    ]);
+    const page = JSON.parse(out);
+    if (page.object === "error") {
+      throw new Error(`Notion query failed: ${page.code} ${page.message}`);
+    }
+    for (const row of page.results ?? []) {
+      const id = (row.properties?.["Zapier Client Id"]?.rich_text ?? [])
+        .map((t) => t.plain_text ?? "").join("").trim();
+      if (id) tracked.add(id);
+    }
+    cursor = page.has_more ? page.next_cursor : null;
+  } while (cursor);
+
+  const table = await cliJson([
+    "list-table-records", LEAD_TABLE, "--json", "--max-items", "5000",
+  ]);
+  for (const row of table.data ?? []) {
+    const id = String(row.data?.["Client Id"] ?? "").trim();
+    if (id) tracked.add(id);
+  }
+  return tracked;
+}
+
 // --- Main ------------------------------------------------------------------
 
 async function main() {
@@ -213,8 +282,34 @@ async function main() {
   for (const l of leads) byStatus[l.status ?? "(none)"] = (byStatus[l.status ?? "(none)"] ?? 0) + 1;
   console.log(`  statuses: ${Object.entries(byStatus).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
 
+  let tracked = new Set();
+  if (!opts.all) {
+    console.log("Reading which client ids are already tracked…");
+    tracked = await fetchTrackedClientIds();
+    console.log(`  ${tracked.size} tracked client ids`);
+  }
+
   let candidates = leads.filter((l) => l.lead_id);
   if (!opts.includeLinked) candidates = candidates.filter((l) => !linked.has(l.lead_id));
+
+  // Mirror the workflow's adoption policy, so the plan doesn't promise writes the
+  // workflow will then refuse. An untracked lead only goes through at an
+  // adoption status; a tracked one goes through at any status.
+  if (!opts.all) {
+    const before = candidates.length;
+    candidates = candidates.filter(
+      (l) => tracked.has(l.client_id) || opts.adoptStatuses.includes(l.status),
+    );
+    const dropped = before - candidates.length;
+    if (dropped > 0) {
+      console.log(
+        `\n  ${dropped} untracked lead(s) held back — status not in ` +
+          `[${opts.adoptStatuses.join(", ")}]. The workflow would skip them as ` +
+          `"not adopted"; pass --all to fire them anyway.`,
+      );
+    }
+  }
+
   if (opts.status) candidates = candidates.filter((l) => opts.status.includes(l.status));
   // Newest status change first, so a partial run covers the most current leads.
   candidates.sort((a, b) =>

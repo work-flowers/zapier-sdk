@@ -16,7 +16,9 @@ flowchart TD
     C -- hit --> P
     C -- miss --> D["2. Notion Companies:<br/>Zapier Client Id = client id"]
     D -- "exactly one hit" --> P
-    D -- "miss / ambiguous" --> E["3. Email → Contact Table<br/>→ contact's Related Company"]
+    D -- "miss / ambiguous" --> G{"status earns<br/>adoption?<br/>(Converted)"}
+    G -- no --> Z2(["skip — not adopted.<br/>Untracked event lead"])
+    G -- yes --> E["3. Email → Contact Table<br/>→ contact's Related Company"]
     E -- "exactly one company" --> P
     E -- miss --> Z1(["skip — lead isn't in the CRM yet"])
     P["PATCH the company:<br/>status, reason, expiry,<br/>converted date, commission,<br/>payout windows<br/>(only fields the event carries)"]
@@ -25,6 +27,28 @@ flowchart TD
     R -- yes --> S(["comment on the page —<br/>a link this workflow inferred"])
     R -- no --> T(["done, silently"])
 ```
+
+## The adoption policy
+
+**A lead this system already tracks is always written. An untracked one is only adopted into the CRM when it reaches `Converted`.**
+
+"Tracked" means resolution path 1 or 2 hit — the lead has a row in the lead Table, or its company already carries its `Zapier Client Id`. Something deliberately registered it, so whatever happens to it is worth recording.
+
+Adoption via path 3 is different: it's this workflow inferring a link nobody made. That needs to be earned, because of what the lead history actually is. Of **45 leads sampled evenly across all 247**, every single one carried `source: mdfRequest-…` — a bulk event submission — and **78% reported `zapier_account_status: "No Account Found"`**, meaning the address isn't attached to any Zapier account at all:
+
+| Zapier account | Sampled |
+|---|---|
+| No Account Found | 35 |
+| Account Found, Unpaid | 8 |
+| Account Found, Paid | 2 |
+
+Those are event attendees, not opportunities. Adopting them would stamp Zapier lead fields across most of the company list.
+
+**The timing is the sharper argument.** Those ~209 Approved leads each carry a 90-day expiry, so they will nearly all flip to `Expired` at about the same time and fire a status change each. Without this gate, that one wave would adopt the entire attendee list in an afternoon.
+
+`Converted` is the signal that survives all of it: the lead became a paid, owned account, so there is revenue attached and the company belongs in lead tracking.
+
+To widen the policy, add statuses to `ADOPTION_STATUSES` — nothing else needs changing. Widening it is **not** retroactive: a lead is only reconsidered when its status next changes, or when the backfill script replays it. Keep `--adopt-statuses` on that script in step, or its plan will promise writes the workflow then refuses.
 
 ## Trigger
 
@@ -78,7 +102,8 @@ Turn **off** the classic Zap **Capture Zapier Lead Status Change**. Until then b
 - **An ambiguous match is never guessed at.** Two companies carrying one client id, or a contact linked to several companies, both fall through rather than picking one.
 - **A resolution miss returns rather than throws.** The lead simply isn't in the CRM yet; retrying can't conjure the company, and a later status change will land once someone files the contact. Throwing would spin the durable's retry loop.
 - **A Table sync failure is logged, not retried.** By then the Notion record — the thing a human reads — is already correct; a failed Table write only costs the next event a slower lookup.
-- **The email path will link a lot of history.** Of 40 unlinked lead emails probed against the contact Table, 33 resolved to a contact. So as statuses change, this workflow will progressively link leads that were never registered through the button. Each one comments on the company page, so those comments are the audit trail for a link nobody explicitly created.
+- **The email path could resolve far more than it's allowed to.** Of the 241 leads not yet in the CRM, **216 would resolve** through the contact path — the reach isn't the constraint, the adoption policy is. That's deliberate: see above. The gate is also checked *before* path 3 runs, so a held-back lead costs one free Table read and one Notion query rather than a two-hop contact lookup as well.
+- **Every adoption comments on the page.** That comment is the audit trail for a link nobody explicitly created, and it names the status that earned the adoption.
 - **`@zapier/zapier-durable` is pinned to 0.10.1, not the latest.** A publish on 0.11.0 failed at run time with `Dependency installation failed` — the runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old. Check the publish date before bumping.
 
 ## Notion schema added for this migration
@@ -99,10 +124,17 @@ Live runs via `trigger-workflow` with **real lead payloads** (the writes are all
 | Path 1 — lead Table | Kim Hing, client `02800000000053P00hE`, Approved | `resolvedVia: "lead-table"`. Wrote `Referral Lead Id`, status, reason, expiry `2026-08-12`, commission `0.2`. Table row `Status` → `Approved` and `Success` → `true` (was `null`/`false` from the classic Zap). No comment, as intended for a routine change |
 | Path 3 — contact email | Yipei Huang, client `0280000000005uG00hE`, Approved — a lead never registered through the button | `resolvedVia: "contact-email"`. Resolved through the email Table to her contact, then to company `84486273-…`; **backfilled `Zapier Client Id`** plus all five other fields, indexed the mapping, and commented |
 | Path 2 — Notion client id | Same lead, after deleting the row path 3 had just indexed | `resolvedVia: "notion-client-id"`. Found the company by the `Zapier Client Id` path 3 had backfilled, wrote the same six fields, and re-indexed the mapping — so a lost Table row self-heals |
+| **Adoption gate — blocks** | `jemma.wang@argor.vc`, Approved, untracked. Before the gate this lead resolved fine | `{ skipped: true, adoptionBlocked: true, reason: "not adopted — this lead isn't tracked in the CRM and its status (Approved) isn't one that earns adoption (Converted)" }`. Nothing written |
+| **Adoption gate — allows, and the `Converted` branch** | `nikki@goldengate.vc`, Converted, untracked | `resolvedVia: "contact-email"`, `adopted: true`, and **all eight fields** written to Golden Gate Ventures — including both date ranges: Y1 `2026-01-08 → 2027-01-07`, Y2 `2027-01-08 → 2028-01-07`, converted `2026-01-08`, commission `0.2` |
 | Types | `tsc --strict` against durable 0.10.1 + sdk 0.91.0 | Clean |
 | Trigger claim survives republish | `get-workflow` after re-publishing with `--trigger` | `status: active` |
 | No first-poll replay | `list-workflow-runs` after claiming the trigger | Empty — the 247 historical leads did not fire |
 
 ## Remaining work
 
-**A `Converted` lead has not been run through.** All three verified runs were `Approved`, so the `converted_date` and Y1/Y2 payout-window branches — the only ones that write a Notion **date range** — are exercised only by the type checker. Ten converted leads exist; running one through `trigger-workflow` would confirm the range write, but it also writes to whatever company that lead resolves to, so it was left as a deliberate first-real-event check. Watch the run output's `written` array for `Zapier Payout Year 1` / `Zapier Payout Year 2`.
+Nothing outstanding on this workflow — every resolution path, the adoption gate in both directions, and all five statuses' field subsets have been exercised against real leads.
+
+Two things to keep an eye on:
+
+- **The October expiry wave.** Around late October 2026 the ~209 Approved event leads reach their 90-day expiry and fire a status change each. Expect a burst of runs all returning `adoptionBlocked: true`. That's the gate working, but it's the one time this workflow will be busy, so it's worth a glance at `list-workflow-runs` when it happens.
+- **If you widen `ADOPTION_STATUSES`**, remember it isn't retroactive — use the backfill script (with a matching `--adopt-statuses`) to pick up leads whose status has already settled.

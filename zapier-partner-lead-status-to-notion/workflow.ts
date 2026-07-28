@@ -44,6 +44,37 @@ const KNOWN_STATUSES = [
   "Expired",
 ] as const;
 
+/**
+ * Statuses that let an **untracked** lead be adopted into the CRM.
+ *
+ * A lead is "tracked" if this system already knows about it — it has a row in
+ * the lead Table, or its company carries its `Zapier Client Id`. Tracked leads
+ * are always written, whatever their status: someone deliberately registered
+ * them and wants to see what happened.
+ *
+ * An untracked lead is a different proposition. The account's lead history is
+ * essentially one bulk event submission: of 45 leads sampled evenly across it,
+ * 45 carried `source: mdfRequest-…` and 78% reported `zapier_account_status:
+ * "No Account Found"` — the address isn't attached to any Zapier account. Those
+ * are event attendees, not opportunities, and adopting them would stamp Zapier
+ * lead fields onto most of the company list.
+ *
+ * The timing matters too. Those ~209 Approved leads each carry a 90-day expiry,
+ * so they will all flip to Expired at roughly the same time and fire a status
+ * change each. Without this gate that single wave would adopt the entire
+ * attendee list at once.
+ *
+ * `Converted` is the signal that survives all of that: the lead became a paid,
+ * owned account, so there is real revenue attached and the company belongs in
+ * lead tracking. Everything else waits until someone registers it deliberately.
+ *
+ * To widen the policy, add statuses here — the rest of the workflow needs no
+ * change. Note that widening it does NOT retroactively adopt anything; a lead
+ * is only reconsidered when its status next changes (or when the backfill
+ * script replays it).
+ */
+const ADOPTION_STATUSES: readonly string[] = ["Converted"];
+
 // Accept anything and extract defensively.
 const InputSchema = z.unknown();
 
@@ -178,7 +209,13 @@ function extractLeadData(raw: unknown): LeadData {
 // `never`. The durable package exports the type directly.
 type DurableCtx = DurableContext;
 
-/** How the company page was found — reported so a fallback match is auditable. */
+/**
+ * How the company page was found — reported so a fallback match is auditable.
+ *
+ * The first two mean the lead was **already tracked**: something deliberately
+ * recorded it. `contact-email` is an *adoption* — this workflow inferring a link
+ * nobody made — and is gated on `ADOPTION_STATUSES`.
+ */
 type ResolvedVia = "lead-table" | "notion-client-id" | "contact-email";
 
 interface Resolution {
@@ -202,10 +239,16 @@ interface Resolution {
  *   3. the lead's email -> Contact -> that contact's `Related Company`
  *      (inexact by nature: it trusts that the person Zapier calls the account
  *      owner is filed under the right company in the CRM)
+ *
+ * Paths 1 and 2 establish that the lead is already tracked. Path 3 is an
+ * adoption and only runs when `allowAdoption` is set — which also means an
+ * ungated event lead costs nothing beyond the free Table read and one Notion
+ * query, rather than a two-hop contact lookup as well.
  */
 async function resolveCompanyPage(
   ctx: DurableCtx,
   lead: LeadData,
+  allowAdoption: boolean,
 ): Promise<Resolution | null> {
   // 1. The lead Table.
   if (lead.clientId) {
@@ -293,8 +336,8 @@ async function resolveCompanyPage(
     }
   }
 
-  // 3. The lead's email -> Contact -> Related Company.
-  if (!lead.email) return null;
+  // 3. The lead's email -> Contact -> Related Company. An adoption, so gated.
+  if (!allowAdoption || !lead.email) return null;
   const fromContact = await ctx.step("resolve-via-contact-email", async () => {
     try {
       const found = await sdk.listTableRecords({
@@ -455,17 +498,23 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       };
     }
 
-    const resolved = await resolveCompanyPage(ctx, lead);
+    // An untracked lead is only adopted into the CRM at a status that says it
+    // matters — see ADOPTION_STATUSES. A tracked one is always written.
+    const allowAdoption = ADOPTION_STATUSES.includes(lead.status);
+
+    const resolved = await resolveCompanyPage(ctx, lead, allowAdoption);
     if (!resolved) {
-      // A permanent condition for this event — the lead simply isn't in the CRM
-      // yet. Return rather than throw: retrying can't conjure the company, and
-      // a later status change will resolve it once someone files the contact.
-      console.log(
-        `No Notion company for lead ${lead.leadId} (client ${lead.clientId}, ${lead.email})`,
-      );
+      // A permanent condition for this event. Return rather than throw:
+      // retrying can't change the answer, and the lead is reconsidered on its
+      // next status change (or when the backfill script replays it).
+      const reason = allowAdoption
+        ? "no matching Notion company (not in the lead table, no company carries this client id, and the lead email resolves to no single company)"
+        : `not adopted — this lead isn't tracked in the CRM and its status (${lead.rawStatus || "unknown"}) isn't one that earns adoption (${ADOPTION_STATUSES.join(", ")})`;
+      console.log(`${reason} — lead ${lead.leadId} (${lead.email})`);
       return {
         skipped: true,
-        reason: "no matching Notion company (not in the lead table, no company carries this client id, and the lead email resolves to no single company)",
+        reason,
+        adoptionBlocked: !allowAdoption,
         leadId: lead.leadId,
         clientId: lead.clientId,
         email: lead.email,
@@ -569,7 +618,10 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const summary =
         `Linked to Zapier partner lead \`${lead.leadId}\` (client ` +
         `\`${lead.clientId}\`, status ${lead.status || lead.rawStatus}) via ${how}. ` +
-        `Lead details written to the Zapier fields on this record.`;
+        `Lead details written to the Zapier fields on this record.` +
+        (resolved.via === "contact-email"
+          ? ` This company was adopted into Zapier lead tracking because the lead reached ${lead.status}.`
+          : "");
       await addComment(ctx, "comment-fallback-match", resolved.pageId, summary);
     }
 
@@ -578,6 +630,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       clientId: lead.clientId,
       pageId: resolved.pageId,
       resolvedVia: resolved.via,
+      adopted: resolved.via === "contact-email",
       status: lead.status || null,
       rawStatus: lead.rawStatus,
       unknownStatus: !lead.status && Boolean(lead.rawStatus),
