@@ -12,6 +12,13 @@ const NOTION_CONNECTION = "notion_wf";
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 
+// Where a cross-contact address collision is recorded — a REVIEW flag, never
+// `Duplicate of`, which the "Contact Merger" Notion Custom Agent treats as an
+// instruction to merge two records and delete one. See the long note in
+// `contact-emails-to-zapier-table/workflow.ts` for the 2026-07-28 incident that
+// forced the split. Writes to it are always a union of the existing links.
+const POSSIBLE_DUPLICATE_PROP = "Possible duplicate of";
+
 // Buttondown (the custom "Buttondown Unofficial" integration, same app/alias as
 // notion-newsletter-to-buttondown). `create_update_subscriber` is create-or-
 // update on the email address, so a repeat call is a no-op rather than an error.
@@ -443,6 +450,116 @@ async function readContactEmails(pageId: string): Promise<ContactEmailState | nu
 }
 
 /**
+ * Read a contact's current `Possible duplicate of` page ids.
+ *
+ * Same hazard as `readContactEmails` above, for the same reason: writing a
+ * relation REPLACES it, so appending a collision flag without reading the
+ * current list first would drop every earlier flag. Returns null when the page
+ * can't be read, which the caller treats as "don't write" — losing a review
+ * flag is far cheaper than replacing the ones already there.
+ */
+async function readPossibleDuplicateLinks(
+  pageId: string,
+): Promise<string[] | null> {
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    connection: NOTION_CONNECTION,
+    headers: { "Notion-Version": NOTION_VERSION },
+  });
+  if (!res.ok) return null;
+  const body: any = await res.json();
+  const links: string[] = [];
+  for (const rel of body?.properties?.[POSSIBLE_DUPLICATE_PROP]?.relation ?? []) {
+    const id = firstString(rel?.id);
+    if (id && !links.includes(id)) links.push(id);
+  }
+  return links;
+}
+
+/** Notion page ids compare hyphen- and case-insensitively: the same id reaches
+ *  us in both spellings depending on which API or Table row it came from. */
+function sameNotionId(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  return a.replace(/-/g, "").toLowerCase() === b.replace(/-/g, "").toLowerCase();
+}
+
+/**
+ * A comparable name key: lowercased, punctuation-stripped, tokens SORTED.
+ *
+ * Sorting is the point. Luma sends whatever the guest typed, and the order is
+ * not reliable — Lionel Sim registered as "Sim Lionel" on 2026-07-24, so an
+ * exact title comparison would have missed his existing contact. Returns "" for
+ * anything with fewer than two tokens: a lone "Grace" is far too weak to flag a
+ * stranger's record on.
+ */
+function normalizeNameKey(name: string): string {
+  const tokens = (name ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .sort();
+  return tokens.length >= 2 ? tokens.join(" ") : "";
+}
+
+/**
+ * Live contacts whose Name is name-equivalent to `fullName`.
+ *
+ * Why this exists: contacts are resolved ONLY through the email -> page-id
+ * Table, so a guest registering with an address that isn't indexed yet gets a
+ * brand-new contact even when they are already in the CRM under a different
+ * address. That is how the duplicate Lionel Sim page appeared on 2026-07-24,
+ * and every downstream mess followed from it — the address could not have
+ * resolved, because his record did not carry it.
+ *
+ * A name match is NOT treated as proof and never reuses the record: two
+ * different people share a name often enough that attaching a registration to
+ * the wrong contact would be the same false-positive this repo has just spent a
+ * day undoing. The new contact is still created; it is only FLAGGED, so a
+ * person decides. See POSSIBLE_DUPLICATE_PROP.
+ *
+ * Queried against the data source endpoint directly: `find_data_source_item`
+ * returns a single hit, and a name needle can legitimately match several.
+ */
+async function findNameMatchedContacts(fullName: string): Promise<string[]> {
+  const key = normalizeNameKey(fullName);
+  if (!key) return [];
+  // Search on the longest token — the most selective one, and the one least
+  // likely to be a common given name.
+  const needle = key.split(" ").reduce((a, b) => (b.length > a.length ? b : a));
+  if (needle.length < 3) return [];
+
+  const res = await sdk.fetch(`${NOTION_API}/data_sources/${CONTACTS_DS}/query`, {
+    method: "POST",
+    connection: NOTION_CONNECTION,
+    headers: {
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      filter: { property: "Name", title: { contains: needle } },
+      page_size: 100,
+    }),
+  });
+  // Best-effort: a registration must never fail because the duplicate check
+  // could not run.
+  if (!res.ok) return [];
+  const body: any = await res.json();
+
+  const matches: string[] = [];
+  for (const page of body?.results ?? []) {
+    if (page?.in_trash === true || page?.archived === true) continue;
+    const title = (page?.properties?.Name?.title ?? [])
+      .map((t: any) => firstString(t?.plain_text))
+      .filter(Boolean)
+      .join(" ");
+    if (normalizeNameKey(title) !== key) continue;
+    const id = firstString(page?.id);
+    if (id && !matches.includes(id)) matches.push(id);
+  }
+  return matches;
+}
+
+/**
  * Work out the email changes a work-email answer implies for an EXISTING
  * contact. The rule: the guest's own work-email answer always wins the Primary
  * slot, and everything it displaces is kept as a Secondary — so no address is
@@ -684,7 +801,8 @@ const workflow = defineDurable<unknown, unknown>(
     // person. Treat the work-email contact as canonical (it carries the
     // identity the guest just told us) and leave both records' emails alone
     // rather than shuffling addresses between them; the account-email record is
-    // flagged `Duplicate of` below so the collision surfaces in Notion.
+    // flagged `Possible duplicate of` below so the collision surfaces in Notion
+    // for a person to judge — see POSSIBLE_DUPLICATE_PROP.
     const emailCollision =
       workEmailPageId !== null &&
       accountEmailPageId !== null &&
@@ -692,6 +810,8 @@ const workflow = defineDurable<unknown, unknown>(
 
     let contactPageId: string | null = workEmailPageId ?? accountEmailPageId;
     let contactCreated = false;
+    /** Existing contacts a newly-created one was flagged against by name. */
+    let nameMatchedFlags: string[] = [];
 
     if (!contactPageId) {
       const fullName =
@@ -756,6 +876,39 @@ const workflow = defineDurable<unknown, unknown>(
           })),
         }),
       );
+
+      // A brand-new contact for someone who may already be in the CRM under an
+      // address we had never indexed. Flag it against every name-equivalent
+      // record so it surfaces for review instead of quietly becoming the second
+      // copy that later collides. Best-effort — never fails the registration.
+      nameMatchedFlags = await ctx.step("flag-name-matched-contacts", async () => {
+        const matches = (await findNameMatchedContacts(fullName)).filter(
+          (id) => !sameNotionId(id, newContactPageId),
+        );
+        if (matches.length === 0) return [];
+        const existing = (await readPossibleDuplicateLinks(newContactPageId)) ?? [];
+        const union = [...existing];
+        for (const m of matches) {
+          if (!union.some((l) => sameNotionId(l, m))) union.push(m);
+        }
+        if (union.length === existing.length) return [];
+        try {
+          await sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "update_database_item",
+            connection: NOTION_CONNECTION,
+            inputs: {
+              datasource: CONTACTS_DS,
+              page: newContactPageId,
+              [`properties|||${POSSIBLE_DUPLICATE_PROP}|||relation`]: union,
+            },
+          });
+        } catch {
+          return [];
+        }
+        return matches;
+      });
     }
 
     // 2b. A work-email answer against a contact that already existed: promote
@@ -844,15 +997,23 @@ const workflow = defineDurable<unknown, unknown>(
       }
     }
 
-    // 2c. Flag the cross-contact collision in Notion so it can be merged by
-    // hand — the same `Duplicate of` convention `contact-emails-to-zapier-table`
-    // uses when an address already belongs to another contact.
-    let markedDuplicateOf: string | null = null;
+    // 2c. Flag the cross-contact collision in Notion so a PERSON can decide
+    // whether it is really one contact — the same `Possible duplicate of`
+    // convention `contact-emails-to-zapier-table` uses when an address already
+    // belongs to another contact. Best-effort throughout: a registration must
+    // never fail because a review flag could not be written.
+    let markedPossibleDuplicateOf: string | null = null;
     if (emailCollision) {
       const owner = workEmailPageId as string;
       const dupe = accountEmailPageId as string;
-      await ctx.step("mark-duplicate-contact", async () => {
+      const outcome = await ctx.step("mark-possible-duplicate-contact", async () => {
         try {
+          const existing = await readPossibleDuplicateLinks(dupe);
+          // Unknown current state — skip rather than replace what's there.
+          if (existing === null) {
+            return { marked: false as const, error: `could not read ${dupe}` };
+          }
+          if (existing.includes(owner)) return { marked: false as const, already: true };
           await sdk.runAction({
             appKey: NOTION_APP_KEY,
             actionType: "write",
@@ -861,7 +1022,10 @@ const workflow = defineDurable<unknown, unknown>(
             inputs: {
               datasource: CONTACTS_DS,
               page: dupe,
-              "properties|||Duplicate of|||relation": [owner],
+              [`properties|||${POSSIBLE_DUPLICATE_PROP}|||relation`]: [
+                ...existing,
+                owner,
+              ],
             },
           });
           return { marked: true as const };
@@ -872,7 +1036,7 @@ const workflow = defineDurable<unknown, unknown>(
           };
         }
       });
-      markedDuplicateOf = owner;
+      if (outcome.marked) markedPossibleDuplicateOf = owner;
     }
 
     // 3. Upsert the Attendance record, deduped on Event + Contact.
@@ -1057,9 +1221,10 @@ const workflow = defineDurable<unknown, unknown>(
       eventCreated,
       contactPageId,
       contactCreated,
+      nameMatchedFlags,
       emailsReconciled,
       emailCollision,
-      markedDuplicateOf,
+      markedPossibleDuplicateOf,
       attendancePageId,
       attendanceCreated,
       attendanceUpdated,

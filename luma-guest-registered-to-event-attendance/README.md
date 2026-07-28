@@ -118,10 +118,41 @@ first, since it's the identity the guest is asserting.
 
 | Work email row | Account email row | Result |
 |---|---|---|
-| miss | miss | **Create** the contact with Primary = work, Secondary = `[account]`; index both rows |
+| miss | miss | **Create** the contact with Primary = work, Secondary = `[account]`; index both rows; flag it against any name-equivalent contact (see below) |
 | hit | miss / same page | Use it; reconcile emails per the rule above; index the missing row |
 | miss | hit | Use it; **promote** the work email; index the work-email row |
-| hit | hit, **different page** | Two contacts for one person. Use the work-email contact, leave both records' emails alone, and flag the account-email record `Duplicate of` the work-email one (the same convention [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table) uses) so it can be merged by hand. |
+| hit | hit, **different page** | Two contacts for one person. Use the work-email contact, leave both records' emails alone, and **add** the work-email one to the account-email record's `Possible duplicate of` (the same convention [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table) uses) so a person can judge it. Never `Duplicate of` — the Contact Merger Notion agent treats that as an instruction to merge and delete; see that Zap's README for the 2026-07-28 loop. The write unions the existing links, and is skipped entirely if the page can't be read. |
+
+### The name check on create (2026-07-28)
+
+Resolution is **email-only**, so a guest registering with an address that isn't in the
+Table yet gets a brand-new contact even when they are already in the CRM under a
+different address. That is not a bug in the lookup — the address genuinely isn't there
+to find. It is how the duplicate **Lionel Sim** page appeared on 2026-07-24, and
+everything that followed (a false-positive merge into Leo Selie, then into Sachin
+Kolekar) descended from that single duplicate.
+
+So on the create path only, the workflow looks for existing contacts whose name is
+*equivalent* to the guest's, and adds each one to the new contact's
+`Possible duplicate of`.
+
+- **Tokens are sorted** before comparing (`normalizeNameKey`). Luma sends whatever the
+  guest typed and the order is not reliable — Lionel registered as "Sim Lionel", which
+  an exact title comparison would have missed.
+- **Single-token names are ignored.** A lone "Grace" is far too weak to flag a
+  stranger's record on.
+- **The match never reuses the record.** Two different people share a name often
+  enough that attaching a registration to the wrong contact would be exactly the
+  false positive `Possible duplicate of` exists to prevent. The duplicate is still
+  created — it just arrives *visible* instead of silent.
+- Queried against `POST /v1/data_sources/{id}/query` with a `contains` filter on the
+  most selective token, because `find_data_source_item` returns a single hit and a
+  name needle legitimately matches several.
+- **Best-effort throughout.** An unreadable page, a failed query or a failed write all
+  return no flags rather than failing the registration.
+
+Run output carries `nameMatchedFlags` — the contacts a newly-created one was flagged
+against.
 
 Every address put on a contact is also indexed in `CONTACT_EMAIL_TABLE` here, rather than
 relying on the Contacts DB automation behind `contact-emails-to-zapier-table` to catch the
@@ -220,7 +251,7 @@ flowchart TD
     G --> H{"Look up work email,<br/>then account email,<br/>in CONTACT_EMAIL_TABLE"}
     H -->|"both miss"| I["Create Contact<br/>Primary = work ?? account<br/>Secondary = [account]"] --> J["Index a row per address"]
     H -->|"one hit / same page"| K["Read Primary + Secondary<br/>via GET /v1/pages"] --> L["Promote work email to Primary,<br/>displaced addresses → Secondary"] --> M["Index any un-indexed address"]
-    H -->|"hit, different pages"| N["Use work-email contact ·<br/>flag the other Duplicate of"]
+    H -->|"hit, different pages"| N["Use work-email contact ·<br/>add to the other's<br/>'Possible duplicate of'"]
 
     J --> O["contactPageId"]
     M --> O

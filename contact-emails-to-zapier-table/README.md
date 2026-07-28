@@ -50,7 +50,7 @@ deduped):
 | Row → this page | No-op |
 | Row with empty Page ID | Self-heal: point the row at this page |
 | Row → a **trashed** page | Reclaim: point the row at this contact |
-| Row → a different **live** page | Leave the row (first owner keeps it); set this contact's `Duplicate of` relation to the owner (once, first conflict) |
+| Row → a different **live** page | Leave the row (first owner keeps it); **add** the owner to this contact's `Possible duplicate of` relation (once, first conflict) |
 
 Page ids compare hyphen- and case-insensitively. The Table holds ids written by
 several generations of automation, in both spellings; a mismatch used to read as
@@ -83,12 +83,58 @@ flowchart TD
     F --> H
     R --> H
     G --> H{"Any conflicts?"}
-    H -- yes --> I["Set 'Duplicate of' relation<br/>on this contact → owning page"]
+    H -- yes --> I["Add owning page to<br/>'Possible duplicate of' on this contact<br/>(union, never replace)"]
     I --> K["ctx.wait 15 min"]
     K --> L["Re-check each collided address:<br/>owner gone or row swept away →<br/>claim it for this contact"]
     L --> J
     H -- no --> J(["Return indexed / unchanged / healed /<br/>reclaimed / duplicates / settled"])
 ```
+
+## Why the flag is not `Duplicate of` (2026-07-28)
+
+A shared address is a **hint**, not a verdict. Two people can share one — a shared
+inbox, a typo, a founder's personal address on a colleague's record — so this
+workflow writes `Possible duplicate of`, which nothing acts on automatically.
+
+It used to write `Duplicate of`, and that property is the trigger for the **Contact
+Merger** Notion Custom Agent, which merges the two records and deletes one. The two
+readings of the same property fed each other:
+
+```
+this workflow sees one shared address
+  → writes Duplicate of
+    → Contact Merger merges the records
+      → its merge writes Secondary Email
+        → the Notion email automation fires
+          → this workflow runs again, sees the newly-copied address
+            → writes Duplicate of in the other direction …
+```
+
+On 2026-07-28 that ran six hops in three minutes on Sachin Kolekar (Knoxx Foods) and
+Lionel Sim (The AI Capitol) — two unrelated people who shared exactly one address.
+Lionel's bio, city, companies and event attendance were copied onto Sachin, Sachin's
+meeting notes onto Lionel, and both records ended up pointing at each other. The
+agent's next hop would have deleted a live contact. The same mechanism had already
+consumed Leo Selie and a duplicate Lionel page over the preceding four days.
+
+Two rules follow, and both matter:
+
+- **Never write `Duplicate of` from a Zap.** It means "confirmed, merge this", and
+  only a person should say that.
+- **The write is a union, never a replacement.** `Possible duplicate of` is
+  deliberately unlimited, and `mark-possible-duplicate` reads the current links
+  before writing. Replacing would drop the record that an earlier pair was ever
+  questioned — and a replacing write to a multi-value property is exactly what cost
+  Sachin his own address. If the page can't be read, the step **throws and retries**
+  rather than writing a union computed from unknown state.
+
+The paired side, `Possible duplicates`, lists every contact flagged against a given
+record — which is the view that makes a spreading cluster obvious. Lionel had three.
+
+`duplicateLinks` in `readPageState` still reads **only** `Duplicate of` /
+`Duplicated by`. A merge hand-over must follow a confirmed duplicate; handing a
+contact's addresses to a page it merely collided with would re-create the same
+false positive one layer down.
 
 ## Merges, deletes and restores
 
@@ -112,7 +158,7 @@ Three paths converge on the fix, so it works whichever order the merge happens i
   both contacts' emails ends up mutually linked). The first linked page that isn't itself
   trashed wins. The hand-over runs **twice**: immediately, then again after a 5-minute
   `ctx.wait`.
-- **A collision is detected** → the run marks `Duplicate of` as before, then waits 15
+- **A collision is detected** → the run flags `Possible duplicate of`, then waits 15
   minutes and looks again. A collision is what a merge looks like from the inside: the
   addresses reach the survivor *before* the loser is trashed. If by then the other
   contact has gone to the trash, or its row has been swept away, the address is claimed
@@ -237,7 +283,7 @@ The predecessor is why 60 secondary emails went missing from the Table
 4. **`Merge Into` no longer exists** — Path B marked duplicates via a `Merge Into`
    relation that has since been removed from the Contacts schema (only
    `Duplicate of` / `Duplicated by` remain), so its dup-marking step would error.
-   Both paths now use `Duplicate of`.
+   Both paths now use `Possible duplicate of` — see “Why the flag is not `Duplicate of`”.
 5. **Stale empty rows** — the original stopped when a matching row had an empty
    Page ID; this port self-heals such rows onto the triggering contact.
 
@@ -251,7 +297,7 @@ duplicate rows are benign (lookups take the first hit, both point at the same pa
 - **Removed emails leave their rows behind** (parity with the original). A stale row
   still points at the contact who once held the address — acceptable; delete manually
   if an address genuinely changes hands.
-- The `Duplicate of` mark uses the **first** conflicting email only.
+- The `Possible duplicate of` flag uses the **first** conflicting email only.
 - **A collision makes the run linger 15 minutes** (`CONFLICT_SETTLE_SECONDS`) before it
   finishes. The durable is suspended for the wait, so it costs nothing, but a bulk edit
   that collides on many contacts leaves that many runs open for a quarter of an hour.
@@ -290,7 +336,7 @@ needs the id and the flag, since the addresses are also recovered from the Table
 ```
 
 The **collision re-check** needs two live contacts sharing an address: run the workflow
-against the survivor, wait for `mark-duplicate` to complete, trash the other contact
+against the survivor, wait for `mark-possible-duplicate` to complete, trash the other contact
 while the run sits in `conflict-settle`, and check the row 15 minutes later. Use
 `get-durable-run <run-id>` to watch the operations list.
 

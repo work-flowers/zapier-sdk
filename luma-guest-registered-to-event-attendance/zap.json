@@ -1,7 +1,7 @@
 {
   "name": "luma-guest-registered-to-event-attendance",
   "workflow_id": "019f8d53-34a4-7b10-b52e-3fc9c0cdb2b3",
-  "current_version_id": "019fa17d-29f6-70d7-ad07-f56b341db6b7",
+  "current_version_id": "019fa811-df2f-73e7-8984-3ca63f3eea56",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AeidphQ8j39PEFZUyoipMg",
   "enabled": true,
   "trigger": {
@@ -19,6 +19,6 @@
     "@zapier/zapier-sdk": "0.86.0"
   },
   "created_at": "2026-07-23T04:54:28.262Z",
-  "version_created_at": "2026-07-27T02:52:42.359Z",
-  "description": "Luma guest registered -> upsert Notion Event Attendance (resolve event + contact, set Approval Status). A Work Email registration answer becomes the contact's Primary Email; the Luma account address is kept as a Secondary. A ticked newsletter opt-in answer subscribes the guest in Buttondown, last, so the Buttondown -> Contacts automation can't race this one into a duplicate contact."
+  "version_created_at": "2026-07-28T09:32:51.378Z",
+  "description": "Luma guest registered -> upsert Notion Event Attendance (resolve event + contact, set Approval Status). A Work Email registration answer becomes the contact's Primary Email; the Luma account address is kept as a Secondary. A ticked newsletter opt-in answer subscribes the guest in Buttondown, last, so the Buttondown -> Contacts automation can't race this one into a duplicate contact. A registration that creates a brand-new contact is flagged `Possible duplicate of` every name-equivalent existing contact (tokens sorted, so a reversed name order still matches), so an unindexed address can't quietly produce a second copy."
 }
