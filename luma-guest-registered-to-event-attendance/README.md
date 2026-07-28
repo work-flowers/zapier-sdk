@@ -121,7 +121,7 @@ first, since it's the identity the guest is asserting.
 | miss | miss | **Create** the contact with Primary = work, Secondary = `[account]`; index both rows |
 | hit | miss / same page | Use it; reconcile emails per the rule above; index the missing row |
 | miss | hit | Use it; **promote** the work email; index the work-email row |
-| hit | hit, **different page** | Two contacts for one person. Use the work-email contact, leave both records' emails alone, and flag the account-email record `Duplicate of` the work-email one (the same convention [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table) uses) so it can be merged by hand. |
+| hit | hit, **different page** | Two contacts for one person. Use the work-email contact, leave both records' emails alone, and **add** the work-email one to the account-email record's `Possible duplicate of` (the same convention [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table) uses) so a person can judge it. Never `Duplicate of` — the Contact Merger Notion agent treats that as an instruction to merge and delete; see that Zap's README for the 2026-07-28 loop. The write unions the existing links, and is skipped entirely if the page can't be read. |
 
 Every address put on a contact is also indexed in `CONTACT_EMAIL_TABLE` here, rather than
 relying on the Contacts DB automation behind `contact-emails-to-zapier-table` to catch the
@@ -220,7 +220,7 @@ flowchart TD
     G --> H{"Look up work email,<br/>then account email,<br/>in CONTACT_EMAIL_TABLE"}
     H -->|"both miss"| I["Create Contact<br/>Primary = work ?? account<br/>Secondary = [account]"] --> J["Index a row per address"]
     H -->|"one hit / same page"| K["Read Primary + Secondary<br/>via GET /v1/pages"] --> L["Promote work email to Primary,<br/>displaced addresses → Secondary"] --> M["Index any un-indexed address"]
-    H -->|"hit, different pages"| N["Use work-email contact ·<br/>flag the other Duplicate of"]
+    H -->|"hit, different pages"| N["Use work-email contact ·<br/>add to the other's<br/>'Possible duplicate of'"]
 
     J --> O["contactPageId"]
     M --> O

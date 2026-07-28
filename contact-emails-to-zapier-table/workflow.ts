@@ -22,6 +22,26 @@ const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 // registration with that address creates a duplicate contact.
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 
+// Where a cross-contact address collision is recorded.
+//
+// A single shared address is only ever a HINT that two contacts might be the
+// same person, so it goes to `Possible duplicate of` — NEVER to `Duplicate of`,
+// which the "Contact Merger" Notion Custom Agent treats as an instruction to
+// merge the two records and delete one. Until 2026-07-28 this workflow wrote
+// `Duplicate of`, and the two readings collided: a one-address collision
+// between Sachin Kolekar (Knoxx Foods) and Lionel Sim (The AI Capitol) set the
+// relation, the agent merged the records, its merge wrote `Secondary Email`,
+// which fired this workflow again, which flagged the pair in the other
+// direction. Six hops in three minutes, spreading addresses between unrelated
+// contacts — and one hop away from the agent deleting a live contact.
+//
+// The relation is deliberately UNLIMITED and every write here is a union. A
+// contact can collide with more than one other, and replacing the value would
+// drop the only record that an earlier pair was ever questioned. The paired
+// side, `Possible duplicates`, then lists every contact flagged against a given
+// record — which is the view that makes a spreading cluster obvious.
+const POSSIBLE_DUPLICATE_PROP = "Possible duplicate of";
+
 // The Notion DB automation posts `{ data: { id, properties: {...} } }` with
 // properties in full Notion API form. Accept anything and extract defensively —
 // the predecessor Zap died silently when Secondary Email changed from an email
@@ -200,6 +220,12 @@ interface PageState {
   /** Page ids from `Duplicate of` then `Duplicated by` — the two ends of a
    *  duplicate marking, either of which can point at a merge's survivor. */
   duplicateLinks: string[];
+  /** Page ids in `Possible duplicate of` — the unconfirmed collision flags this
+   *  workflow writes. Deliberately NOT folded into `duplicateLinks`: a merge
+   *  hand-over must only ever follow a CONFIRMED duplicate, and handing a
+   *  contact's addresses to a page it merely collided with would be the same
+   *  false-positive that made this property necessary. */
+  possibleDuplicateLinks: string[];
   /** `Primary Email`, lowercased, or null — used to type a handed-over row. */
   primary: string | null;
   /** `Secondary Email` values, lowercased and validated. A trashed page keeps
@@ -238,6 +264,7 @@ async function readPageState(pageId: string): Promise<PageState | null> {
     return {
       gone: true,
       duplicateLinks: [],
+      possibleDuplicateLinks: [],
       primary: null,
       secondaries: [],
       dataSourceId: null,
@@ -254,12 +281,18 @@ async function readPageState(pageId: string): Promise<PageState | null> {
       if (id && !links.some((l) => sameId(l, id))) links.push(id);
     }
   }
+  const possibleLinks: string[] = [];
+  for (const rel of props[POSSIBLE_DUPLICATE_PROP]?.relation ?? []) {
+    const id = firstString(rel?.id);
+    if (id && !possibleLinks.some((l) => sameId(l, id))) possibleLinks.push(id);
+  }
   return {
     gone:
       body?.in_trash === true ||
       body?.archived === true ||
       body?.is_archived === true,
     duplicateLinks: links,
+    possibleDuplicateLinks: possibleLinks,
     primary: cleanEmail(props["Primary Email"]?.email),
     secondaries: extractEmails(props["Secondary Email"]),
     dataSourceId: firstString(body?.parent?.data_source_id),
@@ -720,9 +753,11 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
 //   - in the Table, empty page id -> self-heal: point the row at this page
 //   - in the Table, OTHER page    -> if that page is in the trash, reclaim the
 //     row onto this contact; otherwise leave the row (first page keeps the
-//     email) and set this page's "Duplicate of" relation to the owning page,
-//     like the original Zap. (The original's Path B wrote "Merge Into", a
-//     property that no longer exists on Contacts — both use "Duplicate of".)
+//     email) and ADD the owning page to this page's "Possible duplicate of"
+//     relation — a review flag, not a merge instruction. (The original Zap's
+//     Path B wrote "Merge Into", a property that no longer exists on Contacts.
+//     Its successor wrote "Duplicate of", which a Notion Custom Agent acts on;
+//     see POSSIBLE_DUPLICATE_PROP for why that had to change.)
 //
 // And when the triggering contact is itself in the trash, it is the losing half
 // of a merge: its addresses are handed to the surviving contact (see mergeAway).
@@ -856,24 +891,46 @@ const workflow = defineDurable<unknown, unknown>(
       }
     }
 
-    // Mark at most once, against the first conflicting owner.
-    let markedDuplicateOf: string | null = null;
+    // Flag at most one new owner per run, the first conflicting one. See
+    // POSSIBLE_DUPLICATE_PROP for why this is never `Duplicate of`.
+    //
+    // Returns the owner it flagged, or null when the flag was already there —
+    // a redundant write would only fire the Notion automation and burn another
+    // run of this workflow, which is how a three-minute flag storm happened.
+    let markedPossibleDuplicateOf: string | null = null;
     if (duplicates.length > 0) {
       const owner = duplicates[0].ownerPageId;
-      await ctx.step("mark-duplicate", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "update_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: {
-            datasource: CONTACTS_DS,
-            page: contact.pageId,
-            "properties|||Duplicate of|||relation": [owner],
-          },
-        }),
+      markedPossibleDuplicateOf = await ctx.step(
+        "mark-possible-duplicate",
+        async () => {
+          const state = await readPageState(contact.pageId);
+          // Never compute a union from unknown state: writing [owner] alone
+          // would silently drop every earlier flag. Throw so the step retries.
+          if (!state) {
+            throw new Error(
+              `could not read ${contact.pageId} to union its ${POSSIBLE_DUPLICATE_PROP} ` +
+                `flags — retrying rather than risk replacing them`,
+            );
+          }
+          const existing = state.possibleDuplicateLinks;
+          if (existing.some((l) => sameId(l, owner))) return null;
+          await sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "update_database_item",
+            connection: NOTION_CONNECTION,
+            inputs: {
+              datasource: CONTACTS_DS,
+              page: contact.pageId,
+              [`properties|||${POSSIBLE_DUPLICATE_PROP}|||relation`]: [
+                ...existing,
+                owner,
+              ],
+            },
+          });
+          return owner;
+        },
       );
-      markedDuplicateOf = owner;
     }
 
     // A collision is usually a merge caught in the act — the addresses reach the
@@ -899,7 +956,7 @@ const workflow = defineDurable<unknown, unknown>(
       healed,
       reclaimed,
       duplicates,
-      markedDuplicateOf,
+      markedPossibleDuplicateOf,
       settledConflicts,
     };
   },
