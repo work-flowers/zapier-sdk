@@ -36,6 +36,12 @@
       "sourceType": "github",
       "skillPath": "skills/workflows/modify/SKILL.md",
       "computedHash": "45fe2b6a1c64a0098fcbe845a9e8e5ab5e154ae7c47b11bdd393211ee80644dc"
+    },
+    "zapier-sdk": {
+      "source": "zapier/sdk",
+      "sourceType": "github",
+      "skillPath": "skills/zapier-sdk/SKILL.md",
+      "computedHash": "05c8672171b468a51ba32d3e0507702132f5c21442d2560db0e6ec9f4ff7d149"
     }
   }
 }
