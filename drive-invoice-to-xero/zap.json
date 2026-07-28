@@ -1,7 +1,7 @@
 {
   "name": "drive-invoice-to-xero",
   "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
-  "current_version_id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
+  "current_version_id": "019faae7-848d-764e-b6a3-075e28c77566",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
   "enabled": true,
   "is_private": false,
@@ -68,11 +68,17 @@
     "note": "Amount and currency are REQUIRED, not tiebreakers as the classic Zap's Agent had it. Anthropic had 3 transactions within 4 days of one invoice (104.58 / 133.58 / 99.00) — only the amount distinguishes the right one. SimplePay bills SGD 12 every month, so the date window is what stops a match against the wrong month. A split payment (Aspire FT 45.90 settled by 4.92 + 40.98) correctly fails to match rather than attaching to half of it."
   },
   "description": "Invoice PDF added to the Google Drive Invoices folder -> ONE AI by Zapier call extracts the header and the line items -> rename the file to '<invoice date> <vendor>' -> look for a matching SPEND bank transaction in the Xero Bank Transactions Zapier Table. Matched: attach the PDF to that transaction in Xero. Not matched: raise a DRAFT bill (guarded against duplicates by invoice number). Migration of the classic Zap 'Record New Bills in Xero'. Replaces its AI Agent step with deterministic code, requires an amount+currency match rather than treating amount as optional, merges its two AI calls into one, and reconciles extracted line items against the invoice total so a draft bill always adds up.",
+  "determinism_note": "The workflow body runs in the durable runtime's GUARDED mode, where `Date` is replaced by a Proxy whose `construct` trap throws DeterminismViolation *before* it inspects its arguments — so a deterministic `new Date(Date.UTC(y, m, d))` is rejected just as hard as a clock read. Version 019fa878 had three such calls in the guarded body and failed on EVERY PDF invoice (`toIsoDate` threw on the first line after the AI step); the only path that worked was the non-PDF skip, which returns before reaching it, and that was the one end-to-end test run before publishing. Date handling is now integer arithmetic — `Date` is not referenced anywhere in the file, `Date.UTC` included, even though the Proxy's `get` trap leaves it unguarded — and the clock is read inside a `today` step. Verified against native `Date` across 47,847 days (1970..2100) in both directions before publishing.",
   "version_history": [
     {
       "id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
       "created_at": "2026-07-28T11:24:27.030Z",
-      "note": "Initial migration."
+      "note": "Initial migration. Failed on every PDF invoice with DeterminismViolation — see determinism_note. Its one and only run was Lantern Labs INV-26-0006."
+    },
+    {
+      "id": "019faae7-848d-764e-b6a3-075e28c77566",
+      "created_at": "2026-07-28T22:45:27.311Z",
+      "note": "Fix the guarded-mode `new Date()` calls: integer date arithmetic (`daysFromCivil`/`isoDateFromEpochMs`/`daysInMonth`), clock moved into a `today` step. `toIsoDate` now genuinely rejects an impossible date — the old NaN check never fired, because Date.UTC normalises overflow instead of failing, so a month like `2026-13-05` was handed straight to Xero as a bill date. Verified by replaying the failed Lantern Labs run: draft bill 99ea5905-aa60-4327-bcb7-984c1013e3e3."
     }
   ],
   "replaces_classic_zap": {
@@ -82,5 +88,5 @@
     "status": "Dennis is turning the classic Zap off. Both were subscribed to the same folder."
   },
   "created_at": "2026-07-28T11:24:08.773Z",
-  "version_created_at": "2026-07-28T11:24:27.030Z"
+  "version_created_at": "2026-07-28T22:45:27.311Z"
 }

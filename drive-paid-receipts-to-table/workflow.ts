@@ -83,15 +83,55 @@ function toNumber(v: unknown): number | null {
   return null;
 }
 
-/** `YYYY-MM-DD` from an ISO-ish date string, or null. */
+// --- Dates, without touching `Date` ------------------------------------------
+//
+// The durable runtime runs the workflow body in GUARDED mode and throws
+// `DeterminismViolation: Non-deterministic API "new Date()" called` from the
+// Date constructor's Proxy. That trap asserts *before* it inspects its
+// arguments, so it rejects every construction — including
+// `new Date(Date.UTC(y, m, d))`, which is perfectly deterministic. Reading the
+// clock is the thing that actually breaks replay and belongs in a step (see
+// the `today` step below); validating a calendar date does not.
+
+/** Days in a month, proleptic Gregorian. */
+function daysInMonth(y: number, m: number): number {
+  if (m === 2) return (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28;
+  return m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
+}
+
+/** `YYYY-MM-DD` from epoch milliseconds — Hinnant's civil-from-days. */
+function isoDateFromEpochMs(ms: number): string {
+  let z = Math.floor(ms / 86400000) + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor(
+    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
+  );
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** `YYYY-MM-DD` from an ISO-ish date string, or null.
+ *
+ *  Now genuinely rejects an impossible date. The previous version checked
+ *  `new Date(Date.UTC(...))` for NaN, which never fired: `Date.UTC` normalises
+ *  overflow rather than failing, so `2026-13-05` rolled into 2027 and the
+ *  original string was handed back. An out-of-range month or day now falls
+ *  through to the caller's fallback. */
 function toIsoDate(v: unknown): string | null {
   const s = firstString(v);
   if (!s) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (!m) return null;
   const [, y, mo, d] = m;
-  const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
-  if (Number.isNaN(dt.getTime())) return null;
+  const month = Number(mo);
+  const day = Number(d);
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > daysInMonth(Number(y), month)) return null;
   return `${y}-${mo}-${d}`;
 }
 
@@ -188,7 +228,17 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     const raw = firstResult(completion)?.result ?? firstResult(completion) ?? {};
     const vendor = firstString(raw["Vendor Name"]) ?? "Unknown Vendor";
-    const invoiceDate = toIsoDate(raw["Invoice Date"]) ?? new Date().toISOString().slice(0, 10);
+    // Reading the clock IS non-deterministic, so today's date comes from a
+    // step — fixing it for every retry of this run. The step only runs when
+    // the model failed to give a usable receipt date.
+    const extractedDate = toIsoDate(raw["Invoice Date"]);
+    const invoiceDate =
+      extractedDate ?? (await ctx.step("today", async () => isoDateFromEpochMs(Date.now())));
+    if (!extractedDate) {
+      console.log(
+        `WARNING: no usable date extracted from ${file.title}; falling back to today (${invoiceDate})`,
+      );
+    }
     const currency = firstString(raw["Currency"]);
     const amount = toNumber(raw["Total Amount Due"]);
 
