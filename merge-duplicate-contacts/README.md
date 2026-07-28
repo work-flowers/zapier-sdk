@@ -16,6 +16,15 @@ URL. See `zap.json` for `trigger.webhook_url` — that's the URL the automation 
 record.* No Zap writes it any more — `contact-emails-to-zapier-table` and
 `luma-guest-registered-to-event-attendance` write `Possible duplicate of` instead.
 
+**The automation payload carries only the page id — zero properties.** So the workflow
+reads `Duplicate of` (and everything else) from a fresh page read. Anything that trusted
+the payload would conclude the relation was empty and silently do nothing, which is a
+failure mode with no error to notice. Notion also sends one empty delivery
+(`{"querystring": {}}`) when the automation is first configured; that is handled as a
+clean no-op rather than a failed run.
+
+Wired and verified live on 2026-07-28 — see the Test section.
+
 ## Why it replaced an agent
 
 The agent read `Duplicate of` as "merge these and delete one". Three of its failures
@@ -160,7 +169,15 @@ zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --private
 ```
 
-Verified on 2026-07-28 before publishing:
+Verified live on 2026-07-28 through the real Notion automation, after wiring:
+
+| Case | Fixture | Result |
+|---|---|---|
+| Genuine duplicate | "ZZ Live Merge" → "Merge Live ZZ" | `merged: true` — `Job Title` and `Country` filled, `Mailing List` OR'd, `Bio` **not** overwritten, source left in place |
+| Different people | Two contacts, different LinkedIn URLs | `merged: false` — *"different LinkedIn profiles (zz-live-one vs zz-live-two)"*, both records untouched |
+| Config test delivery | Notion's empty `{"querystring": {}}` | Clean no-op, not a failed run |
+
+Verified earlier the same day with `run-durable`, before publishing:
 
 | Case | Fixture | Result |
 |---|---|---|
