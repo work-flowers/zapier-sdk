@@ -14,7 +14,12 @@ One sub-directory per Zap. Each Durable directory contains:
 
 Classic Code-step Zap directories carry the code-step source and tests instead of `workflow.ts`/`zap.json`; everything else applies unchanged.
 
-A Zap with an AI step additionally carries a `*-prompt.md` holding the prompt (repo rule 6). Repo-wide helper scripts live in [`scripts/`](scripts/).
+A Zap with an AI step additionally carries a `*-prompt.md` holding the prompt (repo rule 6). Repo-wide helper scripts live in [`scripts/`](scripts/):
+
+| Script | Purpose |
+| --- | --- |
+| [`check-prompts.mjs`](scripts/check-prompts.mjs) | Verifies every `*-prompt.md` matches the copy embedded in its Zap's source (`--fix` re-injects). |
+| [`backfill-zapier-partner-leads.mjs`](scripts/backfill-zapier-partner-leads.mjs) | One-off: replays the partner tool's existing referral leads through [`zapier-partner-lead-status-to-notion`](zapier-partner-lead-status-to-notion/) so historical leads get mirrored into the CRM instead of waiting for their next status change. Plan-only unless `--commit`. |
 
 A Zap deployed more than once from one directory keeps a single `zap.json` with a `deployments` array (see [`luma-event-to-notion`](luma-event-to-notion/)). Where those deployments need to differ in code, the shared logic lives in a module and each deployment publishes its own thin entry file as `workflow.ts` — see [`internal-user-ids-to-table-and-notion`](internal-user-ids-to-table-and-notion/).
 
