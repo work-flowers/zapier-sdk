@@ -31,7 +31,7 @@ Read the whole document before answering. Every figure you return must appear on
 - The **vendor** is the party issuing the invoice, the party we owe. It is never the recipient (Company Flow Pte. Ltd. / workFlowers). Give the complete legal name including any designation such as `Inc.`, `Pte. Ltd.`, `LLC`.
 - Dates are ISO-8601 `YYYY-MM-DD`. When no due date is stated, repeat the invoice date.
 - `Total Amount` is the final payable figure after all taxes, discounts and charges: digits and decimal point only.
-- `Currency` is the ISO-4217 code of that total. Use the code the invoice actually states; only fall back to `SGD` when the document gives no indication at all.
+- `Currency` is the ISO-4217 code of that total: exactly three letters, such as `USD`, `SGD`, `EUR`. Never a symbol and never a mixture of the two — an invoice printing `US$7,750` is `USD`, one printing `S$12.00` is `SGD`. Use the code implied by what the invoice actually states; only fall back to `SGD` when the document gives no indication at all.
 - `Tax Applied` is true only when the invoice actually charges a tax line (GST, VAT, sales tax). A zero-rated, exempt, or reverse-charge invoice is false.
 - `Line Amounts Are` describes the unit prices in the line-item table: `Inclusive` when they already contain the tax, `Exclusive` when tax is added on top, `NoTax` when the invoice charges no tax at all. This decides whether Xero adds tax on top of the figures you return, so read the table's own labelling rather than assuming.
 
@@ -39,7 +39,7 @@ Read the whole document before answering. Every figure you return must appear on
 
 These populate the vendor's contact record in Xero. They describe **the vendor** — the party issuing the invoice — and never the recipient (Company Flow Pte. Ltd. / workFlowers), whose own address and bank account also appear on many invoices. When a document shows two addresses, the vendor's is the one next to the vendor's name in the header or footer, not the one under "Bill to", "Sold to" or "Customer".
 
-**Leave a field blank rather than guessing.** A blank field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
+**Return an empty string rather than guessing.** Every one of these fields is required, but an empty string is always an acceptable answer and is the RIGHT answer whenever the invoice does not state the value plainly. An empty field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
 
 Almost every invoice prints **both** parties' details, and a two-column header often sets them side by side so that the vendor's street and the recipient's street alternate line by line. Read the layout, not the reading order. The same goes for tax numbers: two on one page is normal. The vendor's is the one that belongs to the issuing entity — it frequently reappears in the payment instructions, for instance as a PayNow UEN — and it can be printed right next to the recipient's name, so proximity alone does not settle it.
 
@@ -54,7 +54,7 @@ Almost every invoice prints **both** parties' details, and a two-column header o
 Bank details are for paying the vendor, so read them only from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice" or "Payment instructions" section:
 
 - `Vendor Bank Account Number` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid. A postal **address** for mailing a cheque — often headed "Payment address" — is not a bank account: leave all three bank fields blank unless an actual account number or IBAN is printed. A routing, sort or ABA code is not an account number either.
-- `Vendor Bank Name` — the bank holding that account, **only if the invoice prints it**. Do not derive it from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; blank is the correct answer there.
+- `Vendor Bank Name` — the bank holding that account, **only if the invoice prints it**. This is a bank, never the vendor: a remittance block usually leads with the account holder's name, which is the vendor's own name, and that does not belong here. Do not derive the bank from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; empty is the correct answer there.
 - `Vendor Bank SWIFT/BIC` — the SWIFT or BIC code for that account.
 
 ## Line items

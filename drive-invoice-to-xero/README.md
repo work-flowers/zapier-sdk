@@ -238,9 +238,46 @@ passing. What they establish:
 | Same account, different punctuation | Not a conflict |
 | Bank mismatch with nothing else to fill | Still reported |
 
-**Not yet verified:** how `standard/auto` reads the *new* address and bank fields off real invoice
-PDFs. The extraction cases in the table above predate them. Run the real PDFs through the harness
-before trusting the values, and per repo rule 7 don't raise the tier without a failing case.
+### Vendor-detail extraction, `standard/auto`
+
+Run against the real PDFs through a throwaway extraction-only durable (see
+[`vendor-contact-design.md`](vendor-contact-design.md)). Ground truth was read off the documents
+first, so these are scored, not eyeballed.
+
+| | `2026-07-28 Lantern Labs Pte. Ltd.` | `2026-07-24 Anthropic, PBC` |
+| --- | --- | --- |
+| Address | `11 COLLYER QUAY` / `#17-00`, SINGAPORE 049317 ✅ | `548 Market Street` / `PMB 90375`, San Francisco, California 94104, United States ✅ |
+| Phone | `+65 8801 4107` ✅ | empty ✅ (none printed) |
+| Tax number | `202117064E` ✅ (the vendor's UEN) | `M90375715E` ✅ — Anthropic's, **not** workFlowers' `202442050M` |
+| Bank account | `8311123520` ✅ | **empty** ✅ — the cheque "PAYMENT ADDRESS" PO Box was correctly *not* treated as a remittance block |
+| SWIFT | `CMFGUS33` ✅ | empty ✅ |
+| Bank name | ⚠️ `Lantern Labs Pte. Ltd.` — the account **holder**, not the bank. Prompt now says so explicitly. Log-only field, never written to Xero. | empty ✅ |
+| Currency | ⚠️ `US$` on one run, `USD` on another | `SGD` ✅ |
+
+Anthropic's invoice is the hard case and it passed: the vendor and recipient addresses interleave
+line-by-line in a two-column header, and two tax numbers sit on the page. Both were attributed
+correctly.
+
+> ### ⚠️ Non-required output fields are silently dropped
+>
+> The first run of this harness returned **only the nine `isRequired: true` fields** — no address,
+> no phone, no tax number, no bank details — from an invoice that plainly prints all of them. AI by
+> Zapier omits an `isRequired: false` output field from the structured response entirely; the model
+> is never asked for it.
+>
+> **Every vendor-detail field is therefore `isRequired: true`,** and the prompt carries the
+> counterweight: an empty string is always acceptable and is the right answer when the invoice
+> doesn't state the value. Anthropic's run is the evidence that this doesn't induce invention — all
+> three bank fields came back empty.
+>
+> This also explains a **pre-existing** gap: `Vendor Email Address` shipped as optional in version
+> `019faae7`, so `header.vendorEmail` has always been null in production. It is required now.
+
+**Currency is normalised in code, not trusted from the model.** `toCurrencyCode` maps `US$` → `USD`,
+`S$` → `SGD` and friends, takes a standalone three-letter token out of something like `USD 7,750`,
+and falls back to the org default on a bare `$`. An unnormalised `US$` would fail the
+bank-transaction currency comparison — raising a duplicate draft bill for an already-paid invoice —
+and then reach Xero as the bill's currency.
 
 ## ⚠️ `new Date()` in the workflow body is a hard error
 

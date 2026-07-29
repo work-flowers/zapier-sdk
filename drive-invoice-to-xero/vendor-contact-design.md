@@ -192,10 +192,12 @@ The full read of the matched contact is needed because `summaryOnly=true` omits 
    (contacts can be archived but not hard-deleted, so a test contact leaves a residue). The
    fill-empty-only rule is designed so the answer doesn't change correctness, but it should be
    confirmed against a throwaway contact before anyone relaxes that rule.
-2. **Extraction quality for the new fields is unproven at `standard/auto`.** Per repo rule 7 the
-   tier is not to be raised without a failing test; the README's verified-cases table needs a
-   column for these fields. See "What the real invoices actually contain" below for the ground
-   truth to check against, and "Testing the extraction" for how to run it.
+2. ~~**Extraction quality for the new fields is unproven at `standard/auto`.**~~ **Resolved** — run
+   against the real PDFs; see the README's "Vendor-detail extraction" table. `standard/auto` reads
+   them correctly, including the two-column and two-tax-number traps, and leaves bank fields empty
+   on an invoice with no remittance block. Two defects were found and fixed: non-required output
+   fields are dropped by AI by Zapier entirely (so every field is now `isRequired: true`), and the
+   currency came back as `US$` on one run (now normalised in code by `toCurrencyCode`).
 3. **Pagination.** 130 contacts fit one page at `pageSize=200`. Past ~1000 this needs a loop.
 
 ## What the real invoices actually contain
@@ -235,11 +237,10 @@ Testing must not write to Xero, so it cannot be done by running this workflow. T
    `file_or_folder_by_id` action (`.file` in the response); it stays valid for hours. Delete the
    workflow afterwards with `delete_workflow`.
 
-   One such harness is already published and left in place:
-   **`019fab22-1baf-79c7-9d7a-f960420c7599`** — *"TEMP invoice-extraction-harness (delete me)"*,
-   version `019fab23-5ed0-7708-963b-664bff5f5d03`. It carries the current prompt and all 21 output
-   fields, takes `{"label": "...", "invoice": "<hydrate url>"}`, and returns the vendor fields flat.
-   It is webhook-only, so it never fires by itself. Three runs were queued against it (Lantern Labs,
-   Eugene Thuraisingam, Anthropic) and were **still pending with no operations recorded ~8 minutes
-   later** — cold start or a queue stall, not diagnosed. Poll with
-   `get_trigger_run` → `get_run_output`, or re-fire with `run_workflow`. **Delete it when done.**
+   A harness of exactly this shape was used to produce the README's extraction table and has since
+   been deleted. Shape worth reusing: it carries the prompt and all 21 output fields, takes
+   `{"label": "...", "invoice": "<hydrate url>"}`, returns the raw result, and is webhook-only so it
+   never fires by itself. Fire with `run_workflow`, then `get_trigger_run` → `get_run_output`.
+   **A first run takes ~5 minutes** while the runtime installs dependencies, and shows `status:
+   started` with an empty `operations` array the whole time — that is a cold start, not a hang.
+   Subsequent runs take ~25 seconds.

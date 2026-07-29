@@ -175,6 +175,53 @@ function labeledValue(cell: unknown): string | null {
   return firstString(cell);
 }
 
+/**
+ * Currency symbols seen on these invoices, mapped to their ISO-4217 code.
+ * `$` alone is deliberately absent — it is ambiguous and falls back to the
+ * organisation default rather than guessing between USD and SGD.
+ */
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  "US$": "USD",
+  USD$: "USD",
+  "S$": "SGD",
+  SGD$: "SGD",
+  "€": "EUR",
+  "£": "GBP",
+  "¥": "JPY",
+  "A$": "AUD",
+  "NZ$": "NZD",
+  "HK$": "HKD",
+  "C$": "CAD",
+  "₹": "INR",
+  RM: "MYR",
+};
+
+/**
+ * Coerce whatever the model returned into an ISO-4217 code.
+ *
+ * The prompt asks for three letters, and usually gets them — but `standard/auto`
+ * returned `US$` for a Lantern Labs invoice that it had read as `USD` on a
+ * previous run, so this is not hypothetical. An unnormalised `US$` would fail
+ * the bank-transaction currency comparison (raising a duplicate draft bill for
+ * an invoice already paid) and then go to Xero as the bill's currency. Prompt
+ * wording alone can't be trusted with something this load-bearing.
+ *
+ * Returns null when nothing usable can be salvaged, so the caller applies its
+ * own default.
+ */
+function toCurrencyCode(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  const upper = s.toUpperCase().trim();
+  if (/^[A-Z]{3}$/.test(upper)) return upper;
+  for (const [symbol, code] of Object.entries(CURRENCY_SYMBOLS)) {
+    if (upper.startsWith(symbol.toUpperCase())) return code;
+  }
+  // "USD 7,750" / "7750 USD" — take a standalone three-letter token.
+  const token = /\b([A-Z]{3})\b/.exec(upper);
+  return token ? token[1] : null;
+}
+
 function toNumber(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
@@ -665,7 +712,7 @@ Read the whole document before answering. Every figure you return must appear on
 - The **vendor** is the party issuing the invoice, the party we owe. It is never the recipient (Company Flow Pte. Ltd. / workFlowers). Give the complete legal name including any designation such as \`Inc.\`, \`Pte. Ltd.\`, \`LLC\`.
 - Dates are ISO-8601 \`YYYY-MM-DD\`. When no due date is stated, repeat the invoice date.
 - \`Total Amount\` is the final payable figure after all taxes, discounts and charges: digits and decimal point only.
-- \`Currency\` is the ISO-4217 code of that total. Use the code the invoice actually states; only fall back to \`SGD\` when the document gives no indication at all.
+- \`Currency\` is the ISO-4217 code of that total: exactly three letters, such as \`USD\`, \`SGD\`, \`EUR\`. Never a symbol and never a mixture of the two — an invoice printing \`US$7,750\` is \`USD\`, one printing \`S$12.00\` is \`SGD\`. Use the code implied by what the invoice actually states; only fall back to \`SGD\` when the document gives no indication at all.
 - \`Tax Applied\` is true only when the invoice actually charges a tax line (GST, VAT, sales tax). A zero-rated, exempt, or reverse-charge invoice is false.
 - \`Line Amounts Are\` describes the unit prices in the line-item table: \`Inclusive\` when they already contain the tax, \`Exclusive\` when tax is added on top, \`NoTax\` when the invoice charges no tax at all. This decides whether Xero adds tax on top of the figures you return, so read the table's own labelling rather than assuming.
 
@@ -673,7 +720,7 @@ Read the whole document before answering. Every figure you return must appear on
 
 These populate the vendor's contact record in Xero. They describe **the vendor** — the party issuing the invoice — and never the recipient (Company Flow Pte. Ltd. / workFlowers), whose own address and bank account also appear on many invoices. When a document shows two addresses, the vendor's is the one next to the vendor's name in the header or footer, not the one under "Bill to", "Sold to" or "Customer".
 
-**Leave a field blank rather than guessing.** A blank field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
+**Return an empty string rather than guessing.** Every one of these fields is required, but an empty string is always an acceptable answer and is the RIGHT answer whenever the invoice does not state the value plainly. An empty field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
 
 Almost every invoice prints **both** parties' details, and a two-column header often sets them side by side so that the vendor's street and the recipient's street alternate line by line. Read the layout, not the reading order. The same goes for tax numbers: two on one page is normal. The vendor's is the one that belongs to the issuing entity — it frequently reappears in the payment instructions, for instance as a PayNow UEN — and it can be printed right next to the recipient's name, so proximity alone does not settle it.
 
@@ -688,7 +735,7 @@ Almost every invoice prints **both** parties' details, and a two-column header o
 Bank details are for paying the vendor, so read them only from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice" or "Payment instructions" section:
 
 - \`Vendor Bank Account Number\` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid. A postal **address** for mailing a cheque — often headed "Payment address" — is not a bank account: leave all three bank fields blank unless an actual account number or IBAN is printed. A routing, sort or ABA code is not an account number either.
-- \`Vendor Bank Name\` — the bank holding that account, **only if the invoice prints it**. Do not derive it from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; blank is the correct answer there.
+- \`Vendor Bank Name\` — the bank holding that account, **only if the invoice prints it**. This is a bank, never the vendor: a remittance block usually leads with the account holder's name, which is the vendor's own name, and that does not belong here. Do not derive the bank from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; empty is the correct answer there.
 - \`Vendor Bank SWIFT/BIC\` — the SWIFT or BIC code for that account.
 
 ## Line items
@@ -771,82 +818,95 @@ const OUTPUT_FIELDS = [
   },
   {
     name: "Vendor Email Address",
-    description: "Official email address of the vendor, typically in the header or footer. Blank if absent.",
-    type: "email",
-    isRequired: false,
+    description: "Official email address of the vendor, typically in the header or footer. Empty string if absent.",
+    type: "text",
+    isRequired: true,
   },
-  // Vendor contact details. All optional: a blank field is written to nobody's
-  // record, a wrong one is written to Xero and reused, so the prompt tells the
-  // model to leave them blank rather than guess.
+  // Vendor contact details.
+  //
+  // EVERY field here is `isRequired: true`, including `Vendor Email Address`,
+  // and that is not cosmetic. AI by Zapier drops a non-required output field
+  // from the structured response ENTIRELY — the model is never asked for it.
+  // Verified against real invoices: with these marked optional, the response
+  // came back with exactly the nine required fields and nothing else, on an
+  // invoice that plainly prints an address, a phone number, a UEN and a bank
+  // account. `Vendor Email Address` shipped optional in the deployed version,
+  // which is why it has never been populated.
+  //
+  // Required does not mean "invent something": the prompt says an empty string
+  // is always acceptable and is the right answer when the invoice doesn't state
+  // the value. Confirmed on Anthropic's invoice, which has no remittance block
+  // — all three bank fields came back empty rather than borrowing the cheque
+  // "PAYMENT ADDRESS" PO Box.
   {
     name: "Vendor Address Line 1",
     description:
       "Vendor's street address, first line, as printed. Never the recipient's address. Excludes city, state, postal code and country.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Address Line 2",
     description: "Vendor's street address, second line, when the invoice splits it across two. Blank otherwise.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor City",
     description: "Vendor's city or town.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor State/Region",
     description: "Vendor's state, province or region. Blank where the address has none.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Postal Code",
     description: "Vendor's postal or ZIP code, exactly as printed.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Country",
     description:
       "Vendor's country as stated on the invoice. Blank when not stated — never inferred from currency, phone code or postal format.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Phone",
     description: "Vendor's telephone number, digits and separators as printed.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Tax Number",
     description:
       "The vendor's own tax registration number (GST, VAT, UEN, ABN, EIN or local equivalent). Never the recipient's, never the invoice number.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Bank Account Number",
     description:
       "Account the vendor asks to be paid into, read only from an explicit remittance block. IBAN when stated, else the plain account number. Blank for card links, payment portals, direct debits, or an already-paid invoice.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Bank Name",
     description: "Bank holding the vendor's account, from the same remittance block.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
   {
     name: "Vendor Bank SWIFT/BIC",
     description: "SWIFT or BIC code for the vendor's account, from the same remittance block.",
     type: "text",
-    isRequired: false,
+    isRequired: true,
   },
 ];
 
@@ -915,7 +975,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       invoiceNumber: firstString(raw["Invoice Number"]),
       invoiceDate,
       dueDate: toIsoDate(raw["Invoice Due Date"]) ?? invoiceDate,
-      currency: (firstString(raw["Currency"]) ?? "SGD").toUpperCase(),
+      currency: toCurrencyCode(raw["Currency"]) ?? "SGD",
       total: toNumber(raw["Total Amount"]),
       taxApplied: raw["Tax Applied"] === true || firstString(raw["Tax Applied"])?.toLowerCase() === "true",
       lineBasis: basis === "Inclusive" || basis === "Exclusive" ? basis : "NoTax",
