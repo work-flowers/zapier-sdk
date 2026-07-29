@@ -1,7 +1,7 @@
 {
   "name": "drive-invoice-to-xero",
   "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
-  "current_version_id": "019fab74-16e5-78b1-8934-34c3e720d7fe",
+  "current_version_id": "019fad1c-e716-7b9e-b6bc-133a30efb300",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
   "enabled": true,
   "is_private": false,
@@ -51,8 +51,10 @@
       "id": "01KCDV6Y17F31J2Q6S1EMYZC8K",
       "name": "Xero Bank Transactions",
       "role": "Read-only here. The match source for 'has this invoice already been paid?'. Chosen over a live Xero API query because Table reads cost no tasks.",
-      "owned_by": "the classic Zap 'Process New Reconciled Transactions' (Xero bank_transaction trigger -> TableCLIAPI create_record)",
-      "coupling_warning": "This workflow is only as correct as that Zap is current. On 2026-07-28 that Zap's create step was paused, so the Table had fallen ~5 days behind: 7 of 43 live SPEND transactions in 2026-06-01..2026-07-28 were missing, all of them the newest. The visible symptom was NOT an error — it was duplicate draft bills in Xero, deleted by hand. `tableStale` in the run output is the tripwire."
+      "owned_by": "the durable workflow `xero-bank-transactions-to-zapier-table` (019fa885-7d5e-73a8-b601-4ec31290bf4a), which replaced the classic Zap 'Process New Reconciled Transactions'",
+      "coupling_warning": "This workflow is only as correct as that one is current. The predecessor classic Zap's create step was paused on 2026-07-28, so the Table fell ~5 days behind: 7 of 43 live SPEND transactions in 2026-06-01..2026-07-28 were missing, all of them the newest. The visible symptom was NOT an error — it was duplicate draft bills in Xero, deleted by hand. That gap is NOT being backfilled, by design (a polling trigger primes its dedupe on first poll); see the feeder's known_gaps.",
+      "table_stale_flag_note": "`tableStale` measures the Table's OWN freshness as of 019fad1c: a `latest-bank-transaction` step reads the newest row (free — no filters, sort date desc, pageSize 1) and the flag trips when it is more than TABLE_STALE_AFTER_DAYS (14) behind the stepped `today`. An unreadable newest row also counts as stale, since an empty table, a renamed column and a failed read are indistinguishable from this side. The run output also carries `tableLagDays`, `tableLatestRowDate` and `windowRowsConsidered` so a run can be judged without re-querying.",
+      "table_stale_flag_history": "Before 019fad1c the flag was `windowRows === 0` — whether the invoice's own match window came back empty. That is a much weaker question: the window is [min(invoiceDate,dueDate)-7, max(invoiceDate,dueDate)+7], so for a freshly received unpaid invoice on 31-day terms it is [D-7, D+38] and ~39 of 46 days lie in the FUTURE where no transaction can exist. It therefore only inspected an ~8-day past slice, in which 'no payments recorded this week' is indistinguishable from 'feeder dead'. It misfired both ways in one day (2026-07-29): INV-26-0007 set tableStale true against a demonstrably healthy feeder (published 2026-07-28T11:39:22Z, trigger active, zero runs because no new Xero bank transaction had been CREATED since 2026-07-21), while INV-26-0006 read false only because one CPF row sat on its boundary date. The 14-day threshold sits deliberately above the largest legitimate quiet stretch observed, 8 days over 2026-07-21..2026-07-29."
     }
   },
   "ai_model": {
@@ -71,9 +73,14 @@
   "determinism_note": "The workflow body runs in the durable runtime's GUARDED mode, where `Date` is replaced by a Proxy whose `construct` trap throws DeterminismViolation *before* it inspects its arguments — so a deterministic `new Date(Date.UTC(y, m, d))` is rejected just as hard as a clock read. Version 019fa878 had three such calls in the guarded body and failed on EVERY PDF invoice (`toIsoDate` threw on the first line after the AI step); the only path that worked was the non-PDF skip, which returns before reaching it, and that was the one end-to-end test run before publishing. Date handling is now integer arithmetic — `Date` is not referenced anywhere in the file, `Date.UTC` included, even though the Proxy's `get` trap leaves it unguarded — and the clock is read inside a `today` step. Verified against native `Date` across 47,847 days (1970..2100) in both directions before publishing.",
   "version_history": [
     {
+      "id": "019fad1c-e716-7b9e-b6bc-133a30efb300",
+      "created_at": "2026-07-29T09:03:00.525Z",
+      "note": "Replace the tableStale tripwire. It now measures the Table's own freshness — a new free `latest-bank-transaction` step reads the newest row (sort date desc, pageSize 1) and the flag trips at more than TABLE_STALE_AFTER_DAYS (14) behind the stepped `today` — instead of asking whether the invoice's match window came back empty, which for a freshly received invoice is mostly a future-dated window and so misfired both ways on 2026-07-29. See tables.bank_transactions.table_stale_flag_history. The `today` step is now UNCONDITIONAL (it previously ran only when the model gave no usable invoice date) because the lag needs today on every run; it costs no task. Adds `tableLagDays`, `tableLatestRowDate` and `windowRowsConsidered` to the run output. No task-cost change: Table reads are free. Published from draft 019fad1b (base 019fab74) so trigger, connections, dependency pins and enabled state carried over from live. Validated before publish: tsc clean; no `Date` reference outside the stepped `today` clock read; the new logic lifted verbatim into a throwaway private durable and run against the real Table in the real 0.10.1 runtime — returned today 2026-07-29, latestRowDate 2026-07-21, tableLagDays 8, tableStale FALSE, i.e. the correct verdict under the exact conditions that made the old heuristic report true. Verified after publish: deployed source byte-matches workflow.ts, trigger status active on folder 14Rpcj…, enabled true, 0 open drafts. NOT yet exercised by a live PDF run."
+    },
+    {
       "id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
       "created_at": "2026-07-28T11:24:27.030Z",
-      "note": "Initial migration. Failed on every PDF invoice with DeterminismViolation — see determinism_note. Its one and only run was Lantern Labs INV-26-0006."
+      "note": "Initial migration. Failed on every PDF invoice with DeterminismViolation — see determinism_note. Its one and only run (019fa97a, 2026-07-28T16:06:14Z) was Lantern Labs INV-26-0006, which therefore needed a manual replay on 019faae7."
     },
     {
       "id": "019faae7-848d-764e-b6a3-075e28c77566",
@@ -83,9 +90,43 @@
     {
       "id": "019fab74-16e5-78b1-8934-34c3e720d7fe",
       "created_at": "2026-07-29T01:18:59.813Z",
-      "note": "Vendor-contact resolution on the create-bill branch. Before raising a bill the workflow lists Xero contacts (one GET /Contacts, 130 rows in a single page) and resolves the vendor with the same normalizeVendor/vendorMatches pair used for bank transactions: one match -> bind the bill to the contact's STORED name and fill only its EMPTY fields; several matches -> change nothing, log for a human merge; no match -> create the contact with the address, phone, tax number and bank details read off the invoice. `new_bill` has no contact-id input, so binding by the resolved name is the whole point — passing the invoice's spelling is what minted the four duplicate contact pairs. Bank details are write-once: a stored account is never overwritten, and a disagreement is reported as `contact.bankConflict` rather than applied, because an emailed invoice asking to be paid into a new account is what invoice-redirection fraud looks like. Contacts are written through _zap_raw_request (Zapier's `contact` action flattens to a single address). Also makes every vendor-detail output field isRequired: true — AI by Zapier drops an isRequired: false output field from the structured response entirely, which is why header.vendorEmail was always null in 019faae7. Published from a draft (019fab72) so the trigger, connections, dependency pins and enabled state were carried over from live rather than retyped. Validated before publish: tsc clean; 47 offline assertions against the real 130-contact ledger with the resolver transpiled out of workflow.ts; no `Date` reference outside the stepped `today` clock read; every sdk.* call inside a ctx.step. NOT yet exercised by a live PDF run — see the README's untested-control note on bank fields."
+      "note": "Vendor-contact resolution on the create-bill branch. Before raising a bill the workflow lists Xero contacts (one GET /Contacts, 130 rows in a single page) and resolves the vendor with the same normalizeVendor/vendorMatches pair used for bank transactions: one match -> bind the bill to the contact's STORED name and fill only its EMPTY fields; several matches -> change nothing, log for a human merge; no match -> create the contact with the address, phone, tax number and bank details read off the invoice. `new_bill` has no contact-id input, so binding by the resolved name is the whole point — passing the invoice's spelling is what minted the four duplicate contact pairs. Bank details are write-once: a stored account is never overwritten, and a disagreement is reported as `contact.bankConflict` rather than applied, because an emailed invoice asking to be paid into a new account is what invoice-redirection fraud looks like. Contacts are written through _zap_raw_request (Zapier's `contact` action flattens to a single address). Also makes every vendor-detail output field isRequired: true — AI by Zapier drops an isRequired: false output field from the structured response entirely, which is why header.vendorEmail was always null in 019faae7. Published from a draft (019fab72) so the trigger, connections, dependency pins and enabled state were carried over from live rather than retyped. Validated before publish: tsc clean; 47 offline assertions against the real 130-contact ledger with the resolver transpiled out of workflow.ts; no `Date` reference outside the stepped `today` clock read; every sdk.* call inside a ctx.step. EXERCISED LIVE 2026-07-29 by run 019fac4a (Lantern Labs INV-26-0007, SGD 60.43) — 46s end to end, extraction 10/10 against the PDF, contact resolved via `exact` to the single existing record (no duplicate minted), enrichment `updated` filling tax number + address + phone, all three correct. Two controls closed by that run: (1) the bank-field control the README shipped as untested — INV-26-0007 offers ONLY a PayNow QR and a Wise link, and the model returned no bank account on a contact whose stored BankAccountDetails was empty, so a hallucinated account would have been written and reported; (2) toCurrencyCode normalising the model's raw `SGD$` (and `US$` on INV-26-0006) to an ISO code. Still unproven: header.vendorEmail — null on both live runs, correctly, because neither Lantern Labs invoice prints an email address."
     }
   ],
+  "live_runs": {
+    "note": "Production runs to date. Both invoices arrived by email from me@petergao.com and were filed into the Invoices folder by gmail-attachments-to-drive-by-type. Timestamps UTC.",
+    "runs": [
+      {
+        "run_id": "019fa97a-04fe-7ba6-8a21-4f82d5b342bd",
+        "version_id": "019fa878-0a14-76b8-8be6-2c6c1d5c6af6",
+        "started_at": "2026-07-28T16:06:14.008Z",
+        "finished_at": "2026-07-28T16:06:42.427Z",
+        "invoice": "Lantern Labs INV-26-0006",
+        "status": "failed",
+        "outcome": "DeterminismViolation: Non-deterministic API \"new Date()\" called in GUARDED mode, at toIsoDate. The polling trigger consumed the file, so this needed the manual replay below."
+      },
+      {
+        "run_id": "019faaed-e7ee-7e6f-9beb-ea4190d7db41",
+        "version_id": "019faae7-848d-764e-b6a3-075e28c77566",
+        "started_at": "2026-07-28T22:52:25.963Z",
+        "finished_at": "2026-07-28T22:53:07.129Z",
+        "invoice": "Lantern Labs INV-26-0006, USD 7750.00, due 2026-08-28",
+        "status": "finished",
+        "outcome": "draft-bill-created, invoice 99ea5905-aa60-4327-bcb7-984c1013e3e3. Manual replay of the failed run above with its original trigger payload. tableStale false (1 row: CPF 2026-07-21). No contact block — this version predates vendor-contact resolution. Extraction 10/10, including taking the invoice date 28/07/26 rather than the Billing Period start 03/07/26."
+      },
+      {
+        "run_id": "019fac4a-a524-70e9-affe-163529f56810",
+        "version_id": "019fab74-16e5-78b1-8934-34c3e720d7fe",
+        "started_at": "2026-07-29T05:13:20.929Z",
+        "finished_at": "2026-07-29T05:14:06.829Z",
+        "invoice": "Lantern Labs INV-26-0007, SGD 60.43, due 2026-08-29, FedEx pass-through",
+        "status": "finished",
+        "outcome": "draft-bill-created, invoice 1b61a648-859f-46e2-a430-fc5609d0f673. Email to bill 3m04s, fully hands-off. Extraction 10/10. Contact via `exact` -> 699fb6bb-960d-4a7f-ac43-3185e242890a, enrichment `updated`, filled [tax number, address, phone], no bankConflict. tableStale TRUE — a false positive against a healthy feeder; see tables.bank_transactions.table_stale_flag_note.",
+        "task_cost_estimate": 7
+      }
+    ],
+    "known_gap_from_sequencing": "INV-26-0006 is the invoice carrying Lantern Labs' remittance block (account 8311123520, SWIFT CMFGUS33, routing 026073008), and it ran on 019faae7, which had no contact logic. INV-26-0007 prints no bank details. So the Xero contact holds address, phone and UEN but NO bank account. Fill-empty-only means the next Lantern Labs invoice printing a remittance block will populate it."
+  },
   "replaces_classic_zap": {
     "title": "Record New Bills in Xero",
     "old_shape": "Drive trigger -> PDFs-only filter -> AI invoice header -> rename -> AI Agent 'Xero Invoice Transaction Matcher' (run_behavior, App222036CLIAPI@3.1.0, agent d9d3381a-6aeb-4221-b5f4-3623f68ea7cc) -> Paths -> second AI call for line items -> Paths on tax -> two Create Bill branches / Upload Attachment",
@@ -93,5 +134,5 @@
     "status": "Dennis is turning the classic Zap off. Both were subscribed to the same folder."
   },
   "created_at": "2026-07-28T11:24:08.773Z",
-  "version_created_at": "2026-07-29T01:18:59.813Z"
+  "version_created_at": "2026-07-29T09:03:00.525Z"
 }
