@@ -254,9 +254,26 @@ first, so these are scored, not eyeballed.
 | Bank name | ⚠️ `Lantern Labs Pte. Ltd.` — the account **holder**, not the bank. Prompt now says so explicitly. Log-only field, never written to Xero. | empty ✅ |
 | Currency | ⚠️ `US$` on one run, `USD` on another | `SGD` ✅ |
 
-Anthropic's invoice is the hard case and it passed: the vendor and recipient addresses interleave
-line-by-line in a two-column header, and two tax numbers sit on the page. Both were attributed
-correctly.
+Anthropic's invoice is the hard case for **layout** and it passed: the vendor and recipient
+addresses interleave line-by-line in a two-column header, and two tax numbers sit on the page. Both
+were attributed correctly, and that result holds regardless of anything else about the document.
+
+> **It is not a valid control for the bank fields, though.** That invoice was already paid by card
+> the moment it was issued and should never have reached the Invoices folder at all — the gap that
+> let it through has since been closed in
+> [`gmail-attachments-to-drive-by-type`](../gmail-attachments-to-drive-by-type/), which now
+> classifies per email and files a settled invoice as a receipt. So "no remittance block, bank
+> fields correctly empty" was demonstrated on a document outside this Zap's real population.
+>
+> **The control still needs running on a genuinely outstanding invoice that offers only a portal or
+> card link** — `2026-07-02 Slack Technologies Limited` or `2026-07-15 Vanta Inc` are the
+> candidates. Until then, treat "does not invent a bank account" as untested for the invoices that
+> actually reach the create-bill branch.
+
+Which cuts the other way too, and matters for the write-once rule: the invoices that reach this
+branch are by definition **unpaid**, and an unpaid invoice usually prints the account it wants
+paying into. Both genuinely outstanding invoices read for ground truth (Lantern Labs, Eugene
+Thuraisingam) carry a full remittance block. The bank-detail path will fire often, not rarely.
 
 > ### ⚠️ Non-required output fields are silently dropped
 >

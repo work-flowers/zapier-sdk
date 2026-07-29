@@ -199,6 +199,13 @@ The full read of the matched contact is needed because `summaryOnly=true` omits 
    fields are dropped by AI by Zapier entirely (so every field is now `isRequired: true`), and the
    currency came back as `US$` on one run (now normalised in code by `toCurrencyCode`).
 3. **Pagination.** 130 contacts fit one page at `pageSize=200`. Past ~1000 this needs a loop.
+4. **The "no remittance block" control has not been run on a representative invoice.** It was
+   demonstrated on Anthropic's, which was already card-paid and does not belong in this Zap's
+   population at all. Re-run it on an outstanding invoice that offers only a portal or card link —
+   `2026-07-02 Slack Technologies Limited` or `2026-07-15 Vanta Inc` — and confirm the three bank
+   fields come back empty. This is the one safety property that most wants a representative test,
+   because every field is now `isRequired: true` and the model is being asked for a bank account on
+   every single invoice.
 
 ## What the real invoices actually contain
 
@@ -209,12 +216,20 @@ to check any extraction run against, and it reframes where the risk actually sit
 | --- | --- | --- |
 | `2026-07-28 Lantern Labs Pte. Ltd.` | Account `8311123520`, SWIFT `CMFGUS33`, US routing `026073008` | **Names no bank at all** — the correct `Vendor Bank Name` is blank. Inferring "Community Federal Savings Bank" from the BIC breaks the never-infer rule. Also offers a Wise payment link alongside the transfer block, and prints the recipient's address. |
 | `2026-06-26 EUGENE THURAISINGAM ASIA LLC` | `DBS Account No.: 072-144543-3`, SWIFT `DBSSSGSG`, PayNow UEN | The **vendor's** GST registration `202552813M` is printed directly beside "Dennis Chiuten", so proximity to the recipient's name points the wrong way. The PayNow UEN repeats it, which is the reliable tell. |
-| `2026-07-24 Anthropic, PBC` | **None** — a Stripe link and a cheque "PAYMENT ADDRESS" PO Box | Two tax numbers on the page (Anthropic's `M90375715E`, workFlowers' `202442050M`). Vendor and recipient addresses interleave line-by-line in a two-column header. The "PAYMENT ADDRESS" heading reads like a remittance block but carries no account. |
+| `2026-07-24 Anthropic, PBC` ⚠️ *not representative — see below* | **None** — a Stripe link and a cheque "PAYMENT ADDRESS" PO Box | Two tax numbers on the page (Anthropic's `M90375715E`, workFlowers' `202442050M`). Vendor and recipient addresses interleave line-by-line in a two-column header. The "PAYMENT ADDRESS" heading reads like a remittance block but carries no account. |
+
+⚠️ **Anthropic's invoice was paid by card on issue and should never have been in the Invoices folder.**
+The upstream gap that filed it there is closed — [`gmail-attachments-to-drive-by-type`](../gmail-attachments-to-drive-by-type/)
+now classifies per email and sends a settled invoice to Paid Receipts. Its *layout* findings stand
+(they are properties of the document), but it cannot stand in for "an outstanding invoice with no
+bank block".
 
 Three things follow:
 
-- **Bank details are real, not hypothetical.** Two of three carry a genuine account number, so the
-  write-once rule and the mismatch tripwire earn their keep from day one.
+- **Bank details are real, and common.** Both genuinely outstanding invoices here carry a full
+  remittance block — which stands to reason, since an unpaid invoice prints the account it wants
+  paying into, and unpaid is the only kind that reaches the create-bill branch. The write-once rule
+  and the mismatch tripwire will be exercised routinely, not occasionally.
 - **The dominant risk is attribution, not fabrication.** Every one of these prints both parties'
   details; two carry two tax numbers. Nothing here needs inventing — it needs correctly assigning.
 - **Passing the PDF as a rendered file matters.** Text extraction collapses Anthropic's two-column
