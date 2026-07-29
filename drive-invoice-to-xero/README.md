@@ -11,10 +11,10 @@ which is what files invoice PDFs into that folder in the first place.
 > **Bills are always created as `draft`.** Nothing here posts to the ledger or pays anything.
 > Every outcome is meant to be reviewed in Xero.
 
-> ⚠️ **The vendor-contact handling described below is committed but NOT yet published.** The
-> deployed version is `019faae7`, which still passes the invoice's own spelling of the vendor
-> straight to `new_bill`. `zap.json` deliberately still records `019faae7`; it is refreshed only
-> once a version is actually live. See [Publishing this change](#publishing-this-change).
+> ⚠️ **Vendor-contact handling is live as of `019fab74` (2026-07-29) but has not yet seen a real
+> invoice.** It was validated offline — see [Contact resolution](#contact-resolution) — and the
+> determinism and typecheck gates are green, but no PDF has gone through the create-bill branch on
+> this version. Watch the first run, and note the untested bank-field control below.
 
 ## What it does
 
@@ -346,33 +346,48 @@ Advanced default (which exists mainly to enable tool calls; this step makes none
 pinned `google/gemini-2.5-flash-lite` explicitly; the tier sentinel on built-in credentials
 replaces that. Re-run the table above before changing tier.
 
-## Publishing this change
+## Publishing
 
-There were no Zapier CLI credentials on the machine this was written on, so the contact work is
-committed but unpublished. To ship it, from this directory:
+**Publish through a draft, not `publish-workflow-version`.** That is how `019fab74` shipped, and it
+is the recommended path for any change here that touches only `workflow.ts`:
 
 ```bash
-SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}')"
+zapier-sdk --experimental create-workflow-draft 019fa877-c2c2-72aa-962d-525aa58ebf0e --json
 
-npx zapier-sdk --experimental publish-workflow-version 019fa877-c2c2-72aa-962d-525aa58ebf0e "$SOURCE_FILES" \
-  --dependencies '{"zod":"4.4.3","@zapier/zapier-sdk":"0.91.0"}' \
-  --zapier-durable-version 0.10.1 \
-  --connections '{"gdrive":{"connectionId":"02eb8724-3fc7-8edc-9b30-be83af0b327f"},"xero_wf":{"connectionId":"02336808-1736-878b-a0a8-87e02bb0aec3"}}' \
-  --trigger '<the trigger object from get-workflow-version>' \
-  --enabled --json
+SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}')"
+zapier-sdk --experimental update-workflow-draft <workflow-id> <draft-id> "$SOURCE_FILES" \
+  --draft-revision <revision from create> --json
+
+zapier-sdk --experimental publish-workflow-draft <workflow-id> <draft-id> \
+  --draft-revision <revision from update> --json
 ```
 
-Then refresh `zap.json` (`current_version_id`, `version_created_at`, a `version_history` entry) and
-drop the "not yet published" banner at the top of this file.
+A fresh draft **forks the live version's trigger, connections, dependency pins and durable version**,
+and `update-workflow-draft` leaves any flag you omit at its stored value. So passing source alone
+carries all of that over verbatim, which removes the two ways a direct publish goes wrong here:
 
-- **Flag names are kebab-case** — `--zapier-durable-version`, `--app-versions`. The `workflows-*`
-  skills were validated against SDK CLI 0.54.3 and document the snake_case spellings; 0.67.5's own
-  `--help` is the authority.
-- **Fetch the trigger object rather than retyping it** — `get-workflow-version <workflow-id>
-  019faae7-848d-764e-b6a3-075e28c77566 --json` — and pass it through unchanged. Dropping it
-  silently unbinds the Drive poll.
+- **It cannot silently unbind the Drive poll.** `publish-workflow-version` without `--trigger` drops
+  the trigger while the Zap still reports `enabled: true`, so it simply stops firing.
+- **It sidesteps the connection-shape mismatch.** Reads return `{"gdrive":{"connection_id":…}}`
+  (snake_case); the publish flags document `connectionId` (camelCase). Not having to retype the
+  bindings means not having to be right about which one the writer accepts.
+
+Publishing consumes the draft (`status: "discarded"`), and omitting `--enabled` preserves the
+current enabled state — pass it only to change that. Afterwards, refresh `zap.json`
+(`current_version_id`, `version_created_at`, a `version_history` entry) and verify with
+`get-workflow` that `triggers[0].status` is still `active`.
+
+- **Flag names are kebab-case** — `--zapier-durable-version`, `--draft-revision`, `--app-versions`.
+  The `workflows-*` skills were validated against SDK CLI 0.54.3 and document the snake_case
+  spellings; the installed CLI's own `--help` is the authority.
+- **Gate every publish on `npm run build`.** Publishing does **not** typecheck, so `tsc` is the only
+  thing standing between a type error and a live version.
+- **Grep for `Date`, `Math.random`, `fetch` and `setTimeout` outside a `ctx.step` before publishing.**
+  Cheap, and it is the one failure mode that has actually taken this Zap down — see below.
 - **Test with a real PDF payload, not a skip-path one.** The determinism bug below survived
-  publishing precisely because the only end-to-end test returned at the PDF gate.
+  publishing precisely because the only end-to-end test returned at the PDF gate. Note that a real
+  `run-durable` test writes to production: it renames the Drive file and can create a Xero contact
+  and a draft bill.
 - A polling trigger consumes each file once, so pair any failed run with a manual replay.
 
 ## Maintainer notes

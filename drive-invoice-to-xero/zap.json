@@ -1,7 +1,7 @@
 {
   "name": "drive-invoice-to-xero",
   "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
-  "current_version_id": "019faae7-848d-764e-b6a3-075e28c77566",
+  "current_version_id": "019fab74-16e5-78b1-8934-34c3e720d7fe",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
   "enabled": true,
   "is_private": false,
@@ -79,6 +79,11 @@
       "id": "019faae7-848d-764e-b6a3-075e28c77566",
       "created_at": "2026-07-28T22:45:27.311Z",
       "note": "Fix the guarded-mode `new Date()` calls: integer date arithmetic (`daysFromCivil`/`isoDateFromEpochMs`/`daysInMonth`), clock moved into a `today` step. `toIsoDate` now genuinely rejects an impossible date — the old NaN check never fired, because Date.UTC normalises overflow instead of failing, so a month like `2026-13-05` was handed straight to Xero as a bill date. Verified by replaying the failed Lantern Labs run: draft bill 99ea5905-aa60-4327-bcb7-984c1013e3e3."
+    },
+    {
+      "id": "019fab74-16e5-78b1-8934-34c3e720d7fe",
+      "created_at": "2026-07-29T01:18:59.813Z",
+      "note": "Vendor-contact resolution on the create-bill branch. Before raising a bill the workflow lists Xero contacts (one GET /Contacts, 130 rows in a single page) and resolves the vendor with the same normalizeVendor/vendorMatches pair used for bank transactions: one match -> bind the bill to the contact's STORED name and fill only its EMPTY fields; several matches -> change nothing, log for a human merge; no match -> create the contact with the address, phone, tax number and bank details read off the invoice. `new_bill` has no contact-id input, so binding by the resolved name is the whole point — passing the invoice's spelling is what minted the four duplicate contact pairs. Bank details are write-once: a stored account is never overwritten, and a disagreement is reported as `contact.bankConflict` rather than applied, because an emailed invoice asking to be paid into a new account is what invoice-redirection fraud looks like. Contacts are written through _zap_raw_request (Zapier's `contact` action flattens to a single address). Also makes every vendor-detail output field isRequired: true — AI by Zapier drops an isRequired: false output field from the structured response entirely, which is why header.vendorEmail was always null in 019faae7. Published from a draft (019fab72) so the trigger, connections, dependency pins and enabled state were carried over from live rather than retyped. Validated before publish: tsc clean; 47 offline assertions against the real 130-contact ledger with the resolver transpiled out of workflow.ts; no `Date` reference outside the stepped `today` clock read; every sdk.* call inside a ctx.step. NOT yet exercised by a live PDF run — see the README's untested-control note on bank fields."
     }
   ],
   "replaces_classic_zap": {
@@ -88,5 +93,5 @@
     "status": "Dennis is turning the classic Zap off. Both were subscribed to the same folder."
   },
   "created_at": "2026-07-28T11:24:08.773Z",
-  "version_created_at": "2026-07-28T22:45:27.311Z"
+  "version_created_at": "2026-07-29T01:18:59.813Z"
 }
