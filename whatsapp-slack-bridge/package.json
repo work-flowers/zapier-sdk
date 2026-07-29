@@ -1,0 +1,15 @@
+{
+  "name": "whatsapp-slack-bridge",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions workflow.inbound.ts workflow.outbound.ts workflow.status.ts"
+  },
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.91.0",
+    "@zapier/zapier-durable": "0.11.0"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
