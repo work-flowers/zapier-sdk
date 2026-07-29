@@ -11,6 +11,11 @@ which is what files invoice PDFs into that folder in the first place.
 > **Bills are always created as `draft`.** Nothing here posts to the ledger or pays anything.
 > Every outcome is meant to be reviewed in Xero.
 
+> ⚠️ **The vendor-contact handling described below is committed but NOT yet published.** The
+> deployed version is `019faae7`, which still passes the invoice's own spelling of the vendor
+> straight to `new_bill`. `zap.json` deliberately still records `019faae7`; it is refreshed only
+> once a version is actually live. See [Publishing this change](#publishing-this-change).
+
 ## What it does
 
 1. **Trigger** — Google Drive *New File in Folder* on **Invoices**, one run per file.
@@ -26,13 +31,14 @@ which is what files invoice PDFs into that folder in the first place.
 6. **Either / or:**
    - **Matched** → upload the PDF as an attachment on that Xero bank transaction. Done.
    - **Not matched** → check Xero for an existing bill with this invoice number, and if there
-     isn't one, create a **draft bill**. See [Line items](#line-items).
+     isn't one, resolve the vendor's **contact** (see [Vendor contacts](#vendor-contacts)) and
+     create a **draft bill** against it. See [Line items](#line-items).
 
 ```mermaid
 flowchart TD
     T["📄 Google Drive: New File in Folder<br/><i>Invoices · one run per file</i>"] --> G{"PDF?<br/>not trashed?"}
     G -- no --> X["⏹ skip"]
-    G -- yes --> AI["🤖 AI by Zapier · get_completion<br/><b>ONE call, PDF as file input</b><br/>→ vendor · number · dates · currency · total<br/>· tax flag · tax basis · line items"]
+    G -- yes --> AI["🤖 AI by Zapier · get_completion<br/><b>ONE call, PDF as file input</b><br/>→ vendor · number · dates · currency · total<br/>· tax flag · tax basis · line items<br/>· vendor address · phone · tax no. · bank"]
     AI --> V{"vendor<br/>extracted?"}
     V -- no --> X2["⏹ skip — file left alone"]
     V -- yes --> R["Google Drive<br/>rename → '&lt;invoice date&gt; &lt;vendor&gt;'"]
@@ -42,7 +48,14 @@ flowchart TD
     M -- yes --> A["📎 Xero · upload_attachment<br/>on the bank transaction"]
     M -- no --> D{"bill already in Xero<br/>with this invoice number?"}
     D -- "yes, live" --> X3["⏹ skip — duplicate"]
-    D -- no --> L{"line items reconcile<br/>to the invoice total?"}
+    D -- no --> C["📇 GET /Contacts<br/>resolve the vendor"]
+    C --> CT{"how did it<br/>resolve?"}
+    CT -- "one match" --> CE["fill only its EMPTY fields<br/><i>bill binds to the STORED name</i>"]
+    CT -- "several" --> CA["⚠️ change nothing<br/>log for a human merge"]
+    CT -- "none" --> CC["🆕 create the contact<br/>with address · phone · tax no. · bank"]
+    CE --> L{"line items reconcile<br/>to the invoice total?"}
+    CA --> L
+    CC --> L
     L -- yes --> B["🧾 Xero · new_bill (draft)<br/>extracted lines"]
     L -- "no / none" --> B2["🧾 Xero · new_bill (draft)<br/>single line for the total"]
 ```
@@ -66,6 +79,66 @@ code for nothing.
 
 A window this wide is only safe *because* the amount must match exactly. When more than one
 transaction still qualifies, the nearest by date wins and the count is logged.
+
+## Vendor contacts
+
+Full rationale and evidence: [`vendor-contact-design.md`](vendor-contact-design.md).
+
+`new_bill` binds a bill to a contact **by name**, and Xero creates a bare contact when nothing
+matches exactly. That is how the ledger acquired four duplicate pairs — `Aspire FT` alongside
+`Aspire FT Pte. Ltd.`, and the same for `Linear Orbit`, `N9 Offices` and `Private Venue Management`
+— and why contacts this Zap created carry no address, bank details or email at all.
+
+Before raising a bill the workflow now pulls the contact list (one `GET /Contacts`, 130 rows in a
+single page) and resolves the vendor with the **same** `normalizeVendor` / `vendorMatches` pair used
+for bank transactions:
+
+| Resolution | Contact action | Name used on the bill |
+| --- | --- | --- |
+| Exactly one normalised match | Fill **empty** fields only | The contact's **stored** name |
+| Several matches | **Nothing**, logged for a human merge | The invoice's spelling (unchanged behaviour) |
+| Containment match + vendor email domain agrees | Fill **empty** fields only | The contact's **stored** name |
+| No match | Create the contact with everything extracted | The invoice's spelling |
+
+Two things about this are load-bearing:
+
+- **The bill is created with the resolved contact's stored name.** Resolving a `ContactID` achieves
+  nothing on its own, because `new_bill` has no contact-id input — only `contact_name`. Passing the
+  invoice's spelling is exactly what mints the duplicates.
+- **Containment alone never binds.** Against bank transactions it is safe because an exact amount,
+  currency and date must also match. A contact has no such corroboration, and the same rule would
+  otherwise merge `LinkedIn` with `LinkedIn Ads`, or `PayPal` with `PAYPAL *FACEBOOK 35314369001 IE`.
+  The vendor email domain has to agree, or it is treated as no match.
+
+Xero's own search can't make this decision: `searchTerm` is an unranked substring `contains`, so
+`olar` returns both `Olar Software, Inc.` and `Polar Software, Inc.` — two unrelated companies.
+Suffix-stripped comparison keeps them apart; similarity scoring would not.
+
+### ⚠️ Bank details are write-once
+
+An emailed invoice asking to be paid into a new account is what invoice-redirection fraud looks
+like, and a contact's bank account outlives the bill that introduced it. So:
+
+- Bank details are written **only when creating a new contact**.
+- A stored account is **never** overwritten. When the invoice disagrees with it, the workflow leaves
+  the record alone and logs a warning naming both — the cheap tripwire — and surfaces it as
+  `contact.bankConflict` in the run output.
+
+The same fill-empty-only rule covers address, phone, tax number and email. Existing values are
+re-sent with every update, so a contact holding both a `STREET` and a `POBOX` address keeps both.
+Bank name and SWIFT/BIC are extracted but have nowhere to go: Xero's `BankAccountDetails` is one
+free-text field. They appear in the log and the run output only.
+
+### Cost
+
+Per run, on top of what this Zap already spends. The attach branch is unchanged at zero.
+
+| Case | Added tasks |
+| --- | --- |
+| Contact matched, nothing to add | +1 |
+| Contact matched, fields to fill | +3 (list, full read, write) |
+| No match, details extracted | +2 (list, create) |
+| No match, nothing extracted | +1 — the create is skipped, since `new_bill` would make the same bare contact for free |
 
 ## Line items
 
@@ -145,6 +218,84 @@ Vendor-suffix normalisation, line-item parsing, reconciliation and the match rul
 unit checks run against this same data; all passed. A non-PDF payload was run through the deployed
 runtime (`run-durable`) and skipped correctly.
 
+### Contact resolution
+
+Checked offline against the **real** 130-contact ledger (2026-07-28), with the resolver and payload
+builder transpiled straight out of `workflow.ts` rather than re-implemented — 47 assertions, all
+passing. What they establish:
+
+| Case | Result |
+| --- | --- |
+| The 8 unambiguous invoice vendors above | Resolve to exactly one contact |
+| `Aspire FT Pte. Ltd.`, `Private Venue Management Pte Ltd` | Correctly **ambiguous** — contacts left alone |
+| `Olar Software, Inc.` vs `Polar Software, Inc.` | Stay distinct |
+| `Wise Business Ltd` with no email | Containment found, **not** bound |
+| Same, with a `wise.com` email on both sides | Bound, `via: email-corroborated` |
+| Same, with a disagreeing domain | Not bound |
+| Enriching the real bare `Lantern Labs` record | Fills address/phone/bank/tax; both address types and all four phone rows survive |
+| A fully populated contact (`Ernest Choo`'s real shape) | Nothing written at all |
+| Invoice bank account differs from the stored one | Stored value kept, conflict reported |
+| Same account, different punctuation | Not a conflict |
+| Bank mismatch with nothing else to fill | Still reported |
+
+### Vendor-detail extraction, `standard/auto`
+
+Run against the real PDFs through a throwaway extraction-only durable (see
+[`vendor-contact-design.md`](vendor-contact-design.md)). Ground truth was read off the documents
+first, so these are scored, not eyeballed.
+
+| | `2026-07-28 Lantern Labs Pte. Ltd.` | `2026-07-24 Anthropic, PBC` |
+| --- | --- | --- |
+| Address | `11 COLLYER QUAY` / `#17-00`, SINGAPORE 049317 ✅ | `548 Market Street` / `PMB 90375`, San Francisco, California 94104, United States ✅ |
+| Phone | `+65 8801 4107` ✅ | empty ✅ (none printed) |
+| Tax number | `202117064E` ✅ (the vendor's UEN) | `M90375715E` ✅ — Anthropic's, **not** workFlowers' `202442050M` |
+| Bank account | `8311123520` ✅ | **empty** ✅ — the cheque "PAYMENT ADDRESS" PO Box was correctly *not* treated as a remittance block |
+| SWIFT | `CMFGUS33` ✅ | empty ✅ |
+| Bank name | ⚠️ `Lantern Labs Pte. Ltd.` — the account **holder**, not the bank. Prompt now says so explicitly. Log-only field, never written to Xero. | empty ✅ |
+| Currency | ⚠️ `US$` on one run, `USD` on another | `SGD` ✅ |
+
+Anthropic's invoice is the hard case for **layout** and it passed: the vendor and recipient
+addresses interleave line-by-line in a two-column header, and two tax numbers sit on the page. Both
+were attributed correctly, and that result holds regardless of anything else about the document.
+
+> **It is not a valid control for the bank fields, though.** That invoice was already paid by card
+> the moment it was issued and should never have reached the Invoices folder at all — the gap that
+> let it through has since been closed in
+> [`gmail-attachments-to-drive-by-type`](../gmail-attachments-to-drive-by-type/), which now
+> classifies per email and files a settled invoice as a receipt. So "no remittance block, bank
+> fields correctly empty" was demonstrated on a document outside this Zap's real population.
+>
+> **The control still needs running on a genuinely outstanding invoice that offers only a portal or
+> card link** — `2026-07-02 Slack Technologies Limited` or `2026-07-15 Vanta Inc` are the
+> candidates. Until then, treat "does not invent a bank account" as untested for the invoices that
+> actually reach the create-bill branch.
+
+Which cuts the other way too, and matters for the write-once rule: the invoices that reach this
+branch are by definition **unpaid**, and an unpaid invoice usually prints the account it wants
+paying into. Both genuinely outstanding invoices read for ground truth (Lantern Labs, Eugene
+Thuraisingam) carry a full remittance block. The bank-detail path will fire often, not rarely.
+
+> ### ⚠️ Non-required output fields are silently dropped
+>
+> The first run of this harness returned **only the nine `isRequired: true` fields** — no address,
+> no phone, no tax number, no bank details — from an invoice that plainly prints all of them. AI by
+> Zapier omits an `isRequired: false` output field from the structured response entirely; the model
+> is never asked for it.
+>
+> **Every vendor-detail field is therefore `isRequired: true`,** and the prompt carries the
+> counterweight: an empty string is always acceptable and is the right answer when the invoice
+> doesn't state the value. Anthropic's run is the evidence that this doesn't induce invention — all
+> three bank fields came back empty.
+>
+> This also explains a **pre-existing** gap: `Vendor Email Address` shipped as optional in version
+> `019faae7`, so `header.vendorEmail` has always been null in production. It is required now.
+
+**Currency is normalised in code, not trusted from the model.** `toCurrencyCode` maps `US$` → `USD`,
+`S$` → `SGD` and friends, takes a standalone three-letter token out of something like `USD 7,750`,
+and falls back to the org default on a bare `$`. An unnormalised `US$` would fail the
+bank-transaction currency comparison — raising a duplicate draft bill for an already-paid invoice —
+and then reach Xero as the bill's currency.
+
 ## ⚠️ `new Date()` in the workflow body is a hard error
 
 The first published version (`019fa878`) **failed on every PDF invoice** with:
@@ -195,8 +346,55 @@ Advanced default (which exists mainly to enable tool calls; this step makes none
 pinned `google/gemini-2.5-flash-lite` explicitly; the tier sentinel on built-in credentials
 replaces that. Re-run the table above before changing tier.
 
+## Publishing this change
+
+There were no Zapier CLI credentials on the machine this was written on, so the contact work is
+committed but unpublished. To ship it, from this directory:
+
+```bash
+SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}')"
+
+npx zapier-sdk --experimental publish-workflow-version 019fa877-c2c2-72aa-962d-525aa58ebf0e "$SOURCE_FILES" \
+  --dependencies '{"zod":"4.4.3","@zapier/zapier-sdk":"0.91.0"}' \
+  --zapier-durable-version 0.10.1 \
+  --connections '{"gdrive":{"connectionId":"02eb8724-3fc7-8edc-9b30-be83af0b327f"},"xero_wf":{"connectionId":"02336808-1736-878b-a0a8-87e02bb0aec3"}}' \
+  --trigger '<the trigger object from get-workflow-version>' \
+  --enabled --json
+```
+
+Then refresh `zap.json` (`current_version_id`, `version_created_at`, a `version_history` entry) and
+drop the "not yet published" banner at the top of this file.
+
+- **Flag names are kebab-case** — `--zapier-durable-version`, `--app-versions`. The `workflows-*`
+  skills were validated against SDK CLI 0.54.3 and document the snake_case spellings; 0.67.5's own
+  `--help` is the authority.
+- **Fetch the trigger object rather than retyping it** — `get-workflow-version <workflow-id>
+  019faae7-848d-764e-b6a3-075e28c77566 --json` — and pass it through unchanged. Dropping it
+  silently unbinds the Drive poll.
+- **Test with a real PDF payload, not a skip-path one.** The determinism bug below survived
+  publishing precisely because the only end-to-end test returned at the PDF gate.
+- A polling trigger consumes each file once, so pair any failed run with a manual replay.
+
 ## Maintainer notes
 
+- **`new_bill` has no contact-id input.** `contact_name` is the only handle it offers, so a resolved
+  `ContactID` has to be turned back into a name before the bill is created. This is the single
+  easiest thing to break here — resolve the contact correctly, pass `header.vendor` anyway, and Xero
+  quietly creates the duplicate you just went to the trouble of avoiding.
+- **Contacts are written through `_zap_raw_request`, not Zapier's `contact` action.** That action
+  flattens to a **single** address (`address__line1`, one `address__type_of`), so preserving a
+  contact that holds both a `STREET` and a `POBOX` address is impossible through it. The raw
+  endpoint takes the whole `Addresses` array, which makes read-modify-write safe.
+- **Xero's update-merge semantics are unverified** — specifically whether posting one address type
+  clears the other. Every update re-sends the existing values, so the answer doesn't change the
+  outcome. Confirm it against a throwaway contact before relaxing that.
+- **`where=IsSupplier==true` is rejected** by this org: *"Due to the high number of contacts being
+  processed, this filter cannot be used"*. The full list comes back instead and is filtered in code.
+- **`summaryOnly=true` omits `Addresses`, `Phones` and `TaxNumber`** but does return `EmailAddress`
+  and `BankAccountDetails`. That's why a matched contact is re-read in full before enrichment.
+- **A second page suppresses contact creation.** At 130 contacts one page covers it; if the ledger
+  outgrows `CONTACT_PAGE_SIZE`, "no match" stops being evidence that a contact is absent, so the
+  workflow declines to create rather than risk a duplicate.
 - **The Drive connection is bound twice** — on the trigger (which polls the folder) *and* as the
   `gdrive` alias, because the code renames the file. Both are the same connection id.
 - **`_zap_raw_request` on Xero needs the `Xero-Tenant-Id` header.** Its input schema has no

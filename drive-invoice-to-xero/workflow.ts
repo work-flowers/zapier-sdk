@@ -118,6 +118,16 @@ const VENDOR_SUFFIXES = [
 /** A normalised vendor name shorter than this is too generic to match on. */
 const MIN_VENDOR_TOKEN_LENGTH = 3;
 
+/**
+ * Contacts pulled per page when resolving a vendor. The org holds 130 today, so
+ * one page covers it. Xero refuses `where=IsSupplier==true` here outright
+ * ("Due to the high number of contacts being processed, this filter cannot be
+ * used"), which is why the whole list comes back and the filtering happens in
+ * code. If this ever paginates, `contactsTruncated` suppresses contact creation
+ * rather than risk a duplicate — see the design note.
+ */
+const CONTACT_PAGE_SIZE = 200;
+
 // The Google Drive "New File in Folder" trigger delivers a file object.
 // Accept anything and extract defensively.
 const InputSchema = z.unknown();
@@ -163,6 +173,53 @@ function labeledValue(cell: unknown): string | null {
     return firstString((cell as any).value);
   }
   return firstString(cell);
+}
+
+/**
+ * Currency symbols seen on these invoices, mapped to their ISO-4217 code.
+ * `$` alone is deliberately absent — it is ambiguous and falls back to the
+ * organisation default rather than guessing between USD and SGD.
+ */
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  "US$": "USD",
+  USD$: "USD",
+  "S$": "SGD",
+  SGD$: "SGD",
+  "€": "EUR",
+  "£": "GBP",
+  "¥": "JPY",
+  "A$": "AUD",
+  "NZ$": "NZD",
+  "HK$": "HKD",
+  "C$": "CAD",
+  "₹": "INR",
+  RM: "MYR",
+};
+
+/**
+ * Coerce whatever the model returned into an ISO-4217 code.
+ *
+ * The prompt asks for three letters, and usually gets them — but `standard/auto`
+ * returned `US$` for a Lantern Labs invoice that it had read as `USD` on a
+ * previous run, so this is not hypothetical. An unnormalised `US$` would fail
+ * the bank-transaction currency comparison (raising a duplicate draft bill for
+ * an invoice already paid) and then go to Xero as the bill's currency. Prompt
+ * wording alone can't be trusted with something this load-bearing.
+ *
+ * Returns null when nothing usable can be salvaged, so the caller applies its
+ * own default.
+ */
+function toCurrencyCode(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  const upper = s.toUpperCase().trim();
+  if (/^[A-Z]{3}$/.test(upper)) return upper;
+  for (const [symbol, code] of Object.entries(CURRENCY_SYMBOLS)) {
+    if (upper.startsWith(symbol.toUpperCase())) return code;
+  }
+  // "USD 7,750" / "7750 USD" — take a standalone three-letter token.
+  const token = /\b([A-Z]{3})\b/.exec(upper);
+  return token ? token[1] : null;
 }
 
 function toNumber(v: unknown): number | null {
@@ -321,6 +378,234 @@ interface Candidate {
   lagDays: number;
 }
 
+// --- Vendor contacts -------------------------------------------------------
+//
+// See vendor-contact-design.md for the evidence behind all of this. The short
+// version: `new_bill` binds a bill to a contact by NAME and creates a bare one
+// when nothing matches exactly, which is how the ledger ended up with
+// "Aspire FT" alongside "Aspire FT Pte. Ltd." (and three more pairs). Xero's
+// own `searchTerm` is an unranked substring match — it returns both
+// "Olar Software, Inc." and "Polar Software, Inc." for `olar` — so the whole
+// contact list is fetched once and matched here with `normalizeVendor` /
+// `vendorMatches`, the same pair already used against bank transactions.
+
+/** Vendor contact details read off the invoice. Every one is optional. */
+interface VendorDetails {
+  email: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  region: string | null;
+  postalCode: string | null;
+  country: string | null;
+  phone: string | null;
+  taxNumber: string | null;
+  bankAccount: string | null;
+  bankName: string | null;
+  bankSwift: string | null;
+}
+
+interface ContactSummary {
+  contactId: string;
+  name: string;
+  normalized: string;
+  email: string | null;
+}
+
+type ContactResolution =
+  | { tier: "matched"; contact: ContactSummary; via: "exact" | "email-corroborated" }
+  | { tier: "ambiguous"; candidates: ContactSummary[] }
+  | { tier: "unmatched"; nearMisses: ContactSummary[] };
+
+function extractVendorDetails(raw: Record<string, unknown>): VendorDetails {
+  return {
+    email: firstString(raw["Vendor Email Address"]),
+    addressLine1: firstString(raw["Vendor Address Line 1"]),
+    addressLine2: firstString(raw["Vendor Address Line 2"]),
+    city: firstString(raw["Vendor City"]),
+    region: firstString(raw["Vendor State/Region"]),
+    postalCode: firstString(raw["Vendor Postal Code"]),
+    country: firstString(raw["Vendor Country"]),
+    phone: firstString(raw["Vendor Phone"]),
+    taxNumber: firstString(raw["Vendor Tax Number"]),
+    bankAccount: firstString(raw["Vendor Bank Account Number"]),
+    bankName: firstString(raw["Vendor Bank Name"]),
+    bankSwift: firstString(raw["Vendor Bank SWIFT/BIC"]),
+  };
+}
+
+/** Is there anything here worth writing to a contact record? */
+function hasVendorDetails(d: VendorDetails): boolean {
+  return Object.values(d).some((v) => v != null);
+}
+
+function emailDomain(email: unknown): string | null {
+  const s = firstString(email);
+  if (!s) return null;
+  const at = s.lastIndexOf("@");
+  if (at < 1 || at === s.length - 1) return null;
+  return s.slice(at + 1).toLowerCase();
+}
+
+/** Account numbers are compared ignoring spaces, dashes and case. */
+function normalizeAccountNumber(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  const cleaned = s.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  return cleaned === "" ? null : cleaned;
+}
+
+/** Contacts out of a raw `GET /Contacts` response body. */
+function parseContactSummaries(body: unknown): ContactSummary[] {
+  const rows = (body as any)?.Contacts;
+  if (!Array.isArray(rows)) return [];
+  const out: ContactSummary[] = [];
+  for (const row of rows) {
+    const contactId = firstString(row?.ContactID);
+    const name = firstString(row?.Name);
+    if (!contactId || !name) continue;
+    // An ARCHIVED contact still blocks a same-name create in Xero, so it has to
+    // stay in the candidate set rather than being filtered out here.
+    out.push({ contactId, name, normalized: normalizeVendor(name), email: firstString(row?.EmailAddress) });
+  }
+  return out;
+}
+
+/**
+ * Which Xero contact is this vendor?
+ *
+ * Exact (normalised) match wins. Several of them is an ambiguity the workflow
+ * refuses to guess at. Containment — "Wise" against "Wise Asia-Pacific Pte
+ * Ltd." — only binds when the vendor's email domain agrees, because unlike the
+ * bank-transaction match there is no amount or date here to corroborate it:
+ * the same rule would otherwise merge "LinkedIn" with "LinkedIn Ads" and
+ * "PayPal" with "PAYPAL *FACEBOOK 35314369001 IE".
+ */
+function resolveContact(
+  vendorName: string,
+  vendorEmail: string | null,
+  contacts: ContactSummary[],
+): ContactResolution {
+  const key = normalizeVendor(vendorName);
+  const exact = contacts.filter((c) => c.normalized === key);
+  if (exact.length === 1) return { tier: "matched", contact: exact[0], via: "exact" };
+  if (exact.length > 1) return { tier: "ambiguous", candidates: exact };
+
+  const nearMisses = contacts.filter((c) => vendorMatches(key, c.normalized));
+  if (nearMisses.length === 0) return { tier: "unmatched", nearMisses: [] };
+
+  const domain = emailDomain(vendorEmail);
+  if (domain) {
+    const corroborated = nearMisses.filter((c) => emailDomain(c.email) === domain);
+    if (corroborated.length === 1) {
+      return { tier: "matched", contact: corroborated[0], via: "email-corroborated" };
+    }
+  }
+  return { tier: "unmatched", nearMisses };
+}
+
+interface ContactWrite {
+  /** Body for `POST /Contacts` — a create when there is no `ContactID`. */
+  payload: Record<string, unknown>;
+  /** Field groups this write actually adds, for the log line. */
+  filled: string[];
+  /** Set when the invoice's bank account disagrees with the stored one. */
+  bankConflict: { stored: string; invoice: string } | null;
+}
+
+/**
+ * Build the `POST /Contacts` body, filling only fields that are currently
+ * empty. `filled` is empty when there is nothing to add, and the caller then
+ * skips the write — a bare create is exactly what `new_bill` would have done
+ * anyway, so it isn't worth a task. `bankConflict` is reported either way: a
+ * contact whose only news is a changed bank account is precisely the case the
+ * tripwire exists for.
+ *
+ * Existing values are re-sent alongside the new ones rather than omitted. Xero's
+ * merge semantics for absent elements aren't verified (notably whether posting
+ * one address type clears the other), and read-modify-write makes the answer
+ * irrelevant.
+ *
+ * The raw endpoint is used in preference to Zapier's `contact` action because
+ * that action can only express a SINGLE address, so preserving a contact that
+ * has both a STREET and a POBOX address is impossible through it.
+ */
+function buildContactWrite(name: string, details: VendorDetails, existing: any | null): ContactWrite {
+  const filled: string[] = [];
+  const contact: Record<string, unknown> = {};
+  const existingId = firstString(existing?.ContactID);
+  if (existingId) contact.ContactID = existingId;
+  contact.Name = firstString(existing?.Name) ?? name;
+
+  const storedEmail = firstString(existing?.EmailAddress);
+  if (storedEmail) contact.EmailAddress = storedEmail;
+  else if (details.email) {
+    contact.EmailAddress = details.email;
+    filled.push("email");
+  }
+
+  const storedTax = firstString(existing?.TaxNumber);
+  if (storedTax) contact.TaxNumber = storedTax;
+  else if (details.taxNumber) {
+    contact.TaxNumber = details.taxNumber;
+    filled.push("tax number");
+  }
+
+  // Bank details are write-once. An emailed invoice is the classic
+  // invoice-redirection vector, and a contact's account number outlives the
+  // bill, so a stored value is never overwritten — a disagreement is reported.
+  let bankConflict: ContactWrite["bankConflict"] = null;
+  const storedBank = firstString(existing?.BankAccountDetails);
+  if (storedBank) {
+    contact.BankAccountDetails = storedBank;
+    if (details.bankAccount && normalizeAccountNumber(storedBank) !== normalizeAccountNumber(details.bankAccount)) {
+      bankConflict = { stored: storedBank, invoice: details.bankAccount };
+    }
+  } else if (details.bankAccount) {
+    contact.BankAccountDetails = details.bankAccount;
+    filled.push("bank account");
+  }
+
+  const addresses: any[] = Array.isArray(existing?.Addresses) ? existing.Addresses.map((a: any) => ({ ...a })) : [];
+  const addressPopulated = addresses.some(
+    (a) => firstString(a?.AddressLine1, a?.AddressLine2, a?.City, a?.Region, a?.PostalCode, a?.Country) != null,
+  );
+  const newAddress: Record<string, string | null> = {
+    AddressLine1: details.addressLine1,
+    AddressLine2: details.addressLine2,
+    City: details.city,
+    Region: details.region,
+    PostalCode: details.postalCode,
+    Country: details.country,
+  };
+  if (!addressPopulated && Object.values(newAddress).some((v) => v != null)) {
+    // POBOX is the contact's primary address in Xero's UI. Any STREET entry
+    // already on the record is carried through untouched.
+    let postal = addresses.find((a) => (firstString(a?.AddressType) ?? "").toUpperCase() === "POBOX");
+    if (!postal) {
+      postal = { AddressType: "POBOX" };
+      addresses.push(postal);
+    }
+    for (const [key, value] of Object.entries(newAddress)) if (value != null) postal[key] = value;
+    filled.push("address");
+  }
+  if (addresses.length > 0) contact.Addresses = addresses;
+
+  const phones: any[] = Array.isArray(existing?.Phones) ? existing.Phones.map((p: any) => ({ ...p })) : [];
+  if (!phones.some((p) => firstString(p?.PhoneNumber) != null) && details.phone) {
+    let def = phones.find((p) => (firstString(p?.PhoneType) ?? "").toUpperCase() === "DEFAULT");
+    if (!def) {
+      def = { PhoneType: "DEFAULT" };
+      phones.push(def);
+    }
+    def.PhoneNumber = details.phone;
+    filled.push("phone");
+  }
+  if (phones.length > 0) contact.Phones = phones;
+
+  return { payload: { Contacts: [contact] }, filled, bankConflict };
+}
+
 /** Parse the AI step's `Line Items` JSON string into clean, chargeable lines. */
 function parseLineItems(raw: unknown): { items: LineItem[]; parseFailed: boolean; droppedZeroLines: number } {
   let parsed: unknown = raw;
@@ -427,9 +712,31 @@ Read the whole document before answering. Every figure you return must appear on
 - The **vendor** is the party issuing the invoice, the party we owe. It is never the recipient (Company Flow Pte. Ltd. / workFlowers). Give the complete legal name including any designation such as \`Inc.\`, \`Pte. Ltd.\`, \`LLC\`.
 - Dates are ISO-8601 \`YYYY-MM-DD\`. When no due date is stated, repeat the invoice date.
 - \`Total Amount\` is the final payable figure after all taxes, discounts and charges: digits and decimal point only.
-- \`Currency\` is the ISO-4217 code of that total. Use the code the invoice actually states; only fall back to \`SGD\` when the document gives no indication at all.
+- \`Currency\` is the ISO-4217 code of that total: exactly three letters, such as \`USD\`, \`SGD\`, \`EUR\`. Never a symbol and never a mixture of the two — an invoice printing \`US$7,750\` is \`USD\`, one printing \`S$12.00\` is \`SGD\`. Use the code implied by what the invoice actually states; only fall back to \`SGD\` when the document gives no indication at all.
 - \`Tax Applied\` is true only when the invoice actually charges a tax line (GST, VAT, sales tax). A zero-rated, exempt, or reverse-charge invoice is false.
 - \`Line Amounts Are\` describes the unit prices in the line-item table: \`Inclusive\` when they already contain the tax, \`Exclusive\` when tax is added on top, \`NoTax\` when the invoice charges no tax at all. This decides whether Xero adds tax on top of the figures you return, so read the table's own labelling rather than assuming.
+
+## Vendor details
+
+These populate the vendor's contact record in Xero. They describe **the vendor** — the party issuing the invoice — and never the recipient (Company Flow Pte. Ltd. / workFlowers), whose own address and bank account also appear on many invoices. When a document shows two addresses, the vendor's is the one next to the vendor's name in the header or footer, not the one under "Bill to", "Sold to" or "Customer".
+
+**Return an empty string rather than guessing.** Every one of these fields is required, but an empty string is always an acceptable answer and is the RIGHT answer whenever the invoice does not state the value plainly. An empty field is written to nobody's record; a wrong one is written to Xero and reused. Never assemble a value from fragments on different parts of the page, and never carry a detail over from another invoice you have seen.
+
+Almost every invoice prints **both** parties' details, and a two-column header often sets them side by side so that the vendor's street and the recipient's street alternate line by line. Read the layout, not the reading order. The same goes for tax numbers: two on one page is normal. The vendor's is the one that belongs to the issuing entity — it frequently reappears in the payment instructions, for instance as a PayNow UEN — and it can be printed right next to the recipient's name, so proximity alone does not settle it.
+
+- \`Vendor Address Line 1\` / \`Vendor Address Line 2\` — the street address as printed, split across the two lines the way the invoice splits it. Do not repeat the city, state, postal code or country here; they have their own fields.
+- \`Vendor City\` — city or town.
+- \`Vendor State/Region\` — state, province or region. Blank where the address has none.
+- \`Vendor Postal Code\` — postal or ZIP code, exactly as printed.
+- \`Vendor Country\` — country name. Blank when the invoice does not state one; do not infer it from a currency, phone code or postal format.
+- \`Vendor Phone\` — the vendor's telephone number, digits and separators as printed.
+- \`Vendor Tax Number\` — the vendor's own tax registration number: GST, VAT, UEN, ABN, EIN or the local equivalent, whatever the invoice calls it. Never the recipient's, and never the invoice number.
+
+Bank details are for paying the vendor, so read them only from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice" or "Payment instructions" section:
+
+- \`Vendor Bank Account Number\` — the account the vendor is asking to be paid into. Give the IBAN when the invoice states one, otherwise the plain account number. Blank on an invoice that offers only a card link, a payment portal or a direct-debit notice, and blank when the invoice says it has already been paid. A postal **address** for mailing a cheque — often headed "Payment address" — is not a bank account: leave all three bank fields blank unless an actual account number or IBAN is printed. A routing, sort or ABA code is not an account number either.
+- \`Vendor Bank Name\` — the bank holding that account, **only if the invoice prints it**. This is a bank, never the vendor: a remittance block usually leads with the account holder's name, which is the vendor's own name, and that does not belong here. Do not derive the bank from a SWIFT/BIC code, an account-number format or the vendor's country. Many invoices give an account number and a SWIFT code without ever naming the bank; empty is the correct answer there.
+- \`Vendor Bank SWIFT/BIC\` — the SWIFT or BIC code for that account.
 
 ## Line items
 
@@ -511,9 +818,95 @@ const OUTPUT_FIELDS = [
   },
   {
     name: "Vendor Email Address",
-    description: "Official email address of the vendor, typically in the header or footer. Blank if absent.",
-    type: "email",
-    isRequired: false,
+    description: "Official email address of the vendor, typically in the header or footer. Empty string if absent.",
+    type: "text",
+    isRequired: true,
+  },
+  // Vendor contact details.
+  //
+  // EVERY field here is `isRequired: true`, including `Vendor Email Address`,
+  // and that is not cosmetic. AI by Zapier drops a non-required output field
+  // from the structured response ENTIRELY — the model is never asked for it.
+  // Verified against real invoices: with these marked optional, the response
+  // came back with exactly the nine required fields and nothing else, on an
+  // invoice that plainly prints an address, a phone number, a UEN and a bank
+  // account. `Vendor Email Address` shipped optional in the deployed version,
+  // which is why it has never been populated.
+  //
+  // Required does not mean "invent something": the prompt says an empty string
+  // is always acceptable and is the right answer when the invoice doesn't state
+  // the value. Confirmed on Anthropic's invoice, which has no remittance block
+  // — all three bank fields came back empty rather than borrowing the cheque
+  // "PAYMENT ADDRESS" PO Box.
+  {
+    name: "Vendor Address Line 1",
+    description:
+      "Vendor's street address, first line, as printed. Never the recipient's address. Excludes city, state, postal code and country.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Address Line 2",
+    description: "Vendor's street address, second line, when the invoice splits it across two. Blank otherwise.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor City",
+    description: "Vendor's city or town.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor State/Region",
+    description: "Vendor's state, province or region. Blank where the address has none.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Postal Code",
+    description: "Vendor's postal or ZIP code, exactly as printed.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Country",
+    description:
+      "Vendor's country as stated on the invoice. Blank when not stated — never inferred from currency, phone code or postal format.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Phone",
+    description: "Vendor's telephone number, digits and separators as printed.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Tax Number",
+    description:
+      "The vendor's own tax registration number (GST, VAT, UEN, ABN, EIN or local equivalent). Never the recipient's, never the invoice number.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Account Number",
+    description:
+      "Account the vendor asks to be paid into, read only from an explicit remittance block. IBAN when stated, else the plain account number. Blank for card links, payment portals, direct debits, or an already-paid invoice.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Name",
+    description: "Bank holding the vendor's account, from the same remittance block.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank SWIFT/BIC",
+    description: "SWIFT or BIC code for the vendor's account, from the same remittance block.",
+    type: "text",
+    isRequired: true,
   },
 ];
 
@@ -582,7 +975,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       invoiceNumber: firstString(raw["Invoice Number"]),
       invoiceDate,
       dueDate: toIsoDate(raw["Invoice Due Date"]) ?? invoiceDate,
-      currency: (firstString(raw["Currency"]) ?? "SGD").toUpperCase(),
+      currency: toCurrencyCode(raw["Currency"]) ?? "SGD",
       total: toNumber(raw["Total Amount"]),
       taxApplied: raw["Tax Applied"] === true || firstString(raw["Tax Applied"])?.toLowerCase() === "true",
       lineBasis: basis === "Inclusive" || basis === "Exclusive" ? basis : "NoTax",
@@ -746,6 +1139,203 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }
     }
 
+    // 4c. Resolve the vendor to a Xero contact, and create or top up that
+    //     contact before the bill is raised. See vendor-contact-design.md.
+    //
+    //     This matters for correctness, not just tidiness: `new_bill` binds by
+    //     NAME, so the bill must be created with the name of the contact that
+    //     was resolved, not the invoice's spelling of it. Passing the invoice's
+    //     spelling is what produced the duplicate contact pairs already in the
+    //     ledger.
+    const vendorDetails = extractVendorDetails(raw);
+    const contactsResponse = await ctx.step("list-xero-contacts", async () =>
+      sdk.runAction({
+        appKey: XERO_APP_KEY,
+        actionType: "write",
+        actionKey: "_zap_raw_request",
+        connection: XERO_CONNECTION,
+        inputs: {
+          method: "GET",
+          url: `${XERO_API}/Contacts`,
+          fail_on_errors: true,
+          headers: { "Xero-Tenant-Id": XERO_ORGANIZATION, Accept: "application/json" },
+          // summaryOnly keeps the payload small; it drops Addresses, Phones and
+          // TaxNumber, which is why a matched contact is re-read in full below.
+          querystring: { summaryOnly: "true", pageSize: String(CONTACT_PAGE_SIZE), order: "Name" },
+        },
+      }),
+    );
+
+    let contactsBody: any = null;
+    try {
+      contactsBody = JSON.parse(firstResult(contactsResponse)?.response?.body ?? "{}");
+    } catch {
+      console.log("WARNING: could not parse the contact list; leaving the vendor contact alone");
+    }
+    const contacts = parseContactSummaries(contactsBody);
+    // A second page means the match ran against a subset, so "no match" is no
+    // longer evidence that the contact is absent. Resolve, but never create.
+    const contactsTruncated = Number(contactsBody?.pagination?.pageCount ?? 1) > 1;
+    const contactsUsable = contactsBody != null && contacts.length > 0;
+    if (contactsTruncated) {
+      console.log(
+        `WARNING: Xero returned ${contactsBody?.pagination?.itemCount} contacts across ` +
+          `${contactsBody?.pagination?.pageCount} pages; only the first ${CONTACT_PAGE_SIZE} were matched. ` +
+          `Skipping contact creation so this can't mint a duplicate — raise CONTACT_PAGE_SIZE or paginate.`,
+      );
+    }
+
+    const resolution = contactsUsable
+      ? resolveContact(header.vendor, header.vendorEmail, contacts)
+      : ({ tier: "unmatched", nearMisses: [] } as ContactResolution);
+
+    let billContactName = header.vendor;
+    const contactReport: Record<string, unknown> = { tier: resolution.tier };
+
+    if (resolution.tier === "matched") {
+      // Bind the bill to the contact that was actually resolved.
+      billContactName = resolution.contact.name;
+      contactReport.contactId = resolution.contact.contactId;
+      contactReport.matchedName = resolution.contact.name;
+      contactReport.via = resolution.via;
+      if (resolution.via === "email-corroborated") {
+        console.log(
+          `matched ${header.vendor} to existing contact "${resolution.contact.name}" on the ` +
+            `${emailDomain(header.vendorEmail)} email domain (names differ)`,
+        );
+      }
+
+      if (hasVendorDetails(vendorDetails)) {
+        // summaryOnly omitted the fields we might fill, so read this one in full.
+        const fullResponse = await ctx.step("read-xero-contact", async () =>
+          sdk.runAction({
+            appKey: XERO_APP_KEY,
+            actionType: "write",
+            actionKey: "_zap_raw_request",
+            connection: XERO_CONNECTION,
+            inputs: {
+              method: "GET",
+              url: `${XERO_API}/Contacts/${resolution.contact.contactId}`,
+              fail_on_errors: true,
+              headers: { "Xero-Tenant-Id": XERO_ORGANIZATION, Accept: "application/json" },
+            },
+          }),
+        );
+        let existingContact: any = null;
+        try {
+          existingContact = JSON.parse(firstResult(fullResponse)?.response?.body ?? "{}")?.Contacts?.[0] ?? null;
+        } catch {
+          existingContact = null;
+        }
+
+        // Without the existing record there is no way to tell an empty field
+        // from a populated one, and a payload with no ContactID would CREATE a
+        // duplicate rather than update. Skip rather than guess.
+        if (!firstString(existingContact?.ContactID)) {
+          console.log(
+            `WARNING: could not re-read contact ${resolution.contact.contactId}; skipping enrichment`,
+          );
+          contactReport.enrichment = "skipped-unreadable";
+        } else {
+          const write = buildContactWrite(resolution.contact.name, vendorDetails, existingContact);
+          if (write.bankConflict) {
+            // Never auto-applied. An emailed invoice asking to be paid somewhere
+            // new is what invoice-redirection fraud looks like.
+            console.log(
+              `WARNING: ${resolution.contact.name} has bank account "${write.bankConflict.stored}" in Xero but ` +
+                `${file.title} asks for "${write.bankConflict.invoice}". Left unchanged — verify before paying.`,
+            );
+            contactReport.bankConflict = write.bankConflict;
+          }
+          if (write.filled.length === 0) {
+            contactReport.enrichment = "nothing-to-add";
+          } else {
+            await ctx.step("update-xero-contact", async () =>
+              sdk.runAction({
+                appKey: XERO_APP_KEY,
+                actionType: "write",
+                actionKey: "_zap_raw_request",
+                connection: XERO_CONNECTION,
+                inputs: {
+                  method: "POST",
+                  url: `${XERO_API}/Contacts`,
+                  fail_on_errors: true,
+                  headers: {
+                    "Xero-Tenant-Id": XERO_ORGANIZATION,
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(write.payload),
+                },
+              }),
+            );
+            console.log(`filled ${write.filled.join(", ")} on existing contact ${resolution.contact.name}`);
+            contactReport.enrichment = "updated";
+            contactReport.filled = write.filled;
+          }
+        }
+      } else {
+        contactReport.enrichment = "no-details-extracted";
+      }
+    } else if (resolution.tier === "ambiguous") {
+      // Two contacts already answer to this name. Picking one silently puts the
+      // bill on a coin flip, so behave exactly as before and say so.
+      contactReport.candidates = resolution.candidates.map((c) => ({ id: c.contactId, name: c.name }));
+      console.log(
+        `WARNING: ${resolution.candidates.length} Xero contacts normalise to the same name as ` +
+          `"${header.vendor}" (${resolution.candidates.map((c) => `"${c.name}"`).join(", ")}). ` +
+          `Leaving contacts untouched — merge them in Xero.`,
+      );
+    } else if (contactsUsable && !contactsTruncated) {
+      if (resolution.nearMisses.length > 0) {
+        contactReport.nearMisses = resolution.nearMisses.map((c) => ({ id: c.contactId, name: c.name }));
+        console.log(
+          `note: "${header.vendor}" resembles ${resolution.nearMisses.map((c) => `"${c.name}"`).join(", ")} ` +
+            `but the email domain doesn't corroborate it; creating a separate contact`,
+        );
+      }
+      const write = buildContactWrite(header.vendor, vendorDetails, null);
+      if (write.filled.length === 0) {
+        // Nothing to say about them beyond the name — `new_bill` will make the
+        // same bare contact for free.
+        contactReport.creation = "deferred-to-new-bill";
+      } else {
+        const created = await ctx.step("create-xero-contact", async () =>
+          sdk.runAction({
+            appKey: XERO_APP_KEY,
+            actionType: "write",
+            actionKey: "_zap_raw_request",
+            connection: XERO_CONNECTION,
+            inputs: {
+              method: "POST",
+              url: `${XERO_API}/Contacts`,
+              fail_on_errors: true,
+              headers: {
+                "Xero-Tenant-Id": XERO_ORGANIZATION,
+                Accept: "application/json",
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(write.payload),
+            },
+          }),
+        );
+        let createdId: string | null = null;
+        try {
+          createdId = firstString(
+            JSON.parse(firstResult(created)?.response?.body ?? "{}")?.Contacts?.[0]?.ContactID,
+          );
+        } catch {
+          createdId = null;
+        }
+        console.log(`created Xero contact "${header.vendor}" with ${write.filled.join(", ")}`);
+        contactReport.creation = "created";
+        contactReport.contactId = createdId;
+        contactReport.filled = write.filled;
+      }
+    } else {
+      contactReport.creation = contactsTruncated ? "suppressed-truncated-list" : "suppressed-unreadable-list";
+    }
+
     const parsedLines = parseLineItems(raw["Line Items"]);
     const reconciles = lineItemsReconcile(parsedLines.items, header);
     let lines = parsedLines.items;
@@ -795,8 +1385,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         connection: XERO_CONNECTION,
         inputs: {
           organization: XERO_ORGANIZATION,
-          contact_name: header.vendor,
-          email_address: header.vendorEmail ?? "",
+          // The RESOLVED contact's name, not the invoice's spelling of it —
+          // this is what stops Xero minting a near-duplicate contact.
+          contact_name: billContactName,
+          // Only offered when the contact wasn't resolved above. `new_bill`
+          // writes this onto the contact, and an existing contact's address
+          // must not be overwritten from an invoice.
+          email_address: resolution.tier === "matched" ? "" : (header.vendorEmail ?? ""),
           status: BILL_STATUS,
           date: header.invoiceDate,
           due_date: header.dueDate,
@@ -816,11 +1411,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     const created = firstResult(bill);
     console.log(
-      `created draft bill for ${header.vendor} ${header.currency} ${header.total} ` +
+      `created draft bill for ${billContactName} ${header.currency} ${header.total} ` +
         `(${lines.length} line(s), ${lineSource}, ${effectiveBasis}/${taxType})`,
     );
     return {
       ...base,
+      contact: contactReport,
       outcome: "draft-bill-created",
       bill: {
         invoiceId: firstString(created?.InvoiceID, created?.invoice_id, created?.id),
