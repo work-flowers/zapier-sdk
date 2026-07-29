@@ -1,0 +1,168 @@
+{
+  "name": "whatsapp-slack-bridge",
+  "note": "Three durables that together replace three classic Zaps. One shared `shared.ts` is published alongside each deployment's entry file (renamed to `workflow.ts` at publish time), following the `internal-user-ids-to-table-and-notion` pattern. All three are PARKED (enabled: false) pending cutover — see `cutover` below.",
+  "is_private": false,
+  "zapier_durable_version": "0.11.0",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.11.0 and @zapier/zapier-sdk 0.91.0 were the newest releases at least 24h old at build time. The durable runtime installs with pnpm --config.minimumReleaseAge=1440 and rejects a younger direct dependency at RUN time, not at publish. No zod: none of these files import it.",
+  "connections": {
+    "whatsapp_wf": {
+      "connectionId": "0240f561-4036-869d-bd75-4f2f28101022",
+      "title": "WABA: 4434032230149913 (Business: 1140810087537598)",
+      "note": "Also used as the trigger authentication_id on the two WhatsApp-triggered deployments."
+    },
+    "slack_wf": {
+      "connectionId": "020cae54-a27c-86d6-93a9-27b012c17e74",
+      "title": "Slack @dennis (Work.Flowers)",
+      "note": "Also the trigger authentication_id on slack-reply-to-whatsapp."
+    }
+  },
+  "deployments": [
+    {
+      "name": "whatsapp-message-to-slack",
+      "entry_file": "workflow.inbound.ts",
+      "workflow_id": "019fad12-9311-7c04-92d2-4e979bfb8db3",
+      "current_version_id": "019fad13-0e93-72da-b9fa-54578a6405e3",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaScfItpnoOB09wBA82kcw",
+      "enabled": false,
+      "trigger": {
+        "selected_api": "App228834CLIAPI@1.4.6",
+        "action": "new_message",
+        "authentication_id": "0240f561-4036-869d-bd75-4f2f28101022",
+        "params": { "only_replies": false },
+        "params_note": "`message_types` is deliberately left UNSET. Setting it would restrict delivery to text/image/video/document/audio and so silently drop `unsupported`, `location`, `sticker`, `contacts` and `reaction` — including the `unsupported` type the auto-reply exists to answer. Types are handled in code instead.",
+        "status_when_enabled": "active"
+      },
+      "created_at": "2026-07-29T08:51:43.508Z",
+      "version_created_at": "2026-07-29T08:52:15.328Z",
+      "replaces_classic_zap": "WhatsApp -> Slack",
+      "description": "WhatsApp message received -> the contact's own Slack channel, threaded under the quoted message when the customer replied to one."
+    },
+    {
+      "name": "slack-reply-to-whatsapp",
+      "entry_file": "workflow.outbound.ts",
+      "workflow_id": "019fad12-a4d6-7a4e-bb4a-cfdc65a148a8",
+      "current_version_id": "019fad13-4b3b-7727-9656-975fb9a15fcc",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR5n77hHpWvLlf4Xfcbumw",
+      "enabled": false,
+      "trigger": {
+        "selected_api": "SlackCLIAPI@1.39.2",
+        "action": "anywhere_message",
+        "authentication_id": "020cae54-a27c-86d6-93a9-27b012c17e74",
+        "params": { "listen_for_bots": false, "raw": true },
+        "params_note": "`listen_for_bots: false` is LOAD-BEARING, not a preference. whatsapp-message-to-slack posts into these same channels as a bot; if bot messages were delivered here, every inbound WhatsApp message would be relayed straight back to the customer in a loop. The workflow body also guards on `bot_id` as a second line of defence.",
+        "scope_note": "This trigger fires for EVERY public message in the workspace — it accepts no channel filter (its only inputs are listen_for_bots and raw). The workflow discards non-WhatsApp messages with an early `return`, which costs no task and raises no error. See `known_gaps.workspace_wide_trigger`.",
+        "status_when_enabled": "active"
+      },
+      "created_at": "2026-07-29T08:51:48.056Z",
+      "version_created_at": "2026-07-29T08:52:30.854Z",
+      "replaces_classic_zap": "Slack Replies -> WhatsApp",
+      "description": "Reply in a whatsapp-* Slack channel -> WhatsApp message to the customer, with all attachments, a 24-hour-window guard, and unsigned delivery when the replier is not in the User IDs Table."
+    },
+    {
+      "name": "whatsapp-message-status",
+      "entry_file": "workflow.status.ts",
+      "workflow_id": "019fad12-b521-7852-a01e-80e0be5eb56d",
+      "current_version_id": "019fad13-82da-763d-a745-ad3646c9440c",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeQe_pLyd-ie3fBZLB4lA",
+      "enabled": false,
+      "trigger": {
+        "selected_api": "App228834CLIAPI@1.4.6",
+        "action": "message_status_updated",
+        "authentication_id": "0240f561-4036-869d-bd75-4f2f28101022",
+        "params": { "status_types": ["failed", "read", "delivered"] },
+        "params_note": "Matches the classic Zap, which also excluded `sent`. The sending workflow already writes `sent` itself, so `sent` is the floor of the monotonic rank rather than a delivered status.",
+        "status_when_enabled": "active"
+      },
+      "created_at": "2026-07-29T08:51:52.227Z",
+      "version_created_at": "2026-07-29T08:52:45.028Z",
+      "replaces_classic_zap": "Message Delivery",
+      "description": "WhatsApp status update -> monotonic status on the message log, plus a failure notice threaded onto the Slack message that caused it."
+    }
+  ],
+  "no_external_webhook_note": "Unlike several other Zaps in this repo, there is NOTHING to repoint at cutover. All three triggers are Zapier-managed app triggers; the `hooks.zapier.com/hooks/standard/...` URLs on `triggers[0].details.webhook_url` are the REST-hook subscription endpoints Zapier registers with Meta and Slack itself, not catch URLs an external system should call. Cutover is purely: turn the classic Zaps off, then `enable-workflow` these three.",
+  "tables": {
+    "contacts": {
+      "id": "01JKFHWQ82EFBHNP6XYD0M7JHK",
+      "name": "[Table] WhatsApp Contact Info and Opt-In",
+      "role": "Read and written by whatsapp-message-to-slack; read by the other two.",
+      "key_field": "WhatsApp Phone Number ID",
+      "fields_added_by_this_migration": {
+        "Opt-Out Date": "f17, datetime — when the contact sent STOP/UNSUBSCRIBE.",
+        "Opt-Out Source": "f18, string — how the opt-out arrived."
+      },
+      "fields_note": "The classic Zap recorded an opt-out by overwriting `WhatsApp Marketing Opt-In Date` and `Opt-In Source`, destroying the record of when and how consent was originally given. Those two columns are now left alone.",
+      "known_dirty_data": "42 rows for 34 distinct phone numbers. 6591520097 has FIVE rows created within 0.54 seconds, 6596713131 three within 3 seconds — a concurrent find-or-create race in the classic Zap. Deliberately NOT cleaned up: the upsert here picks the earliest ULID so the choice is deterministic, and fills empty fields on that winner from live trigger data, so a row heals the next time that contact messages. Also holds one `85109301` (missing country code) and one `65977623461` (likely a typo) that cannot be repaired by guessing.",
+      "other_writers": "None as of 2026-07-29. Rows carrying `Opt-In Source` values of Website Lead Form / Offline Conversation / Internal were entered by hand or by a process no longer running; `Slack Thread TS` (f3) and `Opt-In Screenshot` (f13) are unused by any Zap."
+    },
+    "messages": {
+      "id": "01KGH12QJKABVJ5H5A3Z5A4NW4",
+      "name": "[Table] WhatsApp Message Logs",
+      "role": "Written by all three deployments.",
+      "key_field": "Message ID",
+      "fields_added_by_this_migration": {
+        "Direction": "f8, labeled_string (inbound/outbound) — explicit because the business number has CHANGED over time (6580839785 today, 15559393947 on 2026-05 rows), so direction cannot be safely inferred by comparing From against a constant."
+      },
+      "merge_rules": {
+        "Status": "Monotonic — sent(1) < delivered(2) < read(3) < failed(4). WhatsApp does not guarantee webhook ordering, and the classic Zap overwrote unconditionally, so a late `delivered` clobbered a `read`.",
+        "fill_only": "Created, Body and Message Ts are written once and never rewritten. A `read` receipt can arrive hours after the send, so letting it restate Created would rewrite the message's own timestamp; and a status receipt carries no body, so it must never blank one.",
+        "correctable": "From, To and Direction are filled or corrected, never blanked."
+      },
+      "known_dirty_data": "Of 89 rows at migration time: 27 had a null Body and only 13 had a Message Ts. Both follow from the classic design — the status Zap could create the row before the sending Zap logged it, and the template-message Zap logs nothing at all. Zero rows carried status `sent`, since the status Zap always overwrote it."
+    },
+    "users": {
+      "id": "01JM3J9SG5X6S8GBSSC8AS28AT",
+      "name": "[Table] Internal User IDs",
+      "role": "Read only, by slack-reply-to-whatsapp, to sign a reply with the replier's first name.",
+      "note": "Owned by internal-user-ids-to-table-and-notion. The classic Zap looked a user up with success-on-miss OFF, so a reply from anyone not in this Table errored the whole Zap; the reply now simply goes unsigned."
+    }
+  },
+  "external_dependencies": {
+    "slack_custom_action_ae:395232": {
+      "title": "Make File Public (Custom Action)",
+      "why": "WhatsApp's send_media_message takes a `file_url` that Meta's own servers fetch, and Slack's `url_private` is auth-gated, so a Slack file has to be publicly shared first. The classic Zap used this same action.",
+      "risk": "It is an ACCOUNT-PRIVATE custom action, not part of Slack's public action catalog. Deleting or renaming it breaks every outbound file reply, and nothing in this repo would warn first. A sibling `ae:395244` (Revoke Public URL) exists but is deliberately not called — Meta may re-fetch media on re-delivery, so revoking early would break the send.",
+      "consequence": "Every file replied from Slack stays publicly reachable at an unguessable URL indefinitely. This was already true of the classic Zap; it is called out here rather than changed."
+    }
+  },
+  "cutover": {
+    "status": "NOT DONE — all three parked at enabled: false.",
+    "why_parked": "The outbound deployment cannot run alongside the live classic 'Slack Replies -> WhatsApp' Zap: both are subscribed to every public Slack message, so every reply would be sent to the customer TWICE. The inbound and status pairs would only duplicate Slack posts and alerts, which is harmless, but all three are parked together to keep the state simple.",
+    "verified_before_parking": "All three published with their trigger claimed (`status: active`). `enable-workflow` was tested on whatsapp-message-status and re-claimed the trigger cleanly (`released` -> `active`), so cutover does not require a republish.",
+    "steps": [
+      "1. Turn OFF the classic Zaps 'WhatsApp -> Slack', 'Slack Replies -> WhatsApp' and 'Message Delivery'. Turn them off, do not merely pause a step — a paused step leaves the trigger polling and, in this repo, has previously caused silent data gaps.",
+      "2. `enable-workflow` each of the three workflow ids above.",
+      "3. Re-read each with `get-workflow` and confirm `triggers[0].status == \"active\"`. A workflow that shows `enabled: true` with a `released` trigger will never fire.",
+      "4. Run the validation messages in README.md -> Cutover validation.",
+      "5. Leave the classic 'Send Template Message' Zap alone — it is out of scope for this migration and still live."
+    ]
+  },
+  "testing": {
+    "method": "run-durable against real connections with synthetic payloads, plus Table read-back. No live customer was messaged.",
+    "verified": [
+      "Inbound text from 6593662865 posted into C0ABXTK0GPM (#whatsapp-dennis) and logged a complete row: From/To/Created(ISO Z)/Status delivered/Body/Message ID/Message Ts/Direction inbound.",
+      "Status `failed` for that message threaded the failure onto the originating Slack message (`notifiedInChannel: true`) AND posted to #zap-alerts.",
+      "Monotonicity: a subsequent `delivered` for the same message left Status at `failed`.",
+      "Fill-only: the same two status receipts left Created at the original 2026-07-29T00:00:00Z and preserved Body, rather than restating them from the receipt timestamps.",
+      "Outbound in a non-WhatsApp channel returned `skipped` performing ZERO app actions — the fix for the classic Zap's error-on-every-workspace-message behaviour.",
+      "Outbound with a closed 24-hour window skipped the send, posted the in-channel warning, and reported lastInboundAt 2026-07-17T00:19:21Z.",
+      "The test log row was deleted afterwards; the Tables carry no residue."
+    ],
+    "not_yet_verified": [
+      "A real WhatsApp send. Blocked by the 24-hour window being genuinely closed for the only safe recipient (Dennis, last inbound 2026-07-17) — which is itself correct behaviour.",
+      "Inbound media field names. Only `image.file` is proven, from the classic Zap's own mapping; `document.file` / `audio.file` / `video.file` are read defensively through several key spellings but no real payload has been seen. This is the highest-risk unverified area — see README.md -> Cutover validation.",
+      "Slack channel creation for a brand-new contact, including the name-collision fallback.",
+      "The `unsupported` auto-reply."
+    ]
+  },
+  "known_gaps": {
+    "workspace_wide_trigger": "slack-reply-to-whatsapp still reads every public Slack message, because `anywhere_message` accepts no channel filter. The cost and error problems are solved by the early return, but the privacy point is not: every public message still transits Zapier. The upgrade path is a small Slack app subscribed to `message.channels`, which Slack delivers only for channels the bot is IN — and the bot is only in whatsapp-* channels — so it scales to an unbounded number of channels. Deliberately not built now: a second moving part for a problem the early return already solves.",
+    "channel_name_collision": "A new contact whose slugged name is already taken falls back to `whatsapp-<slug>-<last4 of phone>`. If BOTH are taken, the run posts to #zap-alerts naming both attempts and asks a human to create the channel and paste its ID into the Table, rather than dropping the message silently. It does not search Slack for the existing channel — that would mean depending on a second account-private custom action.",
+    "template_zap_untouched": "The classic 'Send Template Message' Zap (:whatsapp: reaction -> `reeng` template) is out of scope and still live. Two things follow. It reads `WhatsApp Username`, which this migration finally populates with the real WhatsApp profile name instead of the sender's own phone number, so it starts greeting people properly with no change to it. And it still sends a MARKETING-category template (confirmed via get_approved_templates) without checking `WhatsApp Marketing Opt-In` — 4 of the 6 contacts who have a Slack channel are opted out. That exposure is unchanged by this migration.",
+    "opt_out_scope": "An opt-out blocks proactive sends only; it never blocks a reply inside the service window, since a customer messaging us is consent to reply. This account does no outbound marketing from these three workflows, so today the flag is recorded and surfaced in Slack rather than enforced anywhere in them.",
+    "phone_normalisation": "Numbers read back out of the Table are stripped to digits and have a leading `00` removed. A number stored with no country code at all (`85109301`) cannot be repaired by guessing and is passed through unchanged, so a send to it would fail. That contact has no Slack channel, so it is unreachable anyway."
+  },
+  "created_at": "2026-07-29T08:51:43.508Z"
+}
