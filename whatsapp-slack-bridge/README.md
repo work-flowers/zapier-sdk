@@ -72,6 +72,14 @@ flowchart TD
     POST -.->|"Slack ts"| LOG
 ```
 
+[`whatsapp-slack-bridge.html`](whatsapp-slack-bridge.html) is a standalone visual of the
+same three lanes, built for the [Notion page](https://app.notion.com/p/af61ea89e5af43c5a818db5172865568)
+in Zapier OS. It adds what the flowchart above can't carry — where each workflow bails
+out and what that prevents, plus the message-log merge rules. Fully self-contained
+(workFlowers wordmark, Inter and JetBrains Mono all embedded as data URIs, nothing
+fetched at runtime), so it can be dropped straight onto a Notion page as an HTML
+preview block, or opened on its own.
+
 ## What changed from the classic Zaps
 
 Ranked by what it cost in production, all evidenced from the live Tables.
