@@ -15,10 +15,9 @@ Three durables replacing three classic Zaps, sharing one [`shared.ts`](shared.ts
 Each deployment publishes its entry file as `workflow.ts` alongside `shared.ts`,
 the same shape as [`internal-user-ids-to-table-and-notion`](../internal-user-ids-to-table-and-notion/).
 
-> **⏸️ All three are parked (`enabled: false`) pending cutover.** The outbound
-> deployment cannot run alongside the live classic Zap — both subscribe to every
-> public Slack message, so every reply would reach the customer **twice**. See
-> [Cutover](#cutover).
+> **✅ Live since 2026-07-29.** The three classic Zaps are off and all three
+> durables are enabled with their triggers `active`. The live media validation
+> is still outstanding — see [Cutover validation](#cutover-validation).
 
 The classic **"Send Template Message"** Zap (`:whatsapp:` reaction → `reeng`
 template) is **out of scope and still live**. See [Known gaps](#known-gaps).
@@ -186,26 +185,31 @@ Table read-back. **No live customer was messaged.** Full list in
 
 ## Cutover
 
-Not done. All three are parked at `enabled: false`.
+**Done 2026-07-29.** The classic "WhatsApp -> Slack", "Slack Replies -> WhatsApp"
+and "Message Delivery" Zaps were turned off, then all three durables enabled and
+verified at `triggers[0].status: "active"` with `error: null`.
 
-There is **nothing to repoint** — unlike several other Zaps here, all three
+Two things worth keeping from how it went:
+
+- `enable-workflow` re-claimed each trigger with no republish, as pre-verified on
+  `whatsapp-message-status` before parking. Disabling leaves the trigger *bound*
+  but `released`.
+- **Always re-read with `get-workflow` after enabling.** `enabled: true`
+  alongside a `released` trigger is the silent never-fires state, and nothing
+  else surfaces it.
+
+There was **nothing to repoint** — unlike several other Zaps here, all three
 triggers are Zapier-managed app triggers. The `hooks.zapier.com/hooks/standard/…`
 URLs under `triggers[0].details.webhook_url` are the REST-hook subscription
 endpoints Zapier registers with Meta and Slack itself, not catch URLs for an
 external system.
 
-`enable-workflow` was tested on `whatsapp-message-status` and re-claimed its
-trigger cleanly (`released` → `active`), so cutover needs no republish.
-
-1. Turn the classic "WhatsApp -> Slack", "Slack Replies -> WhatsApp" and
-   "Message Delivery" Zaps **off** — off, not a paused step. A paused step leaves
-   the trigger polling, which has previously caused silent gaps in this repo.
-2. `enable-workflow` each of the three ids in [`zap.json`](zap.json).
-3. Re-read each with `get-workflow` and confirm `triggers[0].status == "active"`.
-   **A workflow showing `enabled: true` with a `released` trigger will never
-   fire** and nothing else surfaces it.
+The classic "Send Template Message" Zap was deliberately left **on**.
 
 ### Cutover validation
+
+**⚠️ Still outstanding.** Until these have run, the inbound media field names are
+unverified in production.
 
 Three WhatsApp messages from a real handset, which together cover everything
 `run-durable` could not:
