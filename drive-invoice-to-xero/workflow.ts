@@ -71,6 +71,29 @@ const MATCH_WINDOW_DAYS = 7;
 const AMOUNT_EPSILON = 0.005;
 
 /**
+ * How far behind today the NEWEST row in the bank-transaction Table may fall
+ * before its feeder workflow is called stale.
+ *
+ * This measures the Table as a whole, not the invoice's match window. The
+ * previous tripwire asked "did the match window come back empty?", which is a
+ * different and much weaker question: the window is
+ * `[min(invoiceDate, dueDate) - 7, max(invoiceDate, dueDate) + 7]`, so for a
+ * freshly received invoice on 31-day terms roughly 39 of its 46 days lie in the
+ * FUTURE, where no transaction can exist. It therefore only ever inspected an
+ * ~8-day slice of the past, in which "nothing was paid that week" and "the
+ * feeder is dead" are indistinguishable. On 2026-07-29 that misfired both ways
+ * in a single day: INV-26-0007 flagged stale against a healthy feeder, while
+ * INV-26-0006 stayed quiet only because one row happened to sit on its
+ * boundary date.
+ *
+ * 14 days is deliberately above the largest legitimate quiet stretch observed
+ * (8 days, 2026-07-21..2026-07-29, feeder verified healthy throughout). It buys
+ * silence at the cost of detection latency, which is the right trade for a
+ * warning nobody can action twice.
+ */
+const TABLE_STALE_AFTER_DAYS = 14;
+
+/**
  * A bill whose line items sum to within this of the invoice's own total is
  * trusted; anything further out falls back to a single line for the total, so
  * the draft bill always adds up to what the invoice actually says.
@@ -958,12 +981,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     }
 
     // Reading the clock IS non-deterministic, so today's date comes from a
-    // step — fixing it for every retry of this run. The step only runs when
-    // the model failed to give a usable invoice date, which is the one case
-    // where there is nothing on the invoice to fall back to.
+    // step — fixing it for every retry of this run. It runs unconditionally
+    // because the Table-freshness check below needs today even when the invoice
+    // carried its own date; the step costs no task.
+    const today = await ctx.step("today", async () => isoDateFromEpochMs(Date.now()));
     const extractedInvoiceDate = toIsoDate(raw["Invoice Date"]);
-    const invoiceDate =
-      extractedInvoiceDate ?? (await ctx.step("today", async () => isoDateFromEpochMs(Date.now())));
+    const invoiceDate = extractedInvoiceDate ?? today;
     if (!extractedInvoiceDate) {
       console.log(
         `WARNING: no usable invoice date extracted from ${file.title}; falling back to today (${invoiceDate})`,
@@ -1053,14 +1076,34 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       );
     }
 
-    // A window that came back completely empty is the signature of the Table's
-    // feeder Zap being paused. It is not proof — a quiet week looks the same —
-    // but it is the only cheap tripwire available, so surface it.
-    const tableStale = (txnRows?.data ?? []).length === 0;
+    // Is the Table itself current? Measured against the newest row in the WHOLE
+    // Table rather than the emptiness of this invoice's window — see
+    // TABLE_STALE_AFTER_DAYS for why the window is the wrong thing to ask.
+    // One more free Table read: no filters, newest first, a single row.
+    const newestRow = await ctx.step("latest-bank-transaction", async () =>
+      sdk.listTableRecords({
+        table: BANK_TXN_TABLE,
+        keyMode: "names",
+        sort: { fieldKey: "date", direction: "desc" },
+        pageSize: 1,
+      }),
+    );
+    const latestRowDate = toIsoDate((newestRow?.data ?? [])[0]?.data?.date);
+    // A Table with no readable newest row is a harder fault than a stale one:
+    // an empty table, a renamed column or a failed read all land here, and none
+    // of them can be distinguished from this side. Treat it as stale.
+    const tableLagDays = latestRowDate == null ? null : dayNumber(today) - dayNumber(latestRowDate);
+    const tableStale = tableLagDays == null || tableLagDays > TABLE_STALE_AFTER_DAYS;
     if (tableStale) {
       console.log(
-        `WARNING: the Xero Bank Transactions table returned no rows at all for ${windowStart}..${windowEnd}. ` +
-          `If that looks wrong, check that the Zap populating table ${BANK_TXN_TABLE} is still enabled.`,
+        `WARNING: the Xero Bank Transactions table looks stale — ` +
+          (latestRowDate == null
+            ? `no newest row could be read at all.`
+            : `its newest row is ${latestRowDate}, ${tableLagDays} days behind ${today} ` +
+              `(threshold ${TABLE_STALE_AFTER_DAYS}d).`) +
+          ` Check that the workflow populating table ${BANK_TXN_TABLE} ` +
+          `(xero-bank-transactions-to-zapier-table) is still enabled and has recent runs. ` +
+          `A stale table makes an already-paid invoice look unpaid, which raises a duplicate draft bill.`,
       );
     }
 
@@ -1070,6 +1113,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       renameOk: Boolean(firstResult(renamed)),
       candidatesConsidered: candidates.length,
       tableStale,
+      // The raw numbers behind `tableStale`, so a run can be judged without
+      // re-querying: how far behind the Table's newest row is, what that row is
+      // dated, and how many rows this invoice's own window returned (the signal
+      // the old tripwire used, kept as context rather than as the verdict).
+      tableLagDays,
+      tableLatestRowDate: latestRowDate,
+      windowRowsConsidered: (txnRows?.data ?? []).length,
     };
 
     // 4a. Already paid — attach the invoice to the transaction and stop.

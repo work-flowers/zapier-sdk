@@ -11,10 +11,10 @@ which is what files invoice PDFs into that folder in the first place.
 > **Bills are always created as `draft`.** Nothing here posts to the ledger or pays anything.
 > Every outcome is meant to be reviewed in Xero.
 
-> ⚠️ **Vendor-contact handling is live as of `019fab74` (2026-07-29) but has not yet seen a real
-> invoice.** It was validated offline — see [Contact resolution](#contact-resolution) — and the
-> determinism and typecheck gates are green, but no PDF has gone through the create-bill branch on
-> this version. Watch the first run, and note the untested bank-field control below.
+> ✅ **Vendor-contact handling has now been exercised by a real invoice.** `019fab74`'s first live
+> PDF — Lantern Labs `INV-26-0007`, 2026-07-29 — resolved the vendor to the existing contact,
+> enriched three empty fields and raised the bill against the stored name. See
+> [Live runs](#live-runs). That run also closed the bank-field control that shipped untested.
 
 ## What it does
 
@@ -119,7 +119,9 @@ Suffix-stripped comparison keeps them apart; similarity scoring would not.
 An emailed invoice asking to be paid into a new account is what invoice-redirection fraud looks
 like, and a contact's bank account outlives the bill that introduced it. So:
 
-- Bank details are written **only when creating a new contact**.
+- Bank details are written when the contact's stored `BankAccountDetails` is **empty** — whether that
+  is a fresh create or an enrichment of an existing bare record. `filled` then reports
+  `bank account`.
 - A stored account is **never** overwritten. When the invoice disagrees with it, the workflow leaves
   the record alone and logs a warning naming both — the cheap tripwire — and surfaces it as
   `contact.bankConflict` in the run output.
@@ -178,20 +180,66 @@ It exists because the Invoices folder does accumulate duplicates: it currently h
 
 The match reads the **Xero Bank Transactions** Zapier Table
 (`01KCDV6Y17F31J2Q6S1EMYZC8K`), not Xero's API, because Table reads cost no tasks. That Table is
-populated by a **separate Zap** ("Process New Reconciled Transactions"), so:
+owned and populated by a **separate workflow** —
+[`xero-bank-transactions-to-zapier-table`](../xero-bank-transactions-to-zapier-table/) — so:
 
-> **This workflow is only as correct as that Zap is current.**
+> **This workflow is only as correct as that one is current.**
 
-On 2026-07-28 that Zap's create step was paused and the Table had quietly fallen ~5 days behind —
-**7 of 43** live `SPEND` transactions over 2026-06-01..2026-07-28 were missing, all of them the
-newest ones. Nothing errored. The only visible symptom was duplicate draft bills appearing in
-Xero and being deleted by hand.
+Its predecessor, the classic Zap *"Process New Reconciled Transactions"*, had its create step
+paused on 2026-07-28, and the Table quietly fell ~5 days behind — **7 of 43** live `SPEND`
+transactions over 2026-06-01..2026-07-28 were missing, all of them the newest ones. Nothing
+errored. The only visible symptom was duplicate draft bills appearing in Xero and being deleted by
+hand. That gap is **not** being backfilled, by design: a polling trigger primes its dedupe on first
+poll, so re-enabling restores the flow but never the gap. See that workflow's `known_gaps`.
 
 Because the transaction that matters is almost always the *most recent* one, staleness in this
-Table converts directly into duplicate bills. The run output carries **`tableStale`** — true when
-the date window came back with no rows at all — as the cheap tripwire, and the same condition is
-logged as a warning. It is not proof (a genuinely quiet week looks identical), so if duplicate
-bills start appearing, check that the populating Zap is enabled first.
+Table converts directly into duplicate bills.
+
+### `tableStale` measures the Table's freshness
+
+The run output carries **`tableStale`**, and the same condition is logged as a warning. As of
+`019fad1c` it measures the **Table's own freshness**: a free `latest-bank-transaction` step reads
+the newest row in the whole Table (no filters, `sort` by date descending, `pageSize` 1) and the flag
+trips when that row is more than **`TABLE_STALE_AFTER_DAYS` (14)** behind the stepped `today`.
+Alongside it:
+
+| Output field | Meaning |
+| --- | --- |
+| `tableLagDays` | Days between the Table's newest row and today. `null` if no row could be read. |
+| `tableLatestRowDate` | The newest row's date, so a run can be judged without re-querying. |
+| `windowRowsConsidered` | Rows this invoice's own ±7d window returned — context, not the verdict. |
+
+An **unreadable** newest row also counts as stale: an empty table, a renamed `date` column and a
+failed read are indistinguishable from this side, and all three are worse than lateness.
+
+> #### Why it isn't the window-emptiness check any more
+>
+> Until `019fad1c` the flag was simply *"did this invoice's match window come back with zero rows?"*
+> That is a much weaker question, and it misfired **both ways in a single day**:
+>
+> | Run | Window | Rows | Old `tableStale` | Feeder actually |
+> | --- | --- | --- | --- | --- |
+> | `INV-26-0006` | `2026-07-21..2026-09-04` | 1 (CPF, 2026-07-21) | `false` | healthy |
+> | `INV-26-0007` | `2026-07-22..2026-09-05` | 0 | `true` ❌ | **healthy** |
+>
+> The window is `[min(invoiceDate, dueDate) − 7, max(invoiceDate, dueDate) + 7]`. For a freshly
+> received unpaid invoice on 31-day terms that is `[D−7, D+38]` — **39 of its 46 days are in the
+> future**, where no transaction can exist. So it only ever inspected an ~8-day past slice, and in
+> that slice "no payments were recorded this week" is indistinguishable from "the feeder is dead".
+> `INV-26-0007` tripped it against a feeder that was demonstrably healthy (published
+> 2026-07-28T11:39Z, trigger `active`, zero runs only because no new Xero transaction had been
+> *created* since 2026-07-21), and `INV-26-0006` stayed quiet purely because one CPF row happened to
+> land on its boundary date.
+>
+> The 14-day threshold sits deliberately **above** the largest legitimate quiet stretch observed —
+> 8 days, over 2026-07-21..2026-07-29, feeder verified healthy throughout. It buys silence at the
+> cost of detection latency, which is the right trade for a warning nobody can action twice.
+
+Because the `today` step now feeds this check, it runs on **every** run rather than only when the
+model failed to give a usable invoice date. It costs no task.
+
+Still true either way: this flag is a proxy, not proof. If duplicate bills start appearing, check the
+feeder's run history.
 
 Querying Xero live instead would remove the coupling at the cost of ~1 task per invoice; that
 trade-off was considered and the Table was chosen deliberately.
@@ -265,10 +313,13 @@ were attributed correctly, and that result holds regardless of anything else abo
 > classifies per email and files a settled invoice as a receipt. So "no remittance block, bank
 > fields correctly empty" was demonstrated on a document outside this Zap's real population.
 >
-> **The control still needs running on a genuinely outstanding invoice that offers only a portal or
-> card link** — `2026-07-02 Slack Technologies Limited` or `2026-07-15 Vanta Inc` are the
-> candidates. Until then, treat "does not invent a bank account" as untested for the invoices that
-> actually reach the create-bill branch.
+> **✅ That control has since run, on a real invoice through the create-bill branch.** Lantern Labs
+> `INV-26-0007` (2026-07-29) offers **only** a PayNow QR and a Wise payment link — no account
+> number, no SWIFT, no routing number anywhere on the page. The run enriched the contact with
+> `["tax number", "address", "phone"]` and **no `bank account`**, with no `bankConflict`. That is a
+> real negative, not an absence of evidence: the contact's stored `BankAccountDetails` was empty, so
+> `buildContactWrite` would have written and reported any account the model returned. It returned
+> none. See [Live runs](#live-runs).
 
 Which cuts the other way too, and matters for the write-once rule: the invoices that reach this
 branch are by definition **unpaid**, and an unpaid invoice usually prints the account it wants
@@ -288,13 +339,92 @@ Thuraisingam) carry a full remittance block. The bank-detail path will fire ofte
 > three bank fields came back empty.
 >
 > This also explains a **pre-existing** gap: `Vendor Email Address` shipped as optional in version
-> `019faae7`, so `header.vendorEmail` has always been null in production. It is required now.
+> `019faae7`, so `header.vendorEmail` has always been null in production. It is required now —
+> though that fix is still **unproven in production**: `header.vendorEmail` was null on both
+> `019fab74` live runs, and correctly so, because neither Lantern Labs invoice prints an email
+> address anywhere. Proving it needs an invoice that does.
 
 **Currency is normalised in code, not trusted from the model.** `toCurrencyCode` maps `US$` → `USD`,
 `S$` → `SGD` and friends, takes a standalone three-letter token out of something like `USD 7,750`,
 and falls back to the org default on a bare `$`. An unnormalised `US$` would fail the
 bank-transaction currency comparison — raising a duplicate draft bill for an already-paid invoice —
 and then reach Xero as the bill's currency.
+
+## Live runs
+
+Both Lantern Labs invoices arrived by email from `me@petergao.com` and reached the Invoices folder
+through [`gmail-attachments-to-drive-by-type`](../gmail-attachments-to-drive-by-type/). Times below
+are **SGT** (UTC+8). Ground truth was read off the PDFs afterwards, so the extraction column is
+scored, not eyeballed.
+
+| | `INV-26-0006` — USD 7,750.00 | `INV-26-0007` — SGD 60.43 |
+| --- | --- | --- |
+| Email received | 2026-07-29 00:00:55 | 2026-07-29 13:11:03 |
+| PDF in Drive | 00:05:49 (+4m54s) | 13:13:10 (+2m07s) |
+| Run | `019fa97a` 00:06:14 → **failed** 00:06:42 | `019fac4a` 13:13:20 → finished 13:14:06 (**46s**) |
+| Version | `019fa878` | `019fab74` |
+| Replay | `019faaed` 06:52:25 → 06:53:07 on `019faae7` | — |
+| Email → draft bill | 6h 52m (manual replay) | **3m 04s**, hands-off |
+| Draft bill | `99ea5905-aa60-4327-bcb7-984c1013e3e3` | `1b61a648-859f-46e2-a430-fc5609d0f673` |
+
+`INV-26-0006`'s first attempt is the single casualty of the `new Date()` determinism bug below — the
+only run `019fa878` ever had, and the `toIsoDate` throw took it. The polling trigger consumed the
+file, so it needed a manual replay. `INV-26-0007` is therefore the only clean end-to-end measure of
+the current version: **46 seconds**, no intervention.
+
+### Extraction — 10/10 on both
+
+| Field | `INV-26-0006` (printed → extracted) | `INV-26-0007` |
+| --- | --- | --- |
+| Vendor | `Lantern Labs Pte. Ltd.` ✅ | ✅ |
+| Number | `INV-26-0006` ✅ | `INV-26-0007` ✅ |
+| Invoice date | `28/07/26` → `2026-07-28` ✅ | `29/07/26` → `2026-07-29` ✅ |
+| Due date | `28/08/26` → `2026-08-28` ✅ | `29/08/26` → `2026-08-29` ✅ |
+| Currency | `US$7,750` → **`USD`** ✅ | `SGD$60.43` → **`SGD`** ✅ |
+| Total | `7750.00` ✅ | `60.43` ✅ |
+| Tax | `0.00%` → `taxApplied: false`, `NONE`, `NoTax` ✅ | ✅ |
+| Lines | 1, reconciles ✅ | 1 (`FedEx invoice (pass through)`), reconciles ✅ |
+
+Two results worth keeping. `INV-26-0006` prints **three** date-like fields — it carries a
+`Billing Period: 03/07/26 - 02/08/26` alongside the invoice and due dates — and the model took the
+invoice date, not the period start. And `toCurrencyCode` earned its keep twice: the model returned
+`US$` and `SGD$` verbatim, and both normalised. An unnormalised `US$` would have failed the
+bank-transaction currency comparison.
+
+Routing was correct on both — `draft-bill-created`, `candidatesConsidered: 0`. Neither invoice was
+paid at the time (`INV-26-0006` was still awaiting an inbound payment; `INV-26-0007` was issued that
+morning on 31-day terms), so no match was the right answer regardless of Table state.
+
+`INV-26-0007` reported `tableStale: true`, which is what prompted
+[the rewrite of that flag](#tablestale-measures-the-tables-freshness) in `019fad1c`. Under the new
+definition the same conditions read `tableLagDays: 8`, `tableStale: false` — verified by replaying
+the logic against the real Table in the deployed runtime.
+
+### Contact resolution, live
+
+`INV-26-0007` was `019fab74`'s first live exercise of the create-bill branch:
+
+```json
+{ "via": "exact", "tier": "matched", "contactId": "699fb6bb-960d-4a7f-ac43-3185e242890a",
+  "matchedName": "Lantern Labs Pte. Ltd.", "enrichment": "updated",
+  "filled": ["tax number", "address", "phone"] }
+```
+
+All three filled values check out against the PDF: UEN `202117064E`, `11 COLLYER QUAY` / `#17-00`
+THE ARCADE, SINGAPORE 049317, and `+65 8801 4107`. No `bankConflict`.
+
+**No duplicate contact was minted, and the run proves it.** `resolveContact` returns `tier: "matched"`
+with `via: "exact"` only when *exactly one* contact normalises to `lantern labs`; two would have
+returned `ambiguous`. So the bill raised the previous evening on `019faae7` — which had no contact
+logic and passed the invoice's own spelling to `new_bill` — bound to the existing record rather than
+forking it.
+
+> **One gap this sequence left behind.** `INV-26-0006` is the invoice that carries Lantern Labs'
+> remittance block (account `8311123520`, SWIFT `CMFGUS33`, routing `026073008`), and it went
+> through `019faae7`, which could not record it. `INV-26-0007` offers no bank details to fill. So
+> the Xero contact currently holds address, phone and UEN but **no bank account** — the one the
+> vendor is actually paid into. Fill-empty-only means the next Lantern Labs invoice that prints a
+> remittance block will populate it; until then it is blank.
 
 ## ⚠️ `new Date()` in the workflow body is a hard error
 
@@ -316,8 +446,9 @@ The fix, and the rule for anything added here:
   civil-from-days pair, also in [`xero-overdue-invoice-to-gmail-reminder`](../xero-overdue-invoice-to-gmail-reminder/))
   and `daysInMonth`. **`Date` is not referenced anywhere in this file.** Don't reintroduce it.
 - **Reading the clock goes in a `ctx.step`.** The `today` step is the only place a current time is
-  obtained, so its value is fixed for every retry of a run. It runs only when the model gave no
-  usable invoice date.
+  obtained, so its value is fixed for every retry of a run. Since `019fad1c` it runs on **every**
+  run — the Table-freshness check needs today even when the invoice carried its own date — where it
+  previously ran only as a fallback for a missing invoice date. Steps cost no task.
 
 Two things made this invisible until production, both worth remembering:
 
