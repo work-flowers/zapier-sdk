@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-slack-bridge",
-  "note": "Three durables that together replace three classic Zaps. One shared `shared.ts` is published alongside each deployment's entry file (renamed to `workflow.ts` at publish time), following the `internal-user-ids-to-table-and-notion` pattern. All three are PARKED (enabled: false) pending cutover — see `cutover` below.",
+  "note": "Three durables that together replace three classic Zaps. One shared `shared.ts` is published alongside each deployment's entry file (renamed to `workflow.ts` at publish time), following the `internal-user-ids-to-table-and-notion` pattern. Live since 2026-07-29 — see `cutover` below.",
   "is_private": false,
   "zapier_durable_version": "0.11.0",
   "dependencies": {
@@ -26,14 +26,14 @@
       "workflow_id": "019fad12-9311-7c04-92d2-4e979bfb8db3",
       "current_version_id": "019fad13-0e93-72da-b9fa-54578a6405e3",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaScfItpnoOB09wBA82kcw",
-      "enabled": false,
+      "enabled": true,
       "trigger": {
         "selected_api": "App228834CLIAPI@1.4.6",
         "action": "new_message",
         "authentication_id": "0240f561-4036-869d-bd75-4f2f28101022",
         "params": { "only_replies": false },
         "params_note": "`message_types` is deliberately left UNSET. Setting it would restrict delivery to text/image/video/document/audio and so silently drop `unsupported`, `location`, `sticker`, `contacts` and `reaction` — including the `unsupported` type the auto-reply exists to answer. Types are handled in code instead.",
-        "status_when_enabled": "active"
+        "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:43.508Z",
       "version_created_at": "2026-07-29T08:52:15.328Z",
@@ -46,7 +46,7 @@
       "workflow_id": "019fad12-a4d6-7a4e-bb4a-cfdc65a148a8",
       "current_version_id": "019fad13-4b3b-7727-9656-975fb9a15fcc",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR5n77hHpWvLlf4Xfcbumw",
-      "enabled": false,
+      "enabled": true,
       "trigger": {
         "selected_api": "SlackCLIAPI@1.39.2",
         "action": "anywhere_message",
@@ -54,7 +54,7 @@
         "params": { "listen_for_bots": false, "raw": true },
         "params_note": "`listen_for_bots: false` is LOAD-BEARING, not a preference. whatsapp-message-to-slack posts into these same channels as a bot; if bot messages were delivered here, every inbound WhatsApp message would be relayed straight back to the customer in a loop. The workflow body also guards on `bot_id` as a second line of defence.",
         "scope_note": "This trigger fires for EVERY public message in the workspace — it accepts no channel filter (its only inputs are listen_for_bots and raw). The workflow discards non-WhatsApp messages with an early `return`, which costs no task and raises no error. See `known_gaps.workspace_wide_trigger`.",
-        "status_when_enabled": "active"
+        "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:48.056Z",
       "version_created_at": "2026-07-29T08:52:30.854Z",
@@ -67,14 +67,14 @@
       "workflow_id": "019fad12-b521-7852-a01e-80e0be5eb56d",
       "current_version_id": "019fad13-82da-763d-a745-ad3646c9440c",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeQe_pLyd-ie3fBZLB4lA",
-      "enabled": false,
+      "enabled": true,
       "trigger": {
         "selected_api": "App228834CLIAPI@1.4.6",
         "action": "message_status_updated",
         "authentication_id": "0240f561-4036-869d-bd75-4f2f28101022",
         "params": { "status_types": ["failed", "read", "delivered"] },
         "params_note": "Matches the classic Zap, which also excluded `sent`. The sending workflow already writes `sent` itself, so `sent` is the floor of the monotonic rank rather than a delivered status.",
-        "status_when_enabled": "active"
+        "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:52.227Z",
       "version_created_at": "2026-07-29T08:52:45.028Z",
@@ -128,16 +128,14 @@
     }
   },
   "cutover": {
-    "status": "NOT DONE — all three parked at enabled: false.",
-    "why_parked": "The outbound deployment cannot run alongside the live classic 'Slack Replies -> WhatsApp' Zap: both are subscribed to every public Slack message, so every reply would be sent to the customer TWICE. The inbound and status pairs would only duplicate Slack posts and alerts, which is harmless, but all three are parked together to keep the state simple.",
-    "verified_before_parking": "All three published with their trigger claimed (`status: active`). `enable-workflow` was tested on whatsapp-message-status and re-claimed the trigger cleanly (`released` -> `active`), so cutover does not require a republish.",
-    "steps": [
-      "1. Turn OFF the classic Zaps 'WhatsApp -> Slack', 'Slack Replies -> WhatsApp' and 'Message Delivery'. Turn them off, do not merely pause a step — a paused step leaves the trigger polling and, in this repo, has previously caused silent data gaps.",
-      "2. `enable-workflow` each of the three workflow ids above.",
-      "3. Re-read each with `get-workflow` and confirm `triggers[0].status == \"active\"`. A workflow that shows `enabled: true` with a `released` trigger will never fire.",
-      "4. Run the validation messages in README.md -> Cutover validation.",
-      "5. Leave the classic 'Send Template Message' Zap alone — it is out of scope for this migration and still live."
-    ]
+    "status": "DONE 2026-07-29. Dennis turned the three classic Zaps off; all three durables were then enabled and verified with `triggers[0].status: active` and `error: null`.",
+    "why_it_had_to_be_a_deliberate_flip": "The outbound deployment could not run alongside the live classic 'Slack Replies -> WhatsApp' Zap: both are subscribed to every public Slack message, so every reply would have been sent to the customer TWICE. The inbound and status pairs would only have duplicated Slack posts and alerts, which is harmless, but all three were parked together to keep the state simple.",
+    "notes": [
+      "`enable-workflow` re-claimed each released trigger with no republish, as pre-verified on whatsapp-message-status before parking.",
+      "Always re-read with `get-workflow` after enabling: `enabled: true` alongside a `released` trigger is the silent never-fires state, and nothing else surfaces it.",
+      "The classic 'Send Template Message' Zap was deliberately left ON — it is out of scope for this migration."
+    ],
+    "outstanding": "The live validation in README.md -> Cutover validation has NOT been run yet. Until a real voice note and a real PDF have arrived, the inbound media field names remain unverified — see `testing.not_yet_verified`."
   },
   "testing": {
     "method": "run-durable against real connections with synthetic payloads, plus Table read-back. No live customer was messaged.",
