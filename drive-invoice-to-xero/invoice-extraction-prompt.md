@@ -1,8 +1,19 @@
 # Invoice extraction prompt
 
-Used by the single **AI by Zapier** step (`AICLIAPI` / `write` / `get_completion`,
+<!-- embed: INVOICE_PROMPT -->
+
+Used by the **first** AI by Zapier step (`AICLIAPI` / `write` / `get_completion`,
 tier `standard/auto`, built-in credentials) in
-[`workflow.ts`](workflow.ts) — the `extract-invoice` step.
+[`workflow.ts`](workflow.ts) — the `extract-invoice` step. A second step,
+[`payment-extraction-prompt.md`](payment-extraction-prompt.md), reads the vendor's payment
+instructions.
+
+**This prompt and its 21 output fields are deliberately left alone.** Payment fields were
+folded in here first, taking the schema to 34 fields, and it broke the header: on
+`2026-07-02 Slack Technologies Limited` the correct vendor name came back 6/6 times at 21
+fields and 2/6 at 34, the failures naming *our own* entity as the vendor. `Vendor Name` binds
+the Xero contact and the draft bill, so that is the most expensive thing on the page to get
+wrong. Adding fields here is not free — measure it before you do.
 
 The PDF itself is passed to the model as a file input (`inputFieldConfig_Invoice_isFileUrl`),
 so the model reads the rendered invoice rather than pre-extracted text. That is what makes the
