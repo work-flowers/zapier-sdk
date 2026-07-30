@@ -60,6 +60,19 @@ flowchart TD
     L -- "no / none" --> B2["🧾 Xero · new_bill (draft)<br/>single line for the total"]
 ```
 
+[`drive-invoice-to-xero.html`](drive-invoice-to-xero.html) is a standalone visual explainer of
+the same route, built for the [Notion page](https://app.notion.com/p/drive-invoice-to-xero-8db141c2cc6d4794a908aca12697269d)
+in Zapier OS, where it is embedded as an HTML block directly above *What it does*. It carries
+what the flowchart above can't — why the match rule requires the amount rather than treating it
+as a tiebreaker, evidenced by the real invoices that break a looser rule, and the two hazards
+below stated as what they actually look like in production. Fully self-contained (workFlowers
+wordmark, Inter and JetBrains Mono all embedded as data URIs, nothing fetched at runtime), so it
+renders the same inside a Notion HTML block, in an artifact sandbox, or opened on its own.
+
+> **Editing it means re-uploading it.** Notion re-hosts the file at attach time, so a change here
+> does not propagate. Re-upload with `ntn files create` and append a fresh `embed` block — see
+> [Notion embed](#notion-embed) below.
+
 ## Matching
 
 The rule is **vendor AND exact total AND same currency AND `SPEND`**, within **±7 days** of the
@@ -476,6 +489,40 @@ Vanta's 19-row table and the tax-basis judgement, so there was no reason to inhe
 Advanced default (which exists mainly to enable tool calls; this step makes none). The classic Zap
 pinned `google/gemini-2.5-flash-lite` explicitly; the tier sentinel on built-in credentials
 replaces that. Re-run the table above before changing tier.
+
+## Notion embed
+
+[`drive-invoice-to-xero.html`](drive-invoice-to-xero.html) is attached to the Notion page as an
+`embed` block, which is how Notion renders an HTML file inline in a sandboxed preview. There is no
+raw-HTML block type. Three things make this awkward, and all three cost a round trip here:
+
+- **A file upload belongs to the integration that created it.** An upload made by the `ntn` CLI
+  404s for the Notion MCP connector (`Could not find file_upload with ID …`) and vice versa, so
+  whichever tool uploads the file must also be the one that appends the block. Doing the whole
+  thing through `ntn` is the cheaper path — the alternative is passing the entire ~185 KiB file
+  through the MCP `create-attachment` tool as inline content.
+- **`after` is rejected at `Notion-Version: 2026-03-11`** (*"body.after should be not present"*),
+  so appending lands the block at the end of the page. Passing `--notion-version 2022-06-28`
+  accepts `after` and places it precisely. Only fire this **once** — retrying against a second API
+  version appends a *second* block rather than erroring.
+- **Never `PATCH` an existing embed block to repoint it at a new upload.** Writing
+  `{"embed":{"file_upload":{…}}}` onto a live block returns `200` with a valid-looking block, but
+  **orphans it**: the block keeps reporting the page as its `parent` while disappearing from the
+  page's children. Delete and re-append instead.
+
+```bash
+UPLOAD=$(ntn files create --filename drive-invoice-to-xero.html --content-type text/html --json \
+  < drive-invoice-to-xero/drive-invoice-to-xero.html | jq -r .id)
+
+# after = the id of the block the embed should follow; --notion-version is load-bearing
+ntn api /v1/blocks/<page-id>/children -X PATCH --notion-version 2022-06-28 -d "$(jq -n \
+  --arg u "$UPLOAD" --arg a "<preceding-block-id>" \
+  '{after:$a,children:[{object:"block",type:"embed",embed:{type:"file_upload",file_upload:{id:$u}}}]}')"
+```
+
+The Zaps data source also carries an **`HTML` files property**, currently empty on every row. If
+that becomes the convention for these explainers, attaching the file there instead of (or as well
+as) the in-page block would make it queryable across the database.
 
 ## Publishing
 
