@@ -140,11 +140,27 @@ function notionMarkdownToEmail(md: string): string {
   // mirror it into a visible italic line under the image while keeping the alt
   // attribute intact. Uncaptioned images export as ![](url) and are left alone, as
   // are inline images (the line must be nothing but the image) and anything inside
-  // a code fence. A caption containing brackets — e.g. a link — is left as-is
-  // rather than risk mangling it; alt text still carries it.
+  // a code fence.
+  //
+  // A caption that is nothing but a Markdown link is the way to author a CLICKABLE
+  // image, which Notion itself cannot do — image blocks carry no link target, and
+  // the export has no linked-image form. Notion nests the caption inside the alt
+  // slot as ![[text](href)](src), which renders as an image with junk alt text and
+  // the href silently lost. Rewrite it to a real linked image plus a linked italic
+  // line, so the link survives even when the client blocks images. A caption that
+  // merely CONTAINS a link (surrounding prose, or link text with brackets) still
+  // can't be parsed unambiguously out of the alt slot, so it is left as-is.
+  //
   // Runs AFTER the tab strip above: images inside Notion column layouts arrive
   // indented, and would not match an anchored ^!\[ before those tabs are gone.
   {
+    // ![[text](href)](src) — caption is a bare link. Checked first; the plain
+    // pattern cannot match this line anyway (its alt group stops at the inner
+    // "]", leaving "](src)" to fail the anchored tail), so the two are disjoint.
+    const LINKED_CAPTION = /^!\[\[([^\]]+)\]\(([^)]+)\)\]\(([^)]+)\)[ \t]*$/;
+    // ![caption](src) — ordinary caption.
+    const PLAIN_CAPTION = /^!\[([^\]]+)\]\(([^)]+)\)[ \t]*$/;
+
     const lines = out.split("\n");
     let inFence = false;
     const result: string[] = [];
@@ -154,9 +170,19 @@ function notionMarkdownToEmail(md: string): string {
         result.push(line);
         continue;
       }
-      const m = inFence ? null : line.match(/^!\[([^\]]+)\]\(([^)]+)\)[ \t]*$/);
+      if (inFence) {
+        result.push(line);
+        continue;
+      }
+      const linked = line.match(LINKED_CAPTION);
+      if (linked) {
+        const [, text, href, src] = linked;
+        result.push(`[![${text}](${src})](${href})`, "", `*[${text}](${href})*`);
+        continue;
+      }
+      const plain = line.match(PLAIN_CAPTION);
       result.push(line);
-      if (m) result.push("", `*${m[1]}*`);
+      if (plain) result.push("", `*${plain[1]}*`);
     }
     out = result.join("\n");
   }
