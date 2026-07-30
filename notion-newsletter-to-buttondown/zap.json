@@ -1,9 +1,10 @@
 {
   "name": "notion-newsletter-to-buttondown",
   "workflow_id": "019f0cba-8f96-76a4-8aff-3ec87e9178e4",
-  "current_version_id": "019fa3c9-a386-77d7-b296-93d094df4bc2",
+  "current_version_id": "019fb23c-3677-7024-bb7f-8dd141b4a770",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ARcz_XgM1aTd9G3qiaKOlg",
   "enabled": true,
+  "is_private": false,
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
     "action": "hook_v2",
@@ -18,6 +19,6 @@
     "@zapier/zapier-sdk": "0.80.0"
   },
   "created_at": "2026-06-28T05:36:21.123Z",
-  "version_created_at": "2026-07-27T13:35:28.645Z",
+  "version_created_at": "2026-07-30T08:55:18.606Z",
   "description": "Notion Newsletter Issues page -> Buttondown draft/scheduled email. Native markdown export fixes callouts/columns; create-or-update keyed on the page's Buttondown ID."
 }
