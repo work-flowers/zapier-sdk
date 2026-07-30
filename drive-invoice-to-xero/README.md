@@ -21,31 +21,44 @@ which is what files invoice PDFs into that folder in the first place.
 1. **Trigger** — Google Drive *New File in Folder* on **Invoices**, one run per file.
 2. **PDF gate** (plain code, no task cost) — anything that isn't `application/pdf`, or is in the
    trash, is skipped. Carried over from the classic Zap's "PDFs only" filter.
-3. **Extract — a single AI call.** The PDF itself goes to AI by Zapier (`standard/auto`, built-in
-   credentials) as a file input, and one call returns **both** the invoice header and the full
-   line-item table. The classic Zap used two calls. The prompt lives in
+3. **Extract the invoice — AI call 1.** The PDF itself goes to AI by Zapier (`standard/auto`,
+   built-in credentials) as a file input, and one call returns **both** the invoice header and the
+   full line-item table. The prompt lives in
    [`invoice-extraction-prompt.md`](invoice-extraction-prompt.md).
 4. **Rename** — the Drive file becomes `<invoice date> <vendor>`.
 5. **Match** — look for a `SPEND` bank transaction for the same vendor, total and currency in the
    *Xero Bank Transactions* Zapier Table. See [Matching](#matching).
-6. **Either / or:**
-   - **Matched** → upload the PDF as an attachment on that Xero bank transaction. Done.
+6. **Extract the payment instructions — AI call 2.** A second, focused call reads how the vendor
+   wants to be paid — bank account, IBAN, SWIFT, bank/branch codes, PayNow alias, account holder.
+   Prompt: [`payment-extraction-prompt.md`](payment-extraction-prompt.md). This is a separate call
+   rather than more fields on the first one, and the measurement that forced that is in
+   [Why two AI calls](#why-two-ai-calls).
+7. **Either / or:**
+   - **Matched** → upload the PDF as an attachment on that Xero bank transaction, record the
+     vendor's payment details, done.
    - **Not matched** → check Xero for an existing bill with this invoice number, and if there
-     isn't one, resolve the vendor's **contact** (see [Vendor contacts](#vendor-contacts)) and
-     create a **draft bill** against it. See [Line items](#line-items).
+     isn't one, resolve the vendor's **contact** (see [Vendor contacts](#vendor-contacts)), record
+     the vendor's payment details, and create a **draft bill** against it. See
+     [Line items](#line-items).
+
+Both finishing paths write the [Vendor Payment Details](#vendor-payment-details) row — a settled
+invoice still tells you where that vendor banks, which is what the *next* one gets paid into.
 
 ```mermaid
 flowchart TD
     T["📄 Google Drive: New File in Folder<br/><i>Invoices · one run per file</i>"] --> G{"PDF?<br/>not trashed?"}
     G -- no --> X["⏹ skip"]
-    G -- yes --> AI["🤖 AI by Zapier · get_completion<br/><b>ONE call, PDF as file input</b><br/>→ vendor · number · dates · currency · total<br/>· tax flag · tax basis · line items<br/>· vendor address · phone · tax no. · bank"]
+    G -- yes --> AI["🤖 AI call 1 · get_completion<br/><b>PDF as file input · 21 fields</b><br/>→ vendor · number · dates · currency · total<br/>· tax flag · tax basis · line items<br/>· vendor address · phone · tax no."]
     AI --> V{"vendor<br/>extracted?"}
     V -- no --> X2["⏹ skip — file left alone"]
     V -- yes --> R["Google Drive<br/>rename → '&lt;invoice date&gt; &lt;vendor&gt;'"]
     R --> Q["🔎 Zapier Table<br/><i>Xero Bank Transactions</i><br/>±7d window · free read"]
-    Q --> M{"SPEND match?<br/>vendor + total + currency"}
+    Q --> AI2["🤖 AI call 2 · get_completion<br/><b>payment instructions · 16 fields</b><br/>inputs: PDF + the resolved vendor NAME<br/>→ account no · IBAN · SWIFT · bank/branch code<br/>· PayNow alias · account holder · legal type"]
+    AI2 --> M{"SPEND match?<br/>vendor + total + currency"}
 
     M -- yes --> A["📎 Xero · upload_attachment<br/>on the bank transaction"]
+    A --> VP1["💾 Vendor Payment Details<br/><i>contact id comes free off the<br/>matched Table row</i> · 0 tasks"]
+    VP1 --> XA["⏹ done — attached"]
     M -- no --> D{"bill already in Xero<br/>with this invoice number?"}
     D -- "yes, live" --> X3["⏹ skip — duplicate"]
     D -- no --> C["📇 GET /Contacts<br/>resolve the vendor"]
@@ -53,9 +66,11 @@ flowchart TD
     CT -- "one match" --> CE["fill only its EMPTY fields<br/><i>bill binds to the STORED name</i>"]
     CT -- "several" --> CA["⚠️ change nothing<br/>log for a human merge"]
     CT -- "none" --> CC["🆕 create the contact<br/>with address · phone · tax no. · bank"]
-    CE --> L{"line items reconcile<br/>to the invoice total?"}
-    CA --> L
-    CC --> L
+    CE --> VP2
+    CA --> VP2
+    CC --> VP2
+    VP2["💾 Vendor Payment Details · 0 tasks<br/>fill empty · corroborate · or<br/>⚠️ FLAG a changed account and<br/>overwrite nothing"]
+    VP2 --> L{"line items reconcile<br/>to the invoice total?"}
     L -- yes --> B["🧾 Xero · new_bill (draft)<br/>extracted lines"]
     L -- "no / none" --> B2["🧾 Xero · new_bill (draft)<br/>single line for the total"]
 ```
@@ -79,6 +94,46 @@ code for nothing.
 
 A window this wide is only safe *because* the amount must match exactly. When more than one
 transaction still qualifies, the nearest by date wins and the count is logged.
+
+## Why two AI calls
+
+The payment fields were first folded into the existing extraction call, taking it from 21 output
+fields to 34. **That measurably broke the header.** A/B'd on the same PDF, same tier, six runs each:
+
+| Schema | Correct vendor name |
+| --- | --- |
+| 21 fields — header only | **6/6** |
+| 34 fields — header + payment | **2/6** |
+
+The four failures returned `Company Flow Pte. Ltd.` — *our own* entity — as the vendor, with
+`Vendor Country: Singapore` to match. `2026-07-02 Slack Technologies Limited` has a two-column
+header, and under field pressure the model stopped resolving which column was which.
+
+That is the worst available failure. `Vendor Name` binds the Xero contact **and** the draft bill, so
+a header error raises a bill against the wrong party; a missing bank detail merely stops a payment.
+So the header call keeps its proven 21-field shape byte-for-byte, and the payment tuple gets a
+prompt that does one thing.
+
+The second call receives the vendor name as its own `Vendor` input field. That is what makes a
+payment-only prompt safe: without it, a prompt that never reasons about the header has no way to
+tell the vendor's remittance block from the recipient's own bank details, which most invoices also
+print. It goes in as an input field rather than interpolated into the instructions so the prompt
+text stays static and `scripts/check-prompts.mjs` can verify it verbatim.
+
+**Cost: +1 task per invoice.** The alternative is a cheaper Zap that sometimes bills the wrong
+vendor.
+
+Two things are derived in code rather than by loosening the prompt, because both are exact and the
+prompt's job is to refuse to guess:
+
+- **Bank country** from characters 5–6 of the SWIFT/BIC, which *are* the ISO-3166 country code by
+  definition (`CMFGUS33` → `US`). The prompt rightly forbids inferring a country from a currency or
+  phone code, which left the US invoices with no corridor at all. Decoding a fixed-position field
+  is not an inference.
+- **Legal type** from a company suffix on the account holder. The model answers `Unknown` even when
+  the holder it just read is plainly a `Pte. Ltd.` This only ever upgrades `Unknown` → `BUSINESS`;
+  it never contradicts a stated answer, and never guesses `PRIVATE` from the absence of a suffix,
+  since a business can trade under a bare name.
 
 ## Vendor contacts
 
@@ -128,8 +183,12 @@ like, and a contact's bank account outlives the bill that introduced it. So:
 
 The same fill-empty-only rule covers address, phone, tax number and email. Existing values are
 re-sent with every update, so a contact holding both a `STREET` and a `POBOX` address keeps both.
-Bank name and SWIFT/BIC are extracted but have nowhere to go: Xero's `BankAccountDetails` is one
-free-text field. They appear in the log and the run output only.
+
+Xero's `BankAccountDetails` is one free-text field, so the rest of the tuple — SWIFT/BIC, bank
+name, sort/routing code, branch code, PayNow alias — has nowhere to go in Xero. That is what the
+[Vendor Payment Details](#vendor-payment-details) Table is for. Note that the Xero field still
+receives the account number **or** the IBAN, whichever the invoice printed, exactly as it did
+before the two were split apart for Wise's benefit.
 
 ### Cost
 
@@ -141,6 +200,77 @@ Per run, on top of what this Zap already spends. The attach branch is unchanged 
 | Contact matched, fields to fill | +3 (list, full read, write) |
 | No match, details extracted | +2 (list, create) |
 | No match, nothing extracted | +1 — the create is skipped, since `new_bill` would make the same bare contact for free |
+
+## Vendor Payment Details
+
+Zapier Table **`01KYR653H04DNMKKYAZ72534YG`**, one row per Xero contact, keyed on
+`xero_contact_id`. Written here; read by
+[`xero-bill-approved-to-wise-transfer`](../xero-bill-approved-to-wise-transfer/) to build a Wise
+recipient. Reads and writes cost **no tasks**, so keeping it costs nothing.
+
+It exists because Xero cannot hold a payment instruction. `BankAccountDetails` is a single
+free-text field, and Wise needs the parts separately: `details.accountNumber` and `details.iban`
+are different keys on different account types, and a sort code, an ABA routing number and a
+Singapore bank code all go in different places. Full schema and reasoning:
+[`payment-details-design.md`](../xero-bill-approved-to-wise-transfer/payment-details-design.md).
+
+### PayNow is not the edge case
+
+**9 of the 14 active recipients on the live Wise account are PayNow aliases, not bank accounts.**
+For most vendors here it is the only payable rail, which is why `paynow_identifier` and its type
+are first-class columns rather than an afterthought.
+
+### Write classes
+
+Nothing frozen is **ever** overwritten. What differs between the classes is what a disagreement
+means.
+
+| Class | Columns | Rule |
+| --- | --- | --- |
+| **Money identity** | `account_number`, `iban`, `swift_bic`, `bank_code`, `branch_code`, `paynow_identifier` | Filled when empty. A disagreement sets `needs_review`, writes `conflict_note`, and changes nothing else — not even other empty fields. |
+| **Descriptive** | `account_holder_name`, `vendor_legal_type`, `account_type`, `account_currency`, `bank_country_code`, `paynow_identifier_type`, `bank_code_label` | Filled when empty, never overwritten. Drift is reported in the run output but does **not** raise `needs_review`. |
+| **Correctable** | `xero_contact_name`, `bank_name`, `bank_address`, `payment_method`, the five `beneficiary_*` address fields | Fill a gap or fix drift, never blank. None of these can redirect a payment. |
+| **Provenance** | `source_file_id`, `source_file_name`, `source_invoice_number`, `first_seen` | Written once, with the tuple they are the provenance of. |
+| **Counters** | `last_seen`, `confirmations` | Always updated — except on a contradiction, which is not a corroboration. |
+| **Wise cache** | the five `wise_recipient_*` columns | Never written here. Single-writer: the payment Zap owns them. |
+
+Splitting money-identity from descriptive is deliberate. Freezing everything and alarming on any
+difference sounds safer and is worse: a vendor reformatting its own name would raise a fraud alert,
+and an alert that fires on formatting is an alert nobody reads.
+
+Comparison is normalised via `normalizeAccountNumber`. Your Eugene Thuraisingam account is stored
+in Wise as `0721445433` and their invoice prints `072-144543-3` — the same account. Without
+normalising, every Singapore vendor's second invoice would raise a false alarm.
+
+### ⚠️ What happens on a changed account
+
+Nothing is overwritten, ever. Beyond that it depends on whether a Wise recipient has been cached:
+
+- **No recipient cached** → `conflict-reported`. `needs_review` goes up, the draft bill is still
+  raised. The bill was never the risk; the payment is.
+- **Recipient cached** → `conflict-blocked`. Same flag, and the payment Zap will refuse to prepare
+  anything for that vendor until a human clears it.
+
+Both log a `WARNING` printing **both** account numbers in full, because someone deciding whether
+they are being defrauded needs to compare the two values, not a masked summary.
+
+**To clear it**, verify out of band — phone the vendor on a number you already had, never one
+printed on the new invoice. Then either:
+
+- **Keep the old details:** blank `needs_review`, `conflict_note`, `conflict_detected_at`.
+- **Accept the change:** blank the frozen tuple **and** all five `wise_recipient_*` columns **and**
+  the three flag columns. The next invoice refills from scratch and a fresh Wise recipient is
+  minted. Nothing partial — a half-cleared row reads as a never-seen vendor.
+
+### Known gap
+
+No Xero contact id means no key, so no row. That covers the `ambiguous`, `deferred-to-new-bill` and
+`suppressed-*` contact paths. Only `deferred-to-new-bill` loses anything real, and only for a
+**brand-new** vendor whose invoice prints a PayNow alias and nothing else at all — any bank account
+forces a contact create, which yields an id. The next invoice from them picks it up.
+
+A Table failure never costs a bill: the write is wrapped, and an error is logged and reported as
+`vendorPaymentRow.outcome: "error"` while the bill goes ahead regardless.
 
 ## Line items
 
@@ -350,6 +480,46 @@ and falls back to the org default on a bare `$`. An unnormalised `US$` would fai
 bank-transaction currency comparison — raising a duplicate draft bill for an already-paid invoice —
 and then reach Xero as the bill's currency.
 
+### Payment-instruction extraction, `standard/auto`
+
+Nine real PDFs through the offline `run-action` harness, 2026-07-30, with the prompt and
+`PAYMENT_OUTPUT_FIELDS` lifted verbatim out of `workflow.ts`. Ground truth read off the documents
+first. All 16 fields present in every response; every self-consistency check passed (no bank code
+equal to an account number, `bank_code_label` present exactly when `bank_code` is, PayNow type
+`None` exactly when no alias).
+
+| Invoice | Expected | Result |
+| --- | --- | --- |
+| `2026-07-28 Lantern Labs Pte. Ltd.` | full US remittance block | ✅ `8311123520` · `CMFGUS33` · `026073008` labelled `Routing number` · holder `Lantern Labs Pte. Ltd.` — matches the ground truth in `zap.json`, and the routing number is correctly **not** in the account field. Bank name blank: the invoice never names the bank, and deriving it from the SWIFT is forbidden. |
+| `2026-07-14 Private Venue Management Pte Ltd` | DBS local | ✅ `072-824536-0` · bank code `7171` · branch `001` · `DBSSSGSG` · `SGD`. Normalises to `0728245360`, **exactly** the `accountNumber` on live Wise recipient `1505954755`, same bank code. |
+| `2026-07-14 Brilliant Color Printing Services LLP` | bank **and** PayNow | ✅ `Both` · account `506073352001` · PayNow UEN `T14LL2123A`. That vendor does have a PayNow recipient in Wise. |
+| `2026-07-29 Lantern Labs Pte. Ltd.` | PayNow **QR only** | ✅ `PayNow` with a blank alias — a QR image is not readable text, so the alias behind it is correctly not invented. Honest and unpayable, which is the right answer. |
+| `2026-07-24` + `2026-06-28 Anthropic, PBC` | nothing — card link + cheque PO Box | ✅ `CardLink`, every field empty. The cheque "PAYMENT ADDRESS" is still not mistaken for a bank account. |
+| `2026-07-02 Slack Technologies Limited` | nothing | ✅ `None`, every field empty — and notably it did **not** pick up our own details |
+| `2026-07-07 Aspire FT Pte. Ltd.` | nothing printed | ✅ `None` |
+| `2026-07-19 SimplePay Pte Ltd` | nothing printed | ✅ `None` |
+
+Two bugs this harness caught and the prompt now fixes:
+
+- **Brilliant Color put the account number in `Vendor Bank Code`**, labelled `Ac No.` The prompt now
+  states that a value labelled "Account No.", "Ac No.", "A/C" or "Acct" is an account number
+  whatever else is nearby, and that the bank code must never repeat the account digits. Re-tested:
+  blank, correctly. Note it was **`bank_code_label` that exposed this** — without that column the
+  bogus code would have been invisible and unfalsifiable, which is the argument for its existence.
+- **PayNow type came back `Unknown` with a blank alias** on one invoice. The enum now carries an
+  explicit `None` and the prompt names it.
+
+### Vendor-payment-row logic, offline
+
+**39 assertions, all passing**, run against `tsc`'s own emitted output for `workflow.ts` — so the
+code asserted is the code that deploys, with a mock Table so nothing is written. Covers: the two
+code-side derivations and the sentinel stripping; create / corroborate / fill; DBS punctuation
+*not* raising a conflict; a changed account number reported with `needs_review` and **nothing else
+touched, not even empty fields**; the same case escalating to `conflict-blocked` when a Wise
+recipient is cached; `confirmations` **not** incremented by a contradiction; descriptive drift
+recorded without alarming; a changed PayNow UEN treated as a conflict; and a Table outage returning
+`error` rather than throwing, so the bill still gets raised.
+
 ## Live runs
 
 Both Lantern Labs invoices arrived by email from `me@petergao.com` and reached the Invoices folder
@@ -471,11 +641,16 @@ USD 7,750.00 with the PDF attached.
 
 ## Model tier
 
-`standard/auto` — 1× tasks per run. Standard read every invoice above correctly, including
-Vanta's 19-row table and the tax-basis judgement, so there was no reason to inherit Zapier's
-Advanced default (which exists mainly to enable tool calls; this step makes none). The classic Zap
-pinned `google/gemini-2.5-flash-lite` explicitly; the tier sentinel on built-in credentials
-replaces that. Re-run the table above before changing tier.
+`standard/auto` for **both** calls — 1× tasks each. Standard read every invoice above correctly,
+including Vanta's 19-row table and the tax-basis judgement, so there was no reason to inherit
+Zapier's Advanced default (which exists mainly to enable tool calls; neither step makes any). The
+classic Zap pinned `google/gemini-2.5-flash-lite` explicitly; the tier sentinel on built-in
+credentials replaces that. Re-run the tables above before changing tier.
+
+Worth being explicit, since the header regression looks like a tier problem and is not one: the fix
+for 34-field degradation was **splitting the call**, not buying a better model. Standard at 21
+fields scored 6/6. Upgrading the tier to paper over a schema that asks one call to do two jobs would
+have cost 3× per run and left the same design fault in place.
 
 ## Publishing
 

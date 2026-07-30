@@ -399,6 +399,13 @@ interface Candidate {
   currency: string;
   total: number;
   lagDays: number;
+  /**
+   * `Contact.ContactID` as mirrored on the bank-transaction row. Free here and
+   * an exact bind, so the already-paid branch can write the vendor's payment
+   * details without paying for the contact lookup the create-bill branch needs.
+   * Bank TRANSFERS carry `""` rather than a contact, hence nullable.
+   */
+  contactId: string | null;
 }
 
 // --- Vendor contacts -------------------------------------------------------
@@ -723,6 +730,453 @@ function extractFile(payload: unknown): {
   };
 }
 
+// --- Vendor payment details -------------------------------------------------
+//
+// The payment instruction, bound for the `Vendor Payment Details` Table and
+// from there to a Wise recipient in `xero-bill-approved-to-wise-transfer`.
+//
+// Deliberately NOT part of `VendorDetails`: that shape drives the Xero contact
+// write, and `hasVendorDetails` treats any non-null field as reason to write a
+// contact. Folding payment fields in would make an invoice carrying nothing but
+// a remittance block raise a Xero contact update.
+
+/** One row per Xero contact. Key `xero_contact_id`. */
+const VENDOR_PAYMENT_TABLE = "01KYR653H04DNMKKYAZ72534YG";
+
+interface PaymentDetails {
+  method: string | null;
+  accountHolderName: string | null;
+  legalType: string | null;
+  accountNumber: string | null;
+  iban: string | null;
+  swiftBic: string | null;
+  bankName: string | null;
+  bankCode: string | null;
+  bankCodeLabel: string | null;
+  branchCode: string | null;
+  accountType: string | null;
+  accountCurrency: string | null;
+  bankAddress: string | null;
+  bankCountryCode: string | null;
+  payNowIdentifier: string | null;
+  payNowIdentifierType: string | null;
+}
+
+/**
+ * `Unknown` and `None` are answers the prompt asks for when the invoice does not
+ * state a value — they are not data, so they never reach the Table. Without this
+ * the Wise payload builder would have to treat the literal string "Unknown" as a
+ * legal type.
+ */
+function meaningful(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  return /^(unknown|none|n\/a)$/i.test(s) ? null : s;
+}
+
+/** Model-facing option labels -> the enum values Wise's create API takes. */
+const LEGAL_TYPES: Record<string, string> = { business: "BUSINESS", private: "PRIVATE" };
+const ACCOUNT_TYPES: Record<string, string> = { checking: "CHECKING", savings: "SAVINGS" };
+const PAYMENT_METHODS: Record<string, string> = {
+  banktransfer: "BANK_TRANSFER",
+  paynow: "PAYNOW",
+  both: "BOTH",
+  cardlink: "CARD_LINK",
+  portal: "PORTAL",
+  directdebit: "DIRECT_DEBIT",
+  cheque: "CHEQUE",
+  none: "NONE",
+};
+const PAYNOW_TYPES: Record<string, string> = {
+  uen: "UEN",
+  mobile: "MOBILE",
+  nric: "NRIC",
+  vpa: "VPA",
+};
+
+function mapEnum(table: Record<string, string>, v: unknown): string | null {
+  const s = meaningful(v);
+  return s ? (table[s.toLowerCase().replace(/[^a-z]/g, "")] ?? null) : null;
+}
+
+/** Company-suffix test, for inferring a legal type the model left Unknown. */
+const COMPANY_SUFFIX =
+  /\b(pte\.?\s*ltd|pty\.?\s*ltd|ltd|limited|llc|llp|lp|inc|incorporated|corp|corporation|gmbh|ag|bv|nv|sa|srl|plc|co|company|pbc)\.?$/i;
+
+function extractPaymentDetails(raw: Record<string, unknown>): PaymentDetails {
+  const swiftBic = meaningful(raw["Vendor Bank SWIFT/BIC"]);
+  const accountHolderName = meaningful(raw["Vendor Account Holder Name"]);
+
+  // Two derivations done here rather than by loosening the prompt, because both
+  // are exact and the prompt's job is to refuse to guess.
+  //
+  // 1. A SWIFT/BIC's 5th and 6th characters ARE the ISO-3166 country code, by
+  //    definition — `CMFGUS33` is US. The prompt forbids inferring a country
+  //    from a SWIFT code (rightly: it must not infer from a currency or phone
+  //    code either), which left Lantern Labs with no corridor at all. Decoding
+  //    a fixed-position field is not an inference.
+  // 2. The model answers `Unknown` for the legal type even when the account
+  //    holder it just read is plainly a `Pte. Ltd.`. A company suffix settles
+  //    it. Only ever upgrades Unknown -> BUSINESS; never contradicts a stated
+  //    answer, and never guesses PRIVATE from the absence of a suffix, since a
+  //    business can trade under a bare name.
+  let bankCountryCode = meaningful(raw["Vendor Bank Country Code"]);
+  if (!bankCountryCode && swiftBic && /^[A-Za-z]{6}/.test(swiftBic)) {
+    bankCountryCode = swiftBic.slice(4, 6).toUpperCase();
+  }
+
+  let legalType = mapEnum(LEGAL_TYPES, raw["Vendor Legal Type"]);
+  if (!legalType && accountHolderName && COMPANY_SUFFIX.test(accountHolderName.trim())) {
+    legalType = "BUSINESS";
+  }
+
+  return {
+    method: mapEnum(PAYMENT_METHODS, raw["Payment Method Offered"]),
+    accountHolderName,
+    legalType,
+    accountNumber: meaningful(raw["Vendor Bank Account Number"]),
+    iban: meaningful(raw["Vendor Bank IBAN"])?.replace(/\s+/g, "") ?? null,
+    swiftBic,
+    bankName: meaningful(raw["Vendor Bank Name"]),
+    bankCode: meaningful(raw["Vendor Bank Code"]),
+    bankCodeLabel: meaningful(raw["Vendor Bank Code Label"]),
+    branchCode: meaningful(raw["Vendor Bank Branch Code"]),
+    accountType: mapEnum(ACCOUNT_TYPES, raw["Vendor Bank Account Type"]),
+    accountCurrency: toCurrencyCode(raw["Vendor Bank Account Currency"]),
+    bankAddress: meaningful(raw["Vendor Bank Address"]),
+    bankCountryCode,
+    payNowIdentifier: meaningful(raw["Vendor PayNow Identifier"]),
+    payNowIdentifierType: mapEnum(PAYNOW_TYPES, raw["Vendor PayNow Identifier Type"]),
+  };
+}
+
+/**
+ * The money-identity fields. A stored value disagreeing with a new invoice on
+ * ANY of these is a possible invoice redirection, so it sets `needs_review` and
+ * nothing is overwritten. Compared normalised: `072-144543-3` and `0721445433`
+ * are the same DBS account, and a false alarm on every Singapore vendor's second
+ * invoice would train a human to ignore the flag.
+ */
+const IDENTITY_FIELDS = [
+  "account_number",
+  "iban",
+  "swift_bic",
+  "bank_code",
+  "branch_code",
+  "paynow_identifier",
+] as const;
+
+/**
+ * Filled when empty, never overwritten, and a disagreement is reported in the
+ * run output WITHOUT raising `needs_review`. None of these can redirect a
+ * payment on its own, and all of them change legitimately — a vendor
+ * restructures, or a country is stated for the first time. Treating them as
+ * fraud signals would bury the six above in noise.
+ */
+const DESCRIPTIVE_FROZEN = [
+  "account_holder_name",
+  "vendor_legal_type",
+  "account_type",
+  "account_currency",
+  "bank_country_code",
+  "paynow_identifier_type",
+  "bank_code_label",
+] as const;
+
+/** Fill a gap or fix drift, never blank. Cannot redirect money. */
+const CORRECTABLE = [
+  "xero_contact_name",
+  "bank_name",
+  "bank_address",
+  "payment_method",
+  "beneficiary_address_line1",
+  "beneficiary_address_line2",
+  "beneficiary_city",
+  "beneficiary_state",
+  "beneficiary_postcode",
+] as const;
+
+/** Written once, with the tuple they are the provenance of. */
+const FILL_ONLY = ["source_file_id", "source_file_name", "source_invoice_number", "first_seen"] as const;
+
+/** A Zapier Table datetime read in the account's timezone unless pinned to UTC. */
+function toTableDate(iso: string): string {
+  return `${iso}T00:00:00Z`;
+}
+
+interface VendorPaymentUpsert {
+  contactId: string;
+  contactName: string | null;
+  payment: PaymentDetails;
+  vendor: VendorDetails;
+  fileId: string;
+  fileName: string;
+  invoiceNumber: string | null;
+  today: string;
+}
+
+type VendorPaymentOutcome =
+  | "created"
+  | "corroborated"
+  | "filled"
+  | "conflict-reported"
+  | "conflict-blocked"
+  | "unchanged";
+
+/**
+ * Upsert this vendor's payment instruction.
+ *
+ * Read and write live in ONE `ctx.step` so a retry re-reads rather than writing
+ * a merge computed from stale state — the same reason the contact enrichment
+ * above does it.
+ *
+ * Never throws on a Table error: an invoice must not fail to become a bill
+ * because this bookkeeping could not be written.
+ */
+async function upsertVendorPaymentRow(
+  ctx: { step<T>(name: string, run: () => Promise<T>): Promise<T> },
+  label: string,
+  args: VendorPaymentUpsert,
+): Promise<{
+  outcome: VendorPaymentOutcome | "error" | "skipped";
+  reason?: string;
+  filled?: string[];
+  conflicts?: { field: string; stored: string; invoice: string }[];
+  drifted?: { field: string; stored: string; invoice: string }[];
+  recipientCached?: boolean;
+  confirmations?: number | null;
+}> {
+  return ctx.step(`${label}-vendor-payment-row`, async () => {
+    try {
+      const found = await sdk.listTableRecords({
+        table: VENDOR_PAYMENT_TABLE,
+        keyMode: "names",
+        filters: [{ fieldKey: "xero_contact_id", operator: "exact", value: args.contactId }],
+        pageSize: 10,
+      });
+      const rows = (found?.data ?? []) as any[];
+      // Oldest ULID first, so two concurrent runs independently agree on which
+      // row is canonical.
+      rows.sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? "")));
+      const row = rows[0] ?? null;
+      const stored: Record<string, unknown> = (row?.data ?? {}) as Record<string, unknown>;
+
+      const p = args.payment;
+      const v = args.vendor;
+      const incoming: Record<string, string | null> = {
+        account_number: p.accountNumber,
+        iban: p.iban,
+        swift_bic: p.swiftBic,
+        bank_code: p.bankCode,
+        branch_code: p.branchCode,
+        paynow_identifier: p.payNowIdentifier,
+        account_holder_name: p.accountHolderName,
+        vendor_legal_type: p.legalType,
+        account_type: p.accountType,
+        account_currency: p.accountCurrency,
+        bank_country_code: p.bankCountryCode,
+        paynow_identifier_type: p.payNowIdentifierType,
+        bank_code_label: p.bankCodeLabel,
+        xero_contact_name: args.contactName,
+        bank_name: p.bankName,
+        bank_address: p.bankAddress,
+        payment_method: p.method,
+        beneficiary_address_line1: v.addressLine1,
+        beneficiary_address_line2: v.addressLine2,
+        beneficiary_city: v.city,
+        beneficiary_state: v.region,
+        beneficiary_postcode: v.postalCode,
+      };
+
+      const readStored = (field: string): string | null =>
+        field === "vendor_legal_type" ||
+        field === "account_type" ||
+        field === "account_currency" ||
+        field === "paynow_identifier_type" ||
+        field === "payment_method"
+          ? labeledValue(stored[field])
+          : firstString(stored[field]);
+
+      /** Same account / same alias, punctuation and case aside. */
+      const sameValue = (field: string, a: string, b: string): boolean => {
+        if (field === "account_number" || field === "iban" || field === "paynow_identifier") {
+          return normalizeAccountNumber(a) === normalizeAccountNumber(b);
+        }
+        return a.replace(/[\s-]/g, "").toUpperCase() === b.replace(/[\s-]/g, "").toUpperCase();
+      };
+
+      const conflicts: { field: string; stored: string; invoice: string }[] = [];
+      const drifted: { field: string; stored: string; invoice: string }[] = [];
+      for (const field of IDENTITY_FIELDS) {
+        const was = readStored(field);
+        const now = incoming[field];
+        if (was && now && !sameValue(field, was, now)) conflicts.push({ field, stored: was, invoice: now });
+      }
+      for (const field of DESCRIPTIVE_FROZEN) {
+        const was = readStored(field);
+        const now = incoming[field];
+        if (was && now && !sameValue(field, was, now)) drifted.push({ field, stored: was, invoice: now });
+      }
+
+      const recipientCached = toNumber(stored["wise_recipient_id"]) != null;
+      const nowStamp = toTableDate(args.today);
+
+      // A disagreement on a money-identity field is never applied and never
+      // filled around: an emailed invoice asking to be paid somewhere new is
+      // what invoice redirection looks like. Only the flags are written, so a
+      // human decides. `confirmations` is deliberately NOT bumped — this
+      // invoice did not corroborate the stored tuple, it contradicted it.
+      if (conflicts.length > 0) {
+        const note =
+          conflicts.map((c) => `${c.field}: stored "${c.stored}" vs invoice "${c.invoice}"`).join("; ") +
+          ` (${args.fileName}${args.invoiceNumber ? ` / ${args.invoiceNumber}` : ""})`;
+        if (row) {
+          await sdk.updateTableRecords({
+            table: VENDOR_PAYMENT_TABLE,
+            keyMode: "names",
+            records: [
+              {
+                id: row.id,
+                data: { needs_review: true, conflict_note: note, conflict_detected_at: nowStamp, last_seen: nowStamp },
+              },
+            ],
+          });
+        }
+        return {
+          outcome: recipientCached ? ("conflict-blocked" as const) : ("conflict-reported" as const),
+          conflicts,
+          recipientCached,
+          reason: note,
+        };
+      }
+
+      if (!row) {
+        const data: Record<string, unknown> = { xero_contact_id: args.contactId };
+        for (const [k, val] of Object.entries(incoming)) if (val != null) data[k] = val;
+        data.source_file_id = args.fileId;
+        data.source_file_name = args.fileName;
+        if (args.invoiceNumber) data.source_invoice_number = args.invoiceNumber;
+        data.first_seen = nowStamp;
+        data.last_seen = nowStamp;
+        data.confirmations = 1;
+        data.needs_review = false;
+        await sdk.createTableRecords({ table: VENDOR_PAYMENT_TABLE, keyMode: "names", records: [{ data }] });
+        return {
+          outcome: "created" as const,
+          filled: Object.keys(incoming).filter((k) => incoming[k] != null),
+          drifted,
+          recipientCached: false,
+          confirmations: 1,
+        };
+      }
+
+      const changes: Record<string, unknown> = {};
+      const filled: string[] = [];
+
+      // Frozen: fill a gap, never overwrite. Applies to the identity fields and
+      // the descriptive ones alike — the whole tuple is one payment instruction,
+      // and "correcting" one member of it while the rest stand produces an
+      // instruction that matches no invoice ever issued.
+      for (const field of [...IDENTITY_FIELDS, ...DESCRIPTIVE_FROZEN]) {
+        const now = incoming[field];
+        if (now != null && !readStored(field)) {
+          changes[field] = now;
+          filled.push(field);
+        }
+      }
+      for (const field of CORRECTABLE) {
+        const now = incoming[field];
+        if (now == null) continue;
+        const was = readStored(field);
+        if (was == null) filled.push(field);
+        else if (sameValue(field, was, now)) continue;
+        changes[field] = now;
+      }
+      for (const field of FILL_ONLY) {
+        if (firstString(stored[field])) continue;
+        const val =
+          field === "source_file_id" ? args.fileId
+          : field === "source_file_name" ? args.fileName
+          : field === "source_invoice_number" ? args.invoiceNumber
+          : nowStamp;
+        if (val != null) changes[field] = val;
+      }
+
+      const confirmations = (toNumber(stored["confirmations"]) ?? 0) + 1;
+      changes.last_seen = nowStamp;
+      changes.confirmations = confirmations;
+
+      await sdk.updateTableRecords({
+        table: VENDOR_PAYMENT_TABLE,
+        keyMode: "names",
+        records: [{ id: row.id, data: changes }],
+      });
+
+      return {
+        outcome: filled.length > 0 ? ("filled" as const) : ("corroborated" as const),
+        filled,
+        drifted,
+        recipientCached,
+        confirmations,
+      };
+    } catch (err) {
+      // Bookkeeping must never cost a bill.
+      return { outcome: "error" as const, reason: String((err as Error)?.message ?? err) };
+    }
+  });
+}
+
+type VendorPaymentRowResult = Awaited<ReturnType<typeof upsertVendorPaymentRow>> | { outcome: "skipped"; reason: string };
+
+/**
+ * Narrate the vendor row. A bank-detail conflict is the one outcome here a human
+ * must actually see, so it gets the WARNING prefix and prints BOTH values in
+ * full — someone deciding whether they are being defrauded needs to compare the
+ * two account numbers, not a masked summary of them.
+ */
+function logVendorPaymentRow(res: VendorPaymentRowResult, vendorName: string, fileName: string): void {
+  switch (res.outcome) {
+    case "conflict-blocked":
+    case "conflict-reported":
+      console.log(
+        `WARNING: ${vendorName}'s stored payment details disagree with ${fileName} — ${res.reason}. ` +
+          `Nothing was overwritten and needs_review is set on table ${VENDOR_PAYMENT_TABLE}. ` +
+          (res.outcome === "conflict-blocked"
+            ? `A Wise recipient is already cached for this vendor, so xero-bill-approved-to-wise-transfer ` +
+              `will refuse to prepare a payment until a human clears the flag. `
+            : ``) +
+          `Verify out of band — phone the vendor on a number you already had, never one printed on this invoice.`,
+      );
+      break;
+    case "error":
+      console.log(
+        `WARNING: could not write ${vendorName}'s row in table ${VENDOR_PAYMENT_TABLE}: ${res.reason}. ` +
+          `The bill is unaffected; the vendor's payment details simply were not recorded.`,
+      );
+      break;
+    case "skipped":
+      console.log(`vendor payment row skipped for ${vendorName}: ${res.reason}`);
+      break;
+    case "created":
+      console.log(`recorded payment details for ${vendorName} (${(res.filled ?? []).length} field(s) from ${fileName})`);
+      break;
+    case "filled":
+      console.log(`filled ${(res.filled ?? []).join(", ")} on ${vendorName}'s payment details from ${fileName}`);
+      break;
+    default:
+      console.log(
+        `${vendorName}'s payment details corroborated by ${fileName} (confirmation ${res.confirmations ?? "?"})`,
+      );
+  }
+  if ("drifted" in res && res.drifted && res.drifted.length > 0) {
+    console.log(
+      `note: ${vendorName} — ${res.drifted
+        .map((d) => `${d.field} stored "${d.stored}", invoice says "${d.invoice}"`)
+        .join("; ")}. Left as stored; these cannot redirect a payment.`,
+    );
+  }
+}
+
 // --- Prompt ----------------------------------------------------------------
 // Verbatim copy of invoice-extraction-prompt.md (repo rule 6).
 // Edit the markdown, then run `node scripts/check-prompts.mjs --fix`.
@@ -933,6 +1387,199 @@ const OUTPUT_FIELDS = [
   },
 ];
 
+// --- Payment-instruction prompt --------------------------------------------
+// Verbatim copy of payment-extraction-prompt.md (repo rule 6).
+//
+// A SECOND AI call, not more fields on the first one. Folding these into
+// `OUTPUT_FIELDS` took that schema from 21 fields to 34 and measurably broke the
+// header: on `2026-07-02 Slack Technologies Limited`, same tier and same PDF,
+// the correct vendor name came back 6/6 at 21 fields and 2/6 at 34 — the
+// failures returning `Company Flow Pte. Ltd.`, our own entity, as the vendor.
+// `Vendor Name` binds the Xero contact and the draft bill, so that error is far
+// more expensive than a missing bank detail. Worth 1 extra task per invoice.
+const PAYMENT_PROMPT = `You are an expert accounts-payable analyst. Read the attached purchase invoice PDF and extract **only how the vendor wants to be paid**, so a payment can be prepared.
+
+The vendor — the party issuing the invoice, the party we owe — is given to you in the \`Vendor\` input. Everything you return must describe **that** party's payment details.
+
+## The one rule that matters
+
+We are recording where to send money. A wrong value sends money to the wrong place, and no downstream check will catch it. So:
+
+**Return an empty string rather than guessing.** Every field below is required, but an empty string is always an acceptable answer and is the RIGHT answer whenever the invoice does not state the value plainly. Never assemble a value from fragments on different parts of the page, never derive one field from another, and never carry a detail over from another invoice you have seen.
+
+Read payment details **only** from an explicit remittance block — a "Pay to", "Bank details", "Remittance advice", "Payment instructions", "How to pay" or "Bank transfer" section. Figures elsewhere on the invoice are not payment instructions.
+
+Two traps to watch for, both common:
+
+- **The invoice usually prints our details too.** The recipient (Company Flow Pte. Ltd. / workFlowers) appears under "Bill to", "Sold to", "Customer" or in a two-column header, and its bank account or UEN may be printed as well. Never return the recipient's details. When you cannot tell whose account a block describes, return empty.
+- **A postal address is not a bank account.** A "Payment address" or "Remit to" block giving only a street or PO Box is a cheque-mailing address. Return empty for every bank field in that case.
+
+Blank every field in this response when the invoice states it has already been paid.
+
+## Payment method
+
+- \`Payment Method Offered\` — how this invoice asks to be paid, judged only on what it prints. \`BankTransfer\` when it gives account details for a transfer. \`PayNow\` when it gives a PayNow QR, UEN, mobile or NRIC and no transfer details. \`Both\` when it offers a bank transfer **and** a PayNow alias. \`CardLink\` for a "pay online" / Stripe / PayPal button or URL. \`Portal\` for "log in to our billing portal". \`DirectDebit\` when the amount will be collected automatically from a card or account already on file. \`Cheque\` when the only instruction is to mail a cheque. \`None\` when the invoice gives no payment instruction at all.
+
+## Bank transfer
+
+- \`Vendor Bank Account Number\` — the plain domestic account number, exactly as printed, including any dashes or spaces the invoice uses. **Never an IBAN** — that has its own field.
+- \`Vendor Bank IBAN\` — the International Bank Account Number when the invoice prints one: a two-letter country code, two check digits, then the account. Give it without spaces. Blank when no IBAN is printed; never construct one from an account number.
+- \`Vendor Bank SWIFT/BIC\` — the SWIFT or BIC code for that account, 8 or 11 characters, letters and digits.
+- \`Vendor Bank Name\` — the bank holding the account, **only if the invoice prints it**. This is a bank, never the vendor: a remittance block usually leads with the account holder's name, which is the vendor's own name, and that does not belong here. Do not derive the bank from a SWIFT/BIC code, an account-number format or a country. Many invoices give an account number and a SWIFT code without ever naming the bank; empty is correct there.
+- \`Vendor Bank Code\` — a code that identifies the **bank or its clearing route**, printed *separately from* the account number: a US routing/ABA number, a UK sort code, an Australian BSB, an Indian IFSC, a Singapore bank code, a Canadian institution number. Digits and separators as printed.
+
+  This field is **not** the account number. If the only number printed is the account, leave this blank. Never return the same digits here that you returned for \`Vendor Bank Account Number\` or \`Vendor Bank IBAN\` — a value labelled "Account No.", "Ac No.", "A/C", "Acct" or similar is an account number, whatever else is nearby. When in doubt, blank.
+- \`Vendor Bank Code Label\` — the literal words the invoice prints beside that code: \`Routing number\`, \`ABA\`, \`Sort Code\`, \`BSB\`, \`IFSC\`, \`Bank Code\`, \`Institution Number\`. Copy the invoice's own wording rather than normalising it; several of these codes share a length, so this is what identifies which kind we hold. Give it whenever \`Vendor Bank Code\` is non-empty, and leave it blank whenever \`Vendor Bank Code\` is blank.
+- \`Vendor Bank Branch Code\` — a separate branch, transit or sub-code printed **in addition** to the bank code. Singapore prints a bank code and a branch code as distinct values (DBS \`7171\` / \`001\`); Japan, Brazil and Canada do likewise. Blank when the invoice prints only one code.
+- \`Vendor Bank Account Type\` — \`Checking\` or \`Savings\` when the invoice states which, otherwise \`Unknown\`. US invoices often state it; most others do not. Never guess.
+- \`Vendor Bank Account Currency\` — the ISO-4217 code of the currency **that account holds**, when the remittance block states it — a block headed "USD account", or several accounts listed by currency. This is not always the invoice's own currency. Blank when the block does not say.
+- \`Vendor Bank Address\` — the bank's own address as printed, on one line. Often given for international transfers. The bank's address, never the vendor's and never the recipient's.
+- \`Vendor Bank Country Code\` — the ISO-3166 alpha-2 code of the country the **account** is held in: \`SG\`, \`US\`, \`GB\`, \`AU\`, \`DE\`. Take it from the bank's stated address or country when the remittance block gives one; otherwise from the vendor's own stated country. Writing the code for a country the invoice names is a transliteration, not an inference, so \`Singapore\` is \`SG\`. What is never allowed is deriving a country from a currency, a phone code, a postal format or a SWIFT code. Blank when the invoice names no country at all.
+
+## Account holder
+
+- \`Vendor Account Holder Name\` — the name the account is held in, exactly as printed in the remittance block. This is frequently **not** identical to the vendor's invoicing name: a sole trader bills as a business and banks in a personal name, and a group company banks under a holding entity. Copy it as printed. Blank when the block names no account holder.
+- \`Vendor Legal Type\` — \`Business\` when the account holder is a company, \`Private\` when it is an individual person, \`Unknown\` when the document does not settle it. A name carrying \`Pte. Ltd.\`, \`Ltd\`, \`LLC\`, \`Inc.\`, \`GmbH\`, \`LLP\` is a business; a personal name is private. When no account holder is named at all, answer \`Unknown\` — do not fall back to the vendor's own name.
+
+## PayNow (Singapore)
+
+A PayNow instruction pays an **alias** rather than an account number. It appears as a QR code, or as a line like "PayNow UEN: 202442050M", "PayNow to +65 9366 2865", or "PayNow NRIC".
+
+- \`Vendor PayNow Identifier\` — the alias itself, exactly as printed: the UEN, mobile number, NRIC/FIN or virtual payment address, including a country code on a mobile when the invoice prints one. Blank when the invoice offers no PayNow option, and blank when it shows **only** a QR image with no alias printed in text — a QR is not readable text, and inventing the alias behind it is exactly the guess that sends money to a stranger.
+- \`Vendor PayNow Identifier Type\` — \`UEN\` for a business registration number, \`Mobile\` for a phone number, \`NRIC\` for an NRIC/FIN, \`VPA\` for a virtual payment address, \`Unknown\` when an alias is printed unlabelled and its kind is not obvious from its shape. Answer \`None\` — not \`Unknown\` — whenever \`Vendor PayNow Identifier\` is blank.
+
+A Singapore vendor's UEN is often printed twice: once as its tax number and once as its PayNow UEN. Returning the same value for the PayNow identifier is correct **only when the invoice actually presents it as a PayNow alias**. A UEN printed solely as a tax registration number is not a payment instruction — leave the PayNow fields blank in that case.`;
+
+/**
+ * Fields for the payment-instruction call. Same `isRequired: true` rule as
+ * `OUTPUT_FIELDS` and for the same reason: AI by Zapier drops a non-required
+ * output field from the response entirely, so the model is never asked for it.
+ *
+ * These do NOT go to Xero — its `BankAccountDetails` is a single free-text
+ * field, which is why the tuple is stored in the `Vendor Payment Details` Table
+ * for `xero-bill-approved-to-wise-transfer` to build a Wise recipient from.
+ * Account number and IBAN are separate fields because Wise's
+ * `details.accountNumber` and `details.iban` are different keys on different
+ * account types, so one field meaning "IBAN when stated, else account number"
+ * cannot build either payload without being re-parsed.
+ */
+const PAYMENT_OUTPUT_FIELDS = [
+  {
+    name: "Payment Method Offered",
+    description:
+      "How this invoice asks to be paid, judged only on what it prints. BankTransfer, PayNow, Both, CardLink, Portal, DirectDebit, Cheque, or None when it gives no payment instruction at all.",
+    type: "category_single",
+    isRequired: true,
+    options: ["BankTransfer", "PayNow", "Both", "CardLink", "Portal", "DirectDebit", "Cheque", "None"],
+  },
+  {
+    name: "Vendor Bank Account Number",
+    description:
+      "The plain domestic account number from an explicit remittance block, exactly as printed including dashes or spaces. NEVER an IBAN — that has its own field.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank IBAN",
+    description:
+      "International Bank Account Number when the invoice prints one: two-letter country code, two check digits, then the account, given without spaces. Blank when no IBAN is printed — never constructed from an account number.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank SWIFT/BIC",
+    description: "SWIFT or BIC code for that account, 8 or 11 characters, letters and digits.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Name",
+    description:
+      "Bank holding the account, only if the invoice prints it. A bank, never the vendor — a remittance block usually leads with the account holder's name. Never derived from a SWIFT/BIC, an account-number format or a country.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Code",
+    description:
+      "A code identifying the BANK or its clearing route, printed separately from the account number: US routing/ABA, UK sort code, Australian BSB, Indian IFSC, Singapore bank code, Canadian institution number. Never the same digits as the account number or IBAN; a value labelled 'Account No.', 'Ac No.', 'A/C' or 'Acct' is an account number. Blank when the only number printed is the account.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Code Label",
+    description:
+      "The literal words printed beside that code — 'Routing number', 'ABA', 'Sort Code', 'BSB', 'IFSC', 'Bank Code', 'Institution Number' — in the invoice's own wording. Several of these codes share a length, so this identifies which kind we hold. Non-empty exactly when Vendor Bank Code is non-empty.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Branch Code",
+    description:
+      "A separate branch, transit or sub-code printed IN ADDITION to the bank code (Singapore DBS 7171/001; also Japan, Brazil, Canada). Blank when the invoice prints only one code.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Account Type",
+    description: "Checking or Savings when the invoice states which, otherwise Unknown. Never guessed.",
+    type: "category_single",
+    isRequired: true,
+    options: ["Checking", "Savings", "Unknown"],
+  },
+  {
+    name: "Vendor Bank Account Currency",
+    description:
+      "ISO-4217 code of the currency that account holds, when the remittance block states it. Not always the invoice's own currency. Blank when the block does not say.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Address",
+    description:
+      "The bank's own address as printed, on one line. Often given for international transfers. The bank's address, never the vendor's and never the recipient's.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Bank Country Code",
+    description:
+      "ISO-3166 alpha-2 code of the country the ACCOUNT is held in, from the bank's stated address or country, else the vendor's stated country. A code for a named country is a transliteration (Singapore -> SG); never derived from a currency, phone code, postal format or SWIFT code. Blank when no country is named.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Account Holder Name",
+    description:
+      "The name the account is held in, exactly as printed in the remittance block. Frequently NOT the vendor's invoicing name — a sole trader banks personally, a group banks under a holding entity. Blank when the block names no account holder.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor Legal Type",
+    description:
+      "Business when the account holder is a company (Pte. Ltd., Ltd, LLC, Inc., GmbH, LLP), Private when it is an individual person, Unknown when the document does not settle it or names no account holder at all.",
+    type: "category_single",
+    isRequired: true,
+    options: ["Business", "Private", "Unknown"],
+  },
+  {
+    name: "Vendor PayNow Identifier",
+    description:
+      "The PayNow alias exactly as printed — UEN, mobile number, NRIC/FIN or virtual payment address — including a country code on a mobile when printed. Blank when no PayNow option is offered, AND blank when only a QR image is shown with no alias in text.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Vendor PayNow Identifier Type",
+    description:
+      "UEN for a business registration number, Mobile for a phone number, NRIC for an NRIC/FIN, VPA for a virtual payment address, Unknown when an alias is printed unlabelled and its kind is not obvious. None — not Unknown — whenever Vendor PayNow Identifier is blank.",
+    type: "category_single",
+    isRequired: true,
+    options: ["UEN", "Mobile", "NRIC", "VPA", "Unknown", "None"],
+  },
+];
+
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "drive-invoice-to-xero",
   async (ctx, rawInput) => {
@@ -1065,7 +1712,15 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         Math.abs(dayNumber(date) - dayNumber(header.dueDate)),
       );
       if (lagDays > MATCH_WINDOW_DAYS) continue;
-      candidates.push({ bankTransactionId, contactName, date, currency, total, lagDays });
+      candidates.push({
+        bankTransactionId,
+        contactName,
+        date,
+        currency,
+        total,
+        lagDays,
+        contactId: firstString(cell.contact_id),
+      });
     }
 
     const match = selectMatch(candidates);
@@ -1107,9 +1762,52 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       );
     }
 
+    // How the vendor wants to be paid. A SECOND AI call rather than more fields
+    // on the first one — see PAYMENT_PROMPT for the measurement that forced the
+    // split. The vendor name goes in as its own input field so a prompt that
+    // never reasons about the header can still tell the vendor's remittance
+    // block from ours, which most invoices also print.
+    //
+    // Placed here so BOTH outcomes that write a vendor row share one call: the
+    // already-paid branch below and the create-bill branch further down. The
+    // duplicate-bill guard in between returns without using it, so a redelivered
+    // PDF spends this task for nothing — rare enough to be worth the simplicity
+    // of a single call site.
+    const paymentCompletion = await ctx.step("extract-payment-details", async () =>
+      sdk.runAction({
+        appKey: AI_APP_KEY,
+        actionType: "write",
+        actionKey: "get_completion",
+        inputs: {
+          authentication_id: AI_AUTHENTICATION,
+          model_id: AI_MODEL,
+          isOutputArray: false,
+          instructions: PAYMENT_PROMPT,
+          inputFields: { Invoice: file.fileRef, Vendor: header.vendor },
+          inputFieldConfig_Invoice_isFileUrl: true,
+          outputFields: PAYMENT_OUTPUT_FIELDS,
+        },
+      }),
+    );
+    const paymentRaw = firstResult(paymentCompletion)?.result ?? firstResult(paymentCompletion) ?? {};
+    const payment = extractPaymentDetails(paymentRaw);
+
+    // Pure read of the completion already in hand, hoisted above the branch so
+    // the already-paid path can write a vendor row too. Costs nothing.
+    const vendorDetails = extractVendorDetails(raw);
+
     const base = {
       file: { id: file.id, title: file.title, originalFilename: file.originalFilename, renamedTo: newName },
       invoice: header,
+      payment: {
+        method: payment.method,
+        rails: [
+          payment.accountNumber || payment.iban ? "bank" : null,
+          payment.payNowIdentifier ? "paynow" : null,
+        ].filter(Boolean),
+        bankCountryCode: payment.bankCountryCode,
+        legalType: payment.legalType,
+      },
       renameOk: Boolean(firstResult(renamed)),
       candidatesConsidered: candidates.length,
       tableStale,
@@ -1142,11 +1840,28 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         `attached ${newName} to bank transaction ${match.bankTransactionId} ` +
           `(${match.contactName} ${match.date} ${match.currency} ${match.total})`,
       );
+      // This invoice is settled, but it still tells us where this vendor banks,
+      // which is what the NEXT one will be paid into. The contact id comes free
+      // off the matched Table row, so no contact lookup is needed on this branch.
+      const paidRow = match.contactId
+        ? await upsertVendorPaymentRow(ctx, "attach", {
+            contactId: match.contactId,
+            contactName: match.contactName,
+            payment,
+            vendor: vendorDetails,
+            fileId: file.id,
+            fileName: newName,
+            invoiceNumber: header.invoiceNumber,
+            today,
+          })
+        : { outcome: "skipped" as const, reason: "bank transaction carries no contact id" };
+      logVendorPaymentRow(paidRow, match.contactName, newName);
       return {
         ...base,
         outcome: "attached-to-existing-transaction",
         bankTransaction: match,
         attachmentOk: Boolean(firstResult(attached)),
+        vendorPaymentRow: paidRow,
       };
     }
 
@@ -1197,7 +1912,6 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     //     was resolved, not the invoice's spelling of it. Passing the invoice's
     //     spelling is what produced the duplicate contact pairs already in the
     //     ledger.
-    const vendorDetails = extractVendorDetails(raw);
     const contactsResponse = await ctx.step("list-xero-contacts", async () =>
       sdk.runAction({
         appKey: XERO_APP_KEY,
@@ -1386,6 +2100,32 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       contactReport.creation = contactsTruncated ? "suppressed-truncated-list" : "suppressed-unreadable-list";
     }
 
+    // Record where this vendor wants to be paid, keyed on the Xero contact.
+    //
+    // No contact id means no key, so no row: that covers the `ambiguous`,
+    // `deferred-to-new-bill` and `suppressed-*` paths. `deferred-to-new-bill` is
+    // the one worth naming — it fires only when the invoice yielded nothing at
+    // all for the contact record, and any bank account present forces a create,
+    // so the loss is limited to a brand-new vendor whose invoice prints a PayNow
+    // alias and literally nothing else. The next invoice from them picks it up.
+    const resolvedContactId = firstString(contactReport.contactId);
+    const vendorRow = resolvedContactId
+      ? await upsertVendorPaymentRow(ctx, "bill", {
+          contactId: resolvedContactId,
+          contactName: firstString(contactReport.matchedName) ?? header.vendor,
+          payment,
+          vendor: vendorDetails,
+          fileId: file.id,
+          fileName: newName,
+          invoiceNumber: header.invoiceNumber,
+          today,
+        })
+      : {
+          outcome: "skipped" as const,
+          reason: `no Xero contact id in hand (${String(contactReport.creation ?? contactReport.tier)})`,
+        };
+    logVendorPaymentRow(vendorRow, header.vendor, newName);
+
     const parsedLines = parseLineItems(raw["Line Items"]);
     const reconciles = lineItemsReconcile(parsedLines.items, header);
     let lines = parsedLines.items;
@@ -1467,6 +2207,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     return {
       ...base,
       contact: contactReport,
+      vendorPaymentRow: vendorRow,
       outcome: "draft-bill-created",
       bill: {
         invoiceId: firstString(created?.InvoiceID, created?.invoice_id, created?.id),

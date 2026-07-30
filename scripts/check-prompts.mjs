@@ -13,6 +13,18 @@
 //                           template literal holding that same text.
 // A directory with neither is ignored; one with only a .md is an error, since
 // that means a prompt is documented but nothing deploys it.
+//
+// A Zap with MORE THAN ONE prompt (drive-invoice-to-xero runs a header
+// extraction and a payment-instruction extraction as separate AI steps) must
+// say which literal each markdown file owns, with a marker anywhere above the
+// "## Prompt" heading:
+//
+//   <!-- embed: PAYMENT_PROMPT -->
+//
+// Without it there is no way to tell which of several literals a file means,
+// and `--fix` would overwrite one literal from every markdown in turn. A
+// directory with a single prompt needs no marker, which is why the three Zaps
+// that predate this are untouched.
 
 import { readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
@@ -29,27 +41,37 @@ function promptFromMarkdown(md) {
   return after.replace(/^\s*---\s*$/m, "").trim();
 }
 
+/** Which literal a markdown file owns, from a `<!-- embed: NAME -->` marker. */
+function embedTargetFromMarkdown(md) {
+  const m = md.match(/<!--\s*embed:\s*([A-Z0-9_]+)\s*-->/);
+  return m ? m[1] : null;
+}
+
 /**
- * Locate `const NAME_PROMPT = ` + template literal in a .ts source.
- * Returns the literal's raw body and its span, or null when absent.
+ * Locate every `const NAME_PROMPT = ` + template literal in a .ts source.
+ * Returns each literal's raw body and its span, in source order.
  */
-function findEmbeddedPrompt(src) {
+function findEmbeddedPrompts(src) {
   const decl = /const\s+([A-Z0-9_]*PROMPT)\s*(?::\s*string\s*)?=\s*`/g;
-  const m = decl.exec(src);
-  if (!m) return null;
-  const start = m.index + m[0].length;
-  let i = start;
-  while (i < src.length) {
-    const ch = src[i];
-    if (ch === "\\") {
-      i += 2;
-      continue;
+  const out = [];
+  let m;
+  while ((m = decl.exec(src)) !== null) {
+    const start = m.index + m[0].length;
+    let i = start;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === "`") break;
+      i += 1;
     }
-    if (ch === "`") break;
-    i += 1;
+    if (i >= src.length) break;
+    out.push({ name: m[1], raw: src.slice(start, i), start, end: i });
+    decl.lastIndex = i + 1;
   }
-  if (i >= src.length) return null;
-  return { name: m[1], raw: src.slice(start, i), start, end: i };
+  return out;
 }
 
 /** Evaluate a template-literal body to the string it denotes. Our own repo
@@ -88,24 +110,51 @@ for (const dir of dirs) {
 
   for (const md of mdFiles) {
     const mdPath = join(abs, md);
-    const expected = promptFromMarkdown(readFileSync(mdPath, "utf8"));
+    // Re-read the source inside this loop, never outside it: when two markdown
+    // files own two literals in the SAME .ts file, `--fix` rewrites by byte
+    // offset, so the second fix must see the bytes the first one wrote.
+    const mdText = readFileSync(mdPath, "utf8");
+    const expected = promptFromMarkdown(mdText);
     if (expected === null) {
       problems.push(`${relative(REPO_ROOT, mdPath)}: no "## Prompt" heading`);
       continue;
     }
+    const target = embedTargetFromMarkdown(mdText);
 
     const tsFiles = files.filter((f) => f.endsWith(".ts"));
-    const hits = [];
+    let hits = [];
     for (const ts of tsFiles) {
       const tsPath = join(abs, ts);
       const src = readFileSync(tsPath, "utf8");
-      const found = findEmbeddedPrompt(src);
-      if (found) hits.push({ tsPath, src, found });
+      const literals = findEmbeddedPrompts(src);
+      if (literals.length === 0) continue;
+      if (target) {
+        for (const found of literals.filter((l) => l.name === target)) hits.push({ tsPath, src, found });
+      } else {
+        // Legacy single-prompt shape: the first literal in the file is the one.
+        hits.push({ tsPath, src, found: literals[0] });
+      }
+    }
+
+    if (!target && mdFiles.length > 1) {
+      problems.push(
+        `${relative(REPO_ROOT, mdPath)}: ${dir}/ has ${mdFiles.length} *-prompt.md files, so this one must ` +
+          `declare which literal it owns with an "<!-- embed: NAME_PROMPT -->" marker above "## Prompt"`,
+      );
+      continue;
     }
 
     if (hits.length === 0) {
+      const available = [
+        ...new Set(
+          tsFiles.flatMap((ts) => findEmbeddedPrompts(readFileSync(join(abs, ts), "utf8")).map((l) => l.name)),
+        ),
+      ];
       problems.push(
-        `${relative(REPO_ROOT, mdPath)}: no *_PROMPT template literal found in any .ts in ${dir}/`,
+        target
+          ? `${relative(REPO_ROOT, mdPath)}: no literal named ${target} in any .ts in ${dir}/` +
+              (available.length ? ` (found: ${available.join(", ")})` : "")
+          : `${relative(REPO_ROOT, mdPath)}: no *_PROMPT template literal found in any .ts in ${dir}/`,
       );
       continue;
     }
