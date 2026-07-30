@@ -451,18 +451,36 @@ async function updateContactRecord(
   // --- Update the Notion contact record ---
   // new Date() is non-deterministic, so the Last Enriched timestamp must be
   // computed inside the step (GUARDED mode forbids it at workflow level).
-  await ctx.step("update-contact-record", async () =>
-    sdk.runAction({
-      appKey: NOTION_APP_KEY,
-      actionType: "write",
-      actionKey: "update_database_item",
-      connection: NOTION_CONNECTION,
-      inputs: {
-        ...updateInputs,
-        "properties|||Last Enriched|||date__start": new Date().toISOString(),
-      },
-    }),
-  );
+  // The target page may have been archived (deleted) between the webhook
+  // trigger and this step — a race that is not transient, so retrying won't
+  // help. Catch the archived error and skip gracefully instead of exhausting
+  // the step's retry budget (5 attempts, ~155s) and failing the whole run.
+  const updateResult = await ctx.step("update-contact-record", async () => {
+    try {
+      await sdk.runAction({
+        appKey: NOTION_APP_KEY,
+        actionType: "write",
+        actionKey: "update_database_item",
+        connection: NOTION_CONNECTION,
+        inputs: {
+          ...updateInputs,
+          "properties|||Last Enriched|||date__start": new Date().toISOString(),
+        },
+      });
+      return { archived: false };
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (/archived/i.test(msg)) {
+        console.log(`Contact page ${contact.pageId} is archived; skipping update.`);
+        return { archived: true };
+      }
+      throw err;
+    }
+  });
+
+  if (updateResult.archived) {
+    return { emailPath: "page-archived", iconUpdated: false };
+  }
 
   // --- Index the enriched email in the email -> page id Table ---
   // Path G adds a Secondary email; Path D can set a first-ever Primary; Path
