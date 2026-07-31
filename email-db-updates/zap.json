@@ -1,17 +1,18 @@
 {
   "name": "email-db-updates",
   "workflow_id": "019fa277-464d-7258-86c2-e440f60a5211",
-  "current_version_id": "019fa2bd-d179-70b0-a120-dd537a6af972",
+  "current_version_id": "019fb74d-adcf-77ad-8cdf-e48512dce88c",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcT98vVzpYgqLa7c5wb1CA",
   "enabled": true,
-  "is_private": true,
+  "is_private": false,
+  "is_private_note": "Corrected 2026-07-31: get-workflow reports is_private false, so this Zap is account-visible and always was. The previous `true` here (and the note in CLAUDE.md rule 7 listing it as a pre-rule private Zap) were wrong.",
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
     "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/diRTHE6K9IbpbqZW/",
-    "trigger_note": "Notion DB automation on the Emails data source (1e491b07-11ac-80ce-8b86-000b29ba4f68): 'When page added' -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL — NOT the internal trigger_url). CUTOVER PENDING: the automation still points at the notion-worker-email-db-updates Worker webhook; repoint it to complete the migration (see README Cutover)."
+    "trigger_note": "Notion DB automation on the Emails data source (1e491b07-11ac-80ce-8b86-000b29ba4f68): 'When page added' -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL — NOT the internal trigger_url). CUTOVER DONE (confirmed 2026-07-31): runs from 2026-07-28 onward carry source.type 'automation' with automation_id 3a091b07-11ac-80d8-8e18-004dbf133f9c, so the Notion automation posts here. The earlier 'CUTOVER PENDING' note here and in the READMEs was stale."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
@@ -29,10 +30,10 @@
   "ai_model": {
     "model_id": "standard/auto",
     "authentication_id": "0",
-    "note": "Individual-vs-service email classification — squarely Standard's recommended workload (1x tasks vs 3x advanced / 5x premium). Verified offline via run-action harness: 10/10 correct verdicts, identical across two runs; boolean output field round-trips with isOutputArray. Cases table in README. The Worker this replaces used openai/gpt-5-mini via provider passthrough."
+    "note": "One get_completion call does two jobs: individual-vs-service classification and naming the individuals from the message text. Both are squarely Standard's recommended workload (1x tasks vs 3x advanced / 5x premium); the name pass added no step and no extra task. Verified offline via run-action harness with the deployed prompt + output fields, identical across two consecutive runs: classification 10/10 unchanged after the name pass was added, and the name cases correct — including the one that matters, holding a mailbox-shaped guess (john.smith@ -> 'John Smith') at 'low' so it is discarded, and inventing no names for addresses absent from the context. Cases tables in README. The Worker this replaces used openai/gpt-5-mini via provider passthrough."
   },
   "created_at": "2026-07-27T07:25:53.614Z",
-  "version_created_at": "2026-07-27T08:43:00.000Z",
+  "version_created_at": "2026-07-31T08:32:29.257Z",
   "version_history": [
     {
       "id": "019fa277-8638-7d29-bd0e-867c0ab610c0",
@@ -58,10 +59,15 @@
       "id": "019fa2bd-d179-70b0-a120-dd537a6af972",
       "created_at": "2026-07-27T08:43:00.000Z",
       "note": "Deals inheritance narrowed to OPEN deals only: a candidate deal is fetched and skipped when Status is Closed Won / Closed Lost / Declined (closed set enumerated so future open statuses pass through; unreadable status links with a log). Verified: a contact with a Closed Won deal produced dealsAdded=0."
+    },
+    {
+      "id": "019fb74d-adcf-77ad-8cdf-e48512dce88c",
+      "created_at": "2026-07-31T08:32:29.257Z",
+      "note": "New contacts are now NAMED, not Primary-Email-only. Two paths, strongest evidence first: (1) parseDisplayNames harvests the mail-block header display name — the block renders 'To: Amandeep Gill \\<amandeep@oboxhr.com\\>' with markdown-ESCAPED angle brackets, hence the optional backslashes in ADDRESS_WITH_NAME_REGEX; (2) the existing classify-new-emails call gains an 'Email Context' input plus Name / Name Confidence outputs, and only 'high' confidence names are used — for the Gmail plus-reply-chip case where the name is in the body and not the header. Motivation: enrich-contact-records' NinjaPear fallback resolves only on employer_website + a name, so its viability gate skipped a nameless contact outright, leaving it with one enrichment source instead of two. isUsableName rejects mailbox-echo names (support <support@...>) because a WRONG name is worse than none — it is what the enrichment sources match on. extractEmails is untouched, so address extraction cannot regress. Verified: tsc clean; 16 header cases against the real mail block with extractEmails output byte-identical; AI cases identical across two consecutive run-action passes."
     }
   ],
   "replaces": {
     "worker": "notion-worker-email-db-updates (Notion Worker at github.com/work-flowers/notion-worker-email-db-updates)",
-    "status": "Worker still live and still wired to the Notion Emails DB automation. Repoint the automation webhook at trigger_url, keep the Worker a few days as rollback, then decommission it."
+    "status": "Cut over: the Notion Emails DB automation posts to this workflow's webhook_url (confirmed 2026-07-31 from run history — source.type 'automation'). The Worker remains deployed as rollback and is pending decommission."
   }
 }

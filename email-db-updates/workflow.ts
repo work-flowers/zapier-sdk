@@ -136,9 +136,30 @@ interface MailMetadata {
   threadId: string;
   /** Contact page ids already related to the page (set natively by Notion). */
   existingContactIds: string[];
+  /**
+   * Lowercased address -> display name, harvested from the From/To/Cc headers.
+   * Only addresses the header actually named appear here.
+   */
+  displayNames: Record<string, string>;
+  /** The latest message as plain text, capped — context for the AI name pass. */
+  context: string;
 }
 
 const EMAIL_REGEX = /[\w.+-]+@[\w.-]+\.\w+/g;
+
+/**
+ * A named address in a mail-block header. The block renders headers as
+ * `Display Name \<addr\>, Display Name \<addr\>` — Notion's enhanced markdown
+ * escapes the angle brackets, hence the optional backslashes. A bare address
+ * with no display name simply doesn't match: `extractEmails` stays the sole
+ * authority on WHICH addresses are present, so a miss here costs a name and
+ * never a recipient.
+ */
+const ADDRESS_WITH_NAME_REGEX =
+  /(?:^|,)\s*(?:"([^"]*)"|([^",<]*?))\s*\\?<\s*([\w.+-]+@[\w.-]+\.\w+)\s*\\?>/g;
+
+/** How much of the latest message the AI name pass gets to see. */
+const CONTEXT_CHAR_CAP = 4000;
 
 /**
  * Depth-first search of an arbitrary runAction result for the enhanced-
@@ -194,6 +215,87 @@ function extractField(body: string, fieldName: string): string {
 
 function extractEmails(str: string): string[] {
   return (str.match(EMAIL_REGEX) || []).map((s) => s.toLowerCase());
+}
+
+/** Strip markdown escaping, wrapping quotes and runs of whitespace. */
+function cleanDisplayName(raw: string): string {
+  return raw
+    .replace(/\\/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/^["'\s]+|["'\s]+$/g, "")
+    .trim();
+}
+
+/**
+ * Whether a harvested display name is worth writing to a Contact.
+ *
+ * A WRONG name is more expensive than no name: it is what
+ * enrich-contact-records matches on, so a bad one turns a clean miss into a
+ * confident match on the wrong person. Hence the rejections — in particular a
+ * name that merely echoes the mailbox (`support \<support@…\>`, `jsmith
+ * \<jsmith@…\>`), which is what mail systems emit when they know no name.
+ * That also rejects a genuine one-word name equal to its mailbox
+ * (`Aman \<aman@…\>`); a lone first name is weak enrichment input anyway, so
+ * the trade is worth it.
+ */
+function isUsableName(name: string, email: string): boolean {
+  if (name.length < 2) return false;
+  if (name.includes("@")) return false;
+  if (!/\p{L}/u.test(name)) return false;
+  const lower = name.toLowerCase();
+  if (lower === email.toLowerCase()) return false;
+  const at = email.indexOf("@");
+  if (at > 0 && lower === email.slice(0, at).toLowerCase()) return false;
+  return true;
+}
+
+/** Lowercased address -> usable display name, over one or more header lines. */
+function parseDisplayNames(...headers: string[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const header of headers) {
+    // A global regex carries lastIndex between uses; a fresh one per header
+    // keeps this function free of that state.
+    const re = new RegExp(ADDRESS_WITH_NAME_REGEX.source, "g");
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(header)) !== null) {
+      const email = m[3].toLowerCase();
+      const name = cleanDisplayName(m[1] ?? m[2] ?? "");
+      // First header wins: From is passed before To/Cc, and a sender's own
+      // display name is the most reliable one on the message.
+      if (!out[email] && isUsableName(name, email)) out[email] = name;
+    }
+  }
+  return out;
+}
+
+/**
+ * Split a full name into Notion's First/Last properties, using the same
+ * convention as enrich-contact-records' title fallback: the first token is the
+ * first name and everything after it is the last name.
+ */
+function splitName(full: string): { first: string; last: string } {
+  // "Last, First" — a comma only survives address splitting inside a quoted
+  // display name, so this form reaches us intact when a client emits it.
+  const commaForm = full.match(/^([^,]+),\s*(.+)$/);
+  if (commaForm) {
+    return { first: commaForm[2].trim(), last: commaForm[1].trim() };
+  }
+  const parts = full.split(" ").filter(Boolean);
+  return { first: parts[0] ?? "", last: parts.slice(1).join(" ") };
+}
+
+/**
+ * Notion property inputs for a name. The title always gets the full name, so a
+ * bad First/Last split still leaves the page correct to a human reader.
+ */
+function nameProps(full: string): Record<string, unknown> {
+  const { first, last } = splitName(full);
+  const props: Record<string, unknown> = {
+    "properties|||Name|||title": full,
+  };
+  if (first) props["properties|||First Name|||rich_text"] = first;
+  if (last) props["properties|||Last Name|||rich_text"] = last;
+  return props;
 }
 
 function pageUrlToUuid(url: string): string | null {
@@ -267,6 +369,14 @@ function parseMailMetadata(text: string): MailMetadata | null {
     messageId,
     threadId,
     existingContactIds,
+    displayNames: parseDisplayNames(fromRaw, toRaw, ccRaw),
+    // The whole latest message (headers + Content), unescaped and capped: the
+    // fallback name pass needs the body, because a Gmail plus-reply chip puts
+    // the person's name there and not always in the header.
+    context: latest
+      .replace(/<br>/g, "\n")
+      .replace(/\\([<>|*])/g, "$1")
+      .slice(0, CONTEXT_CHAR_CAP),
   };
 }
 
@@ -303,7 +413,9 @@ function dedupeExternal(emails: string[], blocklist: Blocklist): string[] {
  * "## Prompt" section verbatim (repo rule 6). `node scripts/check-prompts.mjs`
  * from the repo root fails the moment the two drift apart.
  */
-const CONTACT_CLASSIFIER_PROMPT = `You are an email classifier. The "Emails" input contains one or more email addresses, one per line. For EACH email address in the list, classify whether it belongs to a real individual person or a service/organisational account, and produce one output object per input email. Preserve the original casing of the email in the Email output field.
+const CONTACT_CLASSIFIER_PROMPT = `You are an email triage assistant. The "Emails" input contains one or more email addresses, one per line. The "Email Context" input contains the message those addresses appeared on — its headers and its body text. For EACH email address in the Emails list, produce one output object. Preserve the original casing of the email in the Email output field.
+
+First, classify whether the address belongs to a real individual person or a service/organisational account.
 
 Classify as false (service/organisational) if the address contains prefixes such as:
 
@@ -319,7 +431,15 @@ Appears to contain a personal name (e.g. john.smith@, jsmith@, j.doe@)
 Uses a name with numbers that suggest a person (e.g. sarah92@)
 Does not match any of the service patterns above
 
-When uncertain, default to false. Include rationale for your decision in your output in a separate field.`;
+When uncertain, default to false. Include rationale for your decision in your output in a separate field.
+
+Second, find the person's name. Read the Email Context and return the full name of the human behind the address in the Name field, together with a Name Confidence of "high" or "low".
+
+Return "high" only when the context names this person explicitly. For example: the address appears in a header or an inline mention as "Amandeep Gill <amandeep@oboxhr.com>"; or the body introduces them by name next to their address; or they sign off a message they sent with that name.
+Return "low" when you are inferring the name from the shape of the address rather than from the context. Splitting a mailbox like john.smith@ into "John Smith" is always "low", however plausible it looks — an address is not evidence of its owner's name.
+Return an empty Name with "low" when the context gives you nothing to go on.
+Never return a company, team, product, or role as a Name. Never return a Name for an address you classified as a service account.
+Only "high" confidence names are written to the CRM, and a wrong name there is worse than no name at all, so prefer "low" whenever you are not certain.`;
 
 /** Structured output, one object per input email (isOutputArray: true).
  *  Descriptions are kept in step with the wording in the prompt markdown. */
@@ -344,6 +464,20 @@ const CLASSIFIER_OUTPUT_FIELDS = [
     type: "text",
     isRequired: true,
   },
+  {
+    name: "Name",
+    description:
+      "The full name of the human behind the address, taken from the email context. Empty when the context gives nothing to go on, and never a company, team, product or role.",
+    type: "text",
+    isRequired: true,
+  },
+  {
+    name: "Name Confidence",
+    description:
+      "\"high\" when the context names this person explicitly, \"low\" when the name is merely inferred from the shape of the address or is absent. Only high-confidence names are written to the contact.",
+    type: "text",
+    isRequired: true,
+  },
 ];
 
 /** Rows of an isOutputArray completion ({ data: [{ result: { items } } ] }). */
@@ -355,6 +489,27 @@ function completionRows(res: any): any[] {
     if (Array.isArray(result)) return result;
     return [entry];
   });
+}
+
+/**
+ * Lowercased address -> name, for the rows the classifier named with HIGH
+ * confidence. A low-confidence name is discarded rather than written: it is
+ * typically the mailbox re-spelled as a name, which is exactly the plausible-
+ * but-unverified input that makes an enrichment lookup match the wrong person.
+ */
+function confidentNames(rows: any[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    const email = String(row?.Email ?? "").toLowerCase().trim();
+    if (!email) continue;
+    const confidence = String(row?.["Name Confidence"] ?? "")
+      .toLowerCase()
+      .trim();
+    if (confidence !== "high") continue;
+    const name = cleanDisplayName(String(row?.Name ?? ""));
+    if (isUsableName(name, email)) out[email] = name;
+  }
+  return out;
 }
 
 /** Emails the classifier marked as belonging to a real individual. */
@@ -590,7 +745,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 5. Classify unknown addresses (individual vs. service) and create a
     // Contact page for each individual, indexed straight into the Table.
-    const createdContacts: Array<{ email: string; pageId: string }> = [];
+    const createdContacts: Array<{
+      email: string;
+      pageId: string;
+      name: string;
+      nameSource: "header" | "body" | "none";
+    }> = [];
     let classifiedRows: any[] = [];
     if (newEmails.length > 0) {
       const completion = await ctx.step("classify-new-emails", async () =>
@@ -604,7 +764,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             model_id: AI_MODEL,
             isOutputArray: true,
             instructions: CONTACT_CLASSIFIER_PROMPT,
-            inputFields: { Emails: newEmails.join("\n") },
+            inputFields: {
+              Emails: newEmails.join("\n"),
+              // The message itself, so the same call can name the individuals
+              // it classifies — no extra step, no extra task.
+              "Email Context": meta.context,
+            },
             outputFields: CLASSIFIER_OUTPUT_FIELDS,
           },
         }),
@@ -613,20 +778,41 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const toCreate = newEmails.filter((e) =>
         individualEmails(classifiedRows).includes(e),
       );
+      const bodyNames = confidentNames(classifiedRows);
 
       for (let i = 0; i < toCreate.length; i++) {
         const email = toCreate[i];
+        // Name resolution, strongest evidence first: the display name the mail
+        // header carried, then a name the classifier read out of the message
+        // body with high confidence. Either one lets
+        // enrich-contact-records reach its NinjaPear fallback, which is skipped
+        // outright for a contact with no name (it resolves only on
+        // employer_website + a name). A nameless contact therefore has one
+        // enrichment source instead of two.
+        const headerName = meta.displayNames[email] ?? "";
+        const name = headerName || bodyNames[email] || "";
+        const nameSource = headerName
+          ? ("header" as const)
+          : name
+            ? ("body" as const)
+            : ("none" as const);
         // Contacts HAS a default template (blue user-circle icon), so the
-        // created page matches hand-made ones. Parity with the Worker: the
-        // page carries only Primary Email — no name is known at this point.
+        // created page matches hand-made ones. Properties passed here override
+        // the template's defaults, so the name lands on a templated page.
         const created = await createItemWithTemplate(ctx, `contact-${i}`, CONTACTS_DS, {
           "properties|||Primary Email|||email": email,
+          ...(name ? nameProps(name) : {}),
         });
         if (!created.pageId) {
           console.log(`Contact creation for ${email} returned no page id`);
           continue;
         }
-        createdContacts.push({ email, pageId: created.pageId });
+        console.log(
+          name
+            ? `Created contact for ${email} as "${name}" (name from ${nameSource})`
+            : `Created contact for ${email} with no name (header and body both silent)`,
+        );
+        createdContacts.push({ email, pageId: created.pageId, name, nameSource });
 
         // Index the new address immediately. contact-emails-to-zapier-table
         // will also index it off the Notion automation, but its upsert treats
