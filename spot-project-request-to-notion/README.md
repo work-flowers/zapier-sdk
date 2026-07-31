@@ -65,7 +65,15 @@ One minute after that email, Zapier sent `[ALERT] Possible error on your **Add Z
 
 There is no `Pipeline Stage` on Contacts, Companies **or** Deals. Deals has `Status` (a `status`-type property), so this looks like a rename the Zap was never updated for.
 
-**Provenance, stated precisely:** that Zap has never been inspected. The evidence is the Zapier alert email in Gmail, which names the Zap and quotes its error summary — nothing more. What *is* directly confirmed is that it is **not a Durable**: all 30 durables on the account were enumerated via `list_workflows` and it is absent, so it is one of the classic Zaps. Classic Zaps cannot be listed or read from this repo's tooling at all — neither the SDK CLI's workflow commands nor the Zapier MCP connector expose them, both being Durables-only. So its trigger, its steps and which data source it writes `Pipeline Stage` to are all unknown here and need a look in the Zapier UI.
+**Provenance, stated precisely:** that Zap has never been inspected. The evidence is the Zapier alert email in Gmail, which names the Zap and quotes its error summary — nothing more. What *is* directly confirmed is that it is **not a Durable**: all 30 durables on the account were enumerated via `list_workflows` and it is absent, so it is one of the classic Zaps. Classic Zaps cannot be listed or read from this repo's tooling at all — neither the SDK CLI's workflow commands nor the Zapier MCP connector expose them, both being Durables-only. So its trigger, its steps and which data source it writes `Pipeline Stage` to remain unknown here.
+
+**Decision (2026-07-31): it is not being fixed.** The cutover lands next week and supersedes it, so repairing a Zap with days to live is not worth the effort — Dennis's call. It should simply be **turned off** at the cutover rather than left running: it cannot double-write against this workflow (it reads PartnerPage emails, not SPOT), but every request it fails on posts a Zapier error alert, and that noise lands in the same `Zap Alerts` label a person actually reads.
+
+### The gap between now and the cutover
+
+Worth being explicit, because it is a live operational consequence rather than a documentation detail: **until the cutover, directory requests are not reaching the CRM at all.** They still arrive as PartnerPage emails, the classic Zap that would file them is broken and staying broken, and this workflow's trigger cannot fire yet. Anything that comes in during that window exists only in Gmail under the `Zapier Partner Leads` label.
+
+That is a handful of requests at most — the label holds 15 messages across its whole history — so watching that label for a week and filing anything by hand is the proportionate answer. Nothing is silently lost; it is just not automatic yet.
 
 Confirmed in the CRM: **nothing landed** for that request. No contact matching the requester's address or name; newest Deal was Sea Group from `2026-07-28`; newest Company EBER from `2026-07-30 09:48`.
 
@@ -228,7 +236,7 @@ To republish after a change, the CLI path in the sibling READMEs applies unchang
 
 - **Confirm the cutover actually happened.** From ~2026-08-03 requests should arrive via SPOT. Poll `new_project_request` after that date; if it is still empty while directory requests are still landing as PartnerPage emails, the cutover slipped and the trigger has nothing to claim.
 - **What are the request's stages?** `updated_project_request` ("Triggers when a project request stage changes") is the natural sibling — it would move the Deal's `Status` along the pipeline. It needs the stage vocabulary, unknowable until a real request exists. Out of scope here; the request Table already carries a `Stage` column for it. Note it would be the *only* thing allowed to write `Status` on an existing Deal, and it must not undo a human's `Declined`.
-- **What does the classic Zap do that this does not?** `Add Zapier Directory Leads to Contacts DB` has not been read (see above — classic Zaps are invisible to this repo's tooling). Before turning it off, someone should open it in the Zapier UI and check nothing it does is missing here.
+- **Turn off `Add Zapier Directory Leads to Contacts DB` at the cutover.** Resolved on 2026-07-31 that it will not be fixed (see above), so the only outstanding action is switching it off so its error alerts stop. It was never inspected, and deliberately so — it has days left.
 - **Should the ~14 historical PartnerPage requests be backfilled?** They are all still in Gmail under `Zapier Partner Leads`, and the broken Zap means some number of them never reached the CRM. Not attempted: they are stale, and a backfill would need an email parser this workflow does not have now that the intake path is SPOT.
 
 ## Verified
