@@ -65,9 +65,18 @@ const COMPANY_SIZE_OPTIONS: Record<string, string> = {
 };
 
 /**
- * `Country` options on Notion Companies — ISO-3166 alpha-2, as the select
- * stores them. Same discipline as `Size`: an unmatched country is dropped
- * rather than guessed at or minted.
+ * **Contacts and Companies spell `Country` differently, and both must be fed
+ * the spelling its own select uses.**
+ *
+ * Companies stores ISO-3166 alpha-2 and has only these eight options; Contacts
+ * stores full country names and has 64. The directory form supplies a full name
+ * ("United States"), so Companies needs the name mapped down to a code while
+ * Contacts takes it as-is.
+ *
+ * Getting this backwards is the classic way to mint a select option by accident:
+ * writing "United States" to Companies would create a ninth `Country` option
+ * sitting alongside `US`. Hence the explicit map, and hence an unmapped country
+ * is written to neither.
  */
 const COMPANY_COUNTRY_OPTIONS: readonly string[] = [
   "AE",
@@ -78,6 +87,46 @@ const COMPANY_COUNTRY_OPTIONS: readonly string[] = [
   "NL",
   "SG",
   "US",
+];
+
+/** Full country name -> the Companies alpha-2 option. Only the eight that
+ *  Companies can actually store; anything else is deliberately absent. */
+const COMPANY_COUNTRY_FROM_NAME: Record<string, string> = {
+  "united arab emirates": "AE",
+  "australia": "AU",
+  "united kingdom": "GB",
+  "uk": "GB",
+  "great britain": "GB",
+  "indonesia": "ID",
+  "japan": "JP",
+  "netherlands": "NL",
+  "the netherlands": "NL",
+  "singapore": "SG",
+  "united states": "US",
+  "united states of america": "US",
+  "usa": "US",
+  "us": "US",
+};
+
+/**
+ * `Country` options on Notion Contacts — full names. Includes an explicit
+ * `Other`, which is deliberately NOT used as a fallback: "we don't recognise
+ * this country" and "this person is somewhere we chose to call Other" are
+ * different claims, and only a human should make the second one.
+ */
+const CONTACT_COUNTRY_OPTIONS: readonly string[] = [
+  "Argentina", "Australia", "Austria", "Belgium", "Brazil", "Bulgaria",
+  "Canada", "China", "Colombia", "Cyprus", "Denmark", "France", "Georgia",
+  "Germany", "Greece", "Hong Kong", "Hungary", "India", "Indonesia", "Ireland",
+  "Israel", "Italy", "Jamaica", "Japan", "Kenya", "Luxembourg", "Malaysia",
+  "Mexico", "Monaco", "Morocco", "Myanmar", "Netherlands", "New Zealand",
+  "Nigeria", "Norway", "Other", "Pakistan", "Papua New Guinea", "Philippines",
+  "Poland", "Portugal", "Qatar", "Reunion", "Romania",
+  "Saint Vincent and the Grenadines", "Saudi Arabia", "Singapore",
+  "South Africa", "South Georgia and South Sandwich Islands", "South Korea",
+  "Spain", "Sri Lanka", "Sweden", "Switzerland", "Taiwan", "Thailand",
+  "Turkey", "UK", "Ukraine", "United Arab Emirates", "United Kingdom",
+  "United States", "Uruguay", "Vietnam",
 ];
 
 /**
@@ -228,6 +277,17 @@ function mapCompanySize(raw: unknown): string {
   return COMPANY_SIZE_OPTIONS[s] ?? "";
 }
 
+/** The Companies alpha-2 option for a country. Accepts either a full name
+ *  ("United States") or a code already ("US"); returns "" for anything the
+ *  eight-option select cannot store. */
+function companyCountry(raw: unknown): string {
+  const s = firstString(raw)?.trim().toLowerCase() ?? "";
+  if (s === "") return "";
+  const mapped = COMPANY_COUNTRY_FROM_NAME[s];
+  if (mapped) return mapped;
+  return matchOption(s, COMPANY_COUNTRY_OPTIONS);
+}
+
 /** Notion rich_text has a 2000-character ceiling per block. A brief that runs
  *  longer is truncated in the property and carried in full in the page body. */
 function clip(s: string, max = 1900): string {
@@ -237,24 +297,34 @@ function clip(s: string, max = 1900): string {
 // --- The project request ---------------------------------------------------
 
 /**
- * **The field names below are inferred, not verified.**
+ * **The field SET is now known; the exact key SPELLINGS are still inferred.**
  *
- * The work.flowers partner account has never received a project request:
- * `new_project_request` and `updated_project_request` both poll empty, and
- * `find_project_request` returns nothing unfiltered *or* by the email of a
- * converted client (checked 2026-07-31). So there is no sample to read the
- * shape off, and no way to force one.
+ * Zapier is moving directory lead delivery onto SPOT around 2026-08-03. Until
+ * then `new_project_request` polls empty (verified repeatedly on 2026-07-31),
+ * so there is still no payload to read key names off.
  *
- * Two things make that survivable rather than reckless:
+ * What we *do* have is the same request object rendered by the delivery path
+ * being replaced: PartnerPage's "New contact request from Zapier" email. The
+ * fields the directory form actually collects are therefore known, because that
+ * email lists them:
  *
- *   1. Every field is read from a list of candidate spellings in the naming
- *      style the same app uses for `referral_lead_status_change` — snake_case,
- *      `*_on` for timestamps, `first_name`/`last_name`/`email` for the person.
- *      A miss leaves a field empty; it never writes the wrong value somewhere.
- *   2. **The raw payload is always preserved** — verbatim in the Deal's page
- *      body, in the request Table row, and in the run output. So even if every
- *      mapping below misses, the first real request is fully recoverable and
- *      the exact shape becomes readable from the run.
+ *   First name · Last name · Email · Company name · Website · Phone number ·
+ *   Comments  — then a "Request Details" table:
+ *   Tools you are trying to connect · Your Country · Your Time Zone ·
+ *   Services needed · Project Budget · Zapier account email
+ *
+ * That is a much better grounding than guesswork, and it changed the mapping in
+ * three ways worth knowing about: a **phone number** exists (Contacts has
+ * `Primary Phone`), the brief is called **Comments** rather than a description,
+ * and the **Zapier account email is a separate field from the contact email** —
+ * which matters, because it is exactly what `register-zapier-partner-lead`
+ * needs to submit the company as a referral lead.
+ *
+ * Each field is still read from a list of candidate snake_case spellings, in the
+ * style this same app uses for `referral_lead_status_change`. A miss leaves a
+ * field empty; it never writes the wrong value somewhere. And the raw payload is
+ * still preserved verbatim on the Deal page, in the request Table row and in the
+ * run output, so the first real request reveals the true spellings at once.
  *
  * Deliberately NOT guessed at: a bare `title` key, which could plausibly be the
  * person's job title or the project's name. Writing it to the wrong one is a
@@ -267,6 +337,7 @@ interface RequestData {
   lastName: string;
   name: string;
   jobTitle: string;
+  phone: string;
   companyName: string;
   website: string;
   companySize: string;
@@ -277,6 +348,14 @@ interface RequestData {
   budget: string;
   timeline: string;
   apps: string;
+  /** "Services needed" — what the requester wants done, in the form's own
+   *  vocabulary (e.g. "Technical support/troubleshooting"). Note this is NOT
+   *  mapped to the Deal's `Type`: see `createDeal`. */
+  servicesNeeded: string;
+  timezone: string;
+  /** The Zapier account the requester wants worked on — distinct from their
+   *  contact address, and the input `submit_client` needs. */
+  zapierAccountEmail: string;
   stage: string;
   createdOn: string;
   /** The payload as delivered, for the page body and the Table row. */
@@ -303,16 +382,19 @@ function extractRequest(raw: unknown): RequestData {
     lastName,
     name,
     jobTitle: firstString(r.job_title, r.contact_title, r.role) ?? "",
+    phone: firstString(r.phone_number, r.phone, r.contact_phone) ?? "",
     companyName:
       firstString(r.company_name, r.company, r.account_name, r.organization) ??
       "",
     website: firstString(r.website, r.company_website, r.domain, r.url) ?? "",
     companySize: firstString(r.company_size, r.size, r.employees) ?? "",
-    country: firstString(r.country, r.company_country) ?? "",
+    country: firstString(r.country, r.your_country, r.company_country) ?? "",
     industry: firstString(r.industry, r.vertical) ?? "",
     projectName: firstString(r.project_name, r.project_title, r.subject) ?? "",
+    // "Comments" is what the directory form calls the brief.
     description:
       firstString(
+        r.comments,
         r.description,
         r.project_description,
         r.details,
@@ -320,9 +402,27 @@ function extractRequest(raw: unknown): RequestData {
         r.notes,
         r.brief,
       ) ?? "",
-    budget: firstString(r.budget, r.budget_range, r.estimated_budget) ?? "",
+    budget:
+      firstString(
+        r.project_budget,
+        r.budget,
+        r.budget_range,
+        r.estimated_budget,
+      ) ?? "",
     timeline: firstString(r.timeline, r.timeframe, r.start_timeline) ?? "",
-    apps: joinList(r.apps ?? r.apps_used ?? r.tools ?? r.integrations),
+    // "Tools you are trying to connect" — may be a list or a single string.
+    apps: joinList(
+      r.tools_to_connect ??
+        r.tools ??
+        r.apps ??
+        r.apps_used ??
+        r.integrations,
+    ),
+    servicesNeeded: joinList(r.services_needed ?? r.services),
+    timezone: firstString(r.time_zone, r.timezone, r.your_time_zone) ?? "",
+    zapierAccountEmail: cleanEmail(
+      firstString(r.zapier_account_email, r.account_email),
+    ),
     stage: firstString(r.stage, r.status) ?? "",
     createdOn: dateOnly(
       firstString(r.created_on, r.created_date, r.submitted_on),
@@ -626,10 +726,22 @@ async function resolveCompany(
   if (domain) props["properties|||Website|||url"] = `https://${domain}`;
   const size = mapCompanySize(req.companySize);
   if (size) props["properties|||Size|||select"] = size;
-  const country = matchOption(req.country, COMPANY_COUNTRY_OPTIONS);
+  const country = companyCountry(req.country);
   if (country) props["properties|||Country|||select"] = country;
   const industry = matchOption(req.industry, COMPANY_INDUSTRY_OPTIONS);
   if (industry) props["properties|||Industry|||select"] = industry;
+  // The Zapier account the requester wants worked on. Written only on a company
+  // this workflow is CREATING — there is nothing to clobber and no curation to
+  // respect. An existing company's override is left alone: it may have been set
+  // deliberately, and the value is on the Deal page either way.
+  //
+  // This is what makes a new company immediately registerable: the Companies
+  // "Register Lead" button feeds `register-zapier-partner-lead`, which reads the
+  // account owner's email to call `submit_client`.
+  if (req.zapierAccountEmail) {
+    props["properties|||Account Owner Email Override|||email"] =
+      req.zapierAccountEmail;
+  }
 
   const created = await createItemWithTemplate(
     ctx,
@@ -703,6 +815,14 @@ async function resolveContact(
           rich_text: [{ type: "text", text: { content: req.jobTitle } }],
         };
       }
+      if (req.phone && !props["Primary Phone"]?.phone_number) {
+        patch["Primary Phone"] = { phone_number: req.phone };
+      }
+      // Contacts stores Country as a FULL NAME, unlike Companies' alpha-2.
+      const contactCountry = matchOption(req.country, CONTACT_COUNTRY_OPTIONS);
+      if (contactCountry && !props["Country"]?.select) {
+        patch["Country"] = { select: { name: contactCountry } };
+      }
       // Lead Source records how we FIRST met someone, so an existing value is
       // the earlier truth and is left alone.
       if (!props["Lead Source"]?.select) {
@@ -747,6 +867,12 @@ async function resolveContact(
   if (req.firstName) props["properties|||First Name|||rich_text"] = req.firstName;
   if (req.lastName) props["properties|||Last Name|||rich_text"] = req.lastName;
   if (req.jobTitle) props["properties|||Job Title|||rich_text"] = req.jobTitle;
+  if (req.phone) props["properties|||Primary Phone|||phone_number"] = req.phone;
+  // Full name here, alpha-2 on Companies — two different vocabularies.
+  const newContactCountry = matchOption(req.country, CONTACT_COUNTRY_OPTIONS);
+  if (newContactCountry) {
+    props["properties|||Country|||select"] = newContactCountry;
+  }
   if (req.createdOn) {
     props["properties|||First Contacted|||date__start"] = req.createdOn;
   }
@@ -815,11 +941,20 @@ function buildDealBody(req: RequestData): string {
     `- **From:** ${req.name || req.email}${req.jobTitle ? ` — ${req.jobTitle}` : ""}`,
     `- **Email:** ${req.email}`,
   ];
+  if (req.phone) lines.push(`- **Phone:** ${req.phone}`);
   if (req.companyName) lines.push(`- **Company:** ${req.companyName}`);
   if (req.website) lines.push(`- **Website:** ${req.website}`);
+  if (req.country) lines.push(`- **Country:** ${req.country}`);
+  if (req.timezone) lines.push(`- **Time zone:** ${req.timezone}`);
+  if (req.servicesNeeded) {
+    lines.push(`- **Services needed:** ${req.servicesNeeded}`);
+  }
   if (req.budget) lines.push(`- **Stated budget:** ${req.budget}`);
   if (req.timeline) lines.push(`- **Stated timeline:** ${req.timeline}`);
-  if (req.apps) lines.push(`- **Apps mentioned:** ${req.apps}`);
+  if (req.apps) lines.push(`- **Tools to connect:** ${req.apps}`);
+  if (req.zapierAccountEmail) {
+    lines.push(`- **Zapier account:** ${req.zapierAccountEmail}`);
+  }
   if (req.stage) lines.push(`- **Stage at submission:** ${req.stage}`);
   if (req.createdOn) lines.push(`- **Submitted:** ${req.createdOn}`);
 
@@ -846,6 +981,17 @@ function buildDealBody(req: RequestData): string {
 /**
  * Create the Deal.
  *
+ * **Every request gets one, unqualified or not.** That is the policy: register
+ * the lead, and if it is not worth pursuing a human marks the Deal `Declined`
+ * in Notion — which is what that status option is for ("deals that we have
+ * chosen to walk away from"). Declining in the directory and recording nothing
+ * leaves no trace that the enquiry ever happened, which is the gap this closes.
+ *
+ * **Nothing here ever writes `Status` on a Deal that already exists** — this
+ * function only ever creates. Combined with the request-id dedupe, a
+ * re-delivered or retried request is a no-op, so a Deal a human has moved to
+ * `Declined` (or `Closed Won`) can never be dragged back to `Lead`.
+ *
  * Deliberately left empty rather than guessed at:
  *
  * - **`Status`** — the Deals default template already sets it to `Lead`, which
@@ -853,7 +999,10 @@ function buildDealBody(req: RequestData): string {
  *   `properties|||…|||status` key form (unproven in this repo) is never needed.
  * - **`Type`** — the five options (Full Retainer, Project, Support Retainer,
  *   Vanta Subscription, Workshop) name a commercial model chosen during
- *   scoping. A brief does not state one.
+ *   scoping. A brief does not state one. In particular "Services needed:
+ *   Technical support/troubleshooting" is **not** mapped to `Support Retainer`:
+ *   asking for troubleshooting help is not agreeing to a retainer, and the
+ *   difference is a pricing decision.
  * - **`Value`** / **`Deal Currency`** — a stated budget is a band ("$5k–$10k"),
  *   not a number, and `Deal Currency` is a relation to an FX Rates row that
  *   would need its own lookup. Both are left for the human who scopes the deal;
@@ -883,8 +1032,13 @@ async function createDeal(
   if (contactPageId) {
     props["properties|||Contact|||relation"] = [contactPageId];
   }
-  const description = [req.description, req.budget && `Budget: ${req.budget}`,
-    req.timeline && `Timeline: ${req.timeline}`]
+  const description = [
+    req.description,
+    req.servicesNeeded && `Services needed: ${req.servicesNeeded}`,
+    req.apps && `Tools to connect: ${req.apps}`,
+    req.budget && `Budget: ${req.budget}`,
+    req.timeline && `Timeline: ${req.timeline}`,
+  ]
     .filter((s) => s)
     .join(" · ");
   if (description) {

@@ -4,11 +4,13 @@ A **new project request** in the Zapier **Solution Partner Operations Tool** (SP
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ⚠️ **Design and source only — not created on Zapier, not published, and the trigger is now an open question.** `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`, and the [Publish runbook](#publish-runbook) is the copy-paste path to deployed — but **do not publish yet**: a real directory request arrived on 2026-07-31 and it did **not** come through SPOT. See [the update below](#update-later-on-2026-07-31-a-real-request-arrived-and-it-did-not-come-through-spot), which also records that the existing classic Zap for this flow is broken and dropped that request.
+**Status:** ⚠️ **Design and source only — not created on Zapier, not published.** Built deliberately *ahead* of a change on Zapier's side: **from around 2026-08-03, directory lead requests arrive via SPOT** rather than as PartnerPage emails, so the trigger here is the right one and there is simply nothing in it yet. `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`. The [Publish runbook](#publish-runbook) is the copy-paste path to deployed; the one thing it cannot give you is a verified payload, which only the cutover can.
 
-## The blocking unknown: nobody has ever sent us a project request
+## What is verified, and what is not
 
-**The `new_project_request` payload shape is unverified, because the work.flowers partner account has no project requests to sample.** Checked three ways on 2026-07-31, all against the live `work.flowers` partner connection (`02a5085e-…`):
+**Verified:** the trigger exists, takes no configuration, and is reachable on the work.flowers partner connection (`02a5085e-…`).
+
+**Not verified, and not verifiable before the cutover:** the payload. Every project-request endpoint polls empty, checked repeatedly on 2026-07-31 — including after a real directory request had already arrived:
 
 | Probe | Result |
 | --- | --- |
@@ -16,51 +18,56 @@ Third workflow against the same private partner app. Its siblings are [`register
 | `updated_project_request` (its stage-change sibling) | `{"results": []}` |
 | `find_project_request`, no filter — "leave blank to … return all project requests" | `{"results": []}` |
 | `find_project_request`, `email` = a converted client's address | `{"results": []}` |
-| **Control:** `referral_lead_status_change` on the same connection | **247 leads, 118 KB** — so the connection genuinely reads the partner account |
+| **Control:** `referral_lead_status_change` on the same connection | **247 leads, 118 KB** — the connection genuinely reads the partner account |
 
-The control matters: the empty results are the account's real state, not a broken credential or a dedupe artefact. So there is no sample payload, and no way to force one — a project request is created by a *customer* on Zapier's side.
+The control matters: empty is the account's real state, not a broken credential.
 
-Every field name in `extractRequest` is therefore **inferred** from the naming style the same app version uses for `referral_lead_status_change` (snake_case; `first_name` / `last_name` / `email` for the person; `*_on` for timestamps) plus the two filters `find_project_request` exposes (`id`, `email`). Three things keep that from being reckless:
+### The field set is known even though the key names are not
 
-1. **Every field reads a list of candidate spellings.** A miss leaves a property empty. It never writes a value into the wrong property.
-2. **The raw payload is preserved three times over** — verbatim in a fenced JSON block on the Deal page, in the request Table row's `Payload` column, and echoed in the run output. If every mapping missed, the first real request is still fully recoverable and its exact shape is readable off the run.
-3. **A bare `title` key is deliberately read into nothing.** It could plausibly be the requester's job title *or* the project's name; guessing wrong writes a real data error, so it feeds neither.
+The delivery path being replaced tells us what the directory form collects. PartnerPage's "New contact request from Zapier" email (see below) lists it in full:
 
-The corollary is a scheduling argument, not just a caveat: **a polling trigger records its first poll after being claimed as already-seen rather than firing it** (verified on the sibling — claiming its trigger did not replay the account's 247 historical leads). A project request that lands *before* this workflow's trigger is claimed is therefore never delivered. If inbound directory requests matter, claiming the trigger sooner is worth more than waiting for a payload to design against.
+> First name · Last name · Email · Company name · Website · Phone number · Comments — then a **Request Details** table: Tools you are trying to connect · Your Country · Your Time Zone · Services needed · Project Budget · Zapier account email
 
-## Update, later on 2026-07-31: a real request arrived, and it did not come through SPOT
+That is the same underlying request object, so `extractRequest` is mapped against a **real field set** rather than guesswork. It changed three things versus the first draft:
 
-Dennis received a directory request the same morning this was written. It is **not** in SPOT — re-polling `new_project_request`, `updated_project_request` and `find_project_request` after it arrived still returns `{"results": []}`, and the referral-lead list is unchanged at 247 (newest created `2026-07-20`, newest modified `2026-07-23`). What actually arrived was an **email**:
+1. **A phone number exists** — Contacts has `Primary Phone`, so it is mapped.
+2. **The brief is called `Comments`**, not a description — now the first candidate key.
+3. **The Zapier account email is a separate field from the contact email.** That is the useful one: it is exactly the input `register-zapier-partner-lead` needs, so a company this workflow creates lands with `Account Owner Email Override` already set and is immediately registerable from the Notion **Register Lead** button.
+
+What remains unknown is only the **key spellings**. Each field is read from a list of candidate snake_case spellings in the style this app uses for `referral_lead_status_change`; a miss leaves a property empty rather than writing a wrong value; and the raw payload is preserved verbatim on the Deal page, in the request Table row and in the run output, so the first real request settles every spelling at once. A bare `title` key is deliberately read into nothing — it could be the person's job title or the project's name, and guessing wrong is a real data error.
+
+**Two vocabularies for one concept, worth flagging:** Companies stores `Country` as ISO alpha-2 with eight options; Contacts stores full names with 64. The form supplies a full name ("United States"), so Companies gets it mapped down to `US` while Contacts takes it as-is. Writing the full name to Companies would silently mint a ninth option next to `US`.
+
+## Where this came from: the last PartnerPage request, 2026-07-31
+
+The morning this was designed, a real directory request arrived — as an email, because the cutover had not happened yet. It is the evidence behind the field set above, and it exposed something worse.
 
 - **From** `no-reply@partnerpage.io`, subject **"New contact request from Zapier"**, `2026-07-30T23:02:49Z` (07:02 SGT).
-- PartnerPage — the vendor behind the directory — calls it a **contact request**, not a project request. Body carries labelled fields (First name, Last name, Email, Company name, Website, Phone number, Comments) plus a variable **Request Details** table: *Tools you are trying to connect · Your Country · Your Time Zone · Services needed · Project Budget · Zapier account email*.
-- A hidden `<input name="lead_id">` holds a UUID (`b2527eb3-…`), repeated in the "Update status" link along with the solution-profile and partner ids. **That UUID is a natural dedupe key.**
-- Gmail already labels these **`Zapier Partner Leads`** (`Label_29`) — **15 messages, 14 threads**, so there is a real corpus to validate a parser against rather than one sample.
+- PartnerPage — the vendor behind the directory — calls it a **contact request**. SPOT calls its object a **project request**. After the cutover these should be the same thing arriving by a different road; before it, they were not, which is why SPOT stayed empty.
+- A hidden `<input name="lead_id">` held a UUID, repeated in the "Update status" link with the solution-profile and partner ids.
+- Gmail labels these **`Zapier Partner Leads`** (`Label_29`) — **15 messages, 14 threads** of history.
 
-So the two objects are not the same thing, and `new_project_request` is very likely **not the intake path** for directory requests at all. The best remaining hypothesis for what would populate it is the email's own closing line — *"Update the request status so Zapier knows you're handling it!"* — i.e. a request may only become visible to SPOT once the partner updates its status in the directory. That is cheap to test: update the status on this request, then re-poll. Until someone does, the SPOT trigger this workflow is designed around has never been observed to carry anything.
+### The classic Zap that handles this today is broken
 
-### The existing Zap for this is broken, and this morning's request was dropped
-
-One minute after the PartnerPage email, Zapier sent `[ALERT] Possible error on your **Add Zapier Directory Leads to Contacts DB** Zap`, with:
+One minute after that email, Zapier sent `[ALERT] Possible error on your **Add Zapier Directory Leads to Contacts DB** Zap`:
 
 > Notion — `Pipeline Stage is not a property that exists.`
 
-There is no `Pipeline Stage` on Contacts, Companies **or** Deals. Deals has `Status` (a `status`-type property), so this looks like a rename the classic Zap was never updated for.
+There is no `Pipeline Stage` on Contacts, Companies **or** Deals. Deals has `Status` (a `status`-type property), so this looks like a rename the Zap was never updated for.
 
-Confirmed in the CRM: **nothing landed.** No contact matches `absqrd@aol.com` or the name; the newest Deal is Sea Group from `2026-07-28`; the newest Company is EBER from `2026-07-30 09:48`. The request exists only in Dennis's inbox.
+**Provenance, stated precisely:** that Zap has never been inspected. The evidence is the Zapier alert email in Gmail, which names the Zap and quotes its error summary — nothing more. What *is* directly confirmed is that it is **not a Durable**: all 30 durables on the account were enumerated via `list_workflows` and it is absent, so it is one of the classic Zaps. Classic Zaps cannot be listed or read from this repo's tooling at all — neither the SDK CLI's workflow commands nor the Zapier MCP connector expose them, both being Durables-only. So its trigger, its steps and which data source it writes `Pipeline Stage` to are all unknown here and need a look in the Zapier UI.
 
-### What this means for this design
+Confirmed in the CRM: **nothing landed** for that request. No contact matching the requester's address or name; newest Deal was Sea Group from `2026-07-28`; newest Company EBER from `2026-07-30 09:48`.
 
-- **The trigger is now an open decision, not a settled one.** A Gmail-label trigger on `Zapier Partner Leads` is the only *proven* source, fires immediately, carries the brief/budget/services fields, and has 14 threads to validate against. The SPOT trigger may be a phase-2 path, or a dead end.
-- **The rest of the design is unaffected.** Company/Contact/Deal resolution, the fill-only-empty-fields discipline, the create race, the template handling and the dedupe store all key off a normalised request, not off where it came from. Only `extractRequest` and the trigger binding change.
-- **This stops being greenfield and becomes a migration** of `Add Zapier Directory Leads to Contacts DB`, which puts it in the same shape as every other Zap in this repo — and means the migration notes should record the `Pipeline Stage` fault and whatever else that Zap gets wrong.
-- **Alan Bond's request is a useful data point for the "should an unqualified inbound open a Deal?" question** rather than a hypothetical: an AOL address, a `$100–$250` budget, `Technical support/troubleshooting`, and a brief about Facebook/Instagram campaign posts. Whatever the policy is, it should survive that arriving weekly.
+### Declining is a CRM action, not an intake filter
 
-`workflow.ts` has deliberately **not** been rewritten pending the trigger decision, so nothing here claims to be verified against the email format.
+That request was declined in PartnerPage and nothing was recorded, which is exactly the gap this workflow closes. **The policy is to register every request** — Contact, Company and Deal — and let a human mark the Deal `Declined` in Notion if it is not worth pursuing. Notion's own description of that option is "deals that we have chosen to walk away from", which is precisely the semantics.
+
+This is why there is **no adoption gate** here, unlike [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/), which gates hard because its trigger's history is one bulk submission of ~247 event attendees. A directory request is one person who wrote a brief, and a declined one is worth a record.
+
+It also sets a hard constraint the code honours: **nothing ever writes `Status` on a Deal that already exists.** `createDeal` only ever creates, and the request-id dedupe makes a re-delivery or a retry a no-op — so a Deal moved to `Declined` (or `Closed Won`) can never be dragged back to `Lead`.
 
 ## What it does
-
-The shape below is written against the SPOT trigger as originally designed. Everything from "domain =" onwards is independent of the intake path and survives a switch to the Gmail-label trigger described above.
 
 ```mermaid
 flowchart TD
@@ -104,7 +111,9 @@ The credential belongs on the **trigger**, not in `--connections`: like `zapier-
 | `Company Name` (title) | the request | Required to create at all — a company page titled after a domain, or untitled, is worse than none |
 | `Website` (url) | `https://<domain>` | Normalised host, so the mirror Table's `Domain` column stays comparable |
 | `Size` (select) | mapped from the request | Only the four existing options; the partner tool spells the top band `1,000+` |
-| `Country` · `Industry` (select) | the request | **Exact option match only** — see below |
+| `Country` (select) | the request, **mapped to alpha-2** | `United States` → `US`. Eight options only; an unmapped country is dropped, never minted |
+| `Industry` (select) | the request | **Exact option match only** — `Tech` does not become `Technology`, it becomes nothing |
+| `Account Owner Email Override` (email) | the request's **Zapier account email** | **On create only.** Makes the new company immediately registerable via the Notion `Register Lead` button, which feeds [`register-zapier-partner-lead`](../register-zapier-partner-lead/). An existing company's override is left alone — it may have been set deliberately, and the value is on the Deal page either way |
 
 **Contacts** (`21991b07-11ac-81a6-a894-000be4a09a67`) — found by email, else created:
 
@@ -113,6 +122,8 @@ The credential belongs on the **trigger**, not in `--connections`: like `zapier-
 | `Name` (title) | request name, else the email's local part | untouched |
 | `Primary Email` | the request | untouched |
 | `First Name` · `Last Name` · `Job Title` | the request | **only if empty** |
+| `Primary Phone` | the request's phone number | **only if empty** |
+| `Country` (select) | the request, as a **full name** | **only if empty.** `United States` stays `United States` here — the opposite of Companies |
 | `Lead Source` | `Zapier Partner Directory` | **only if empty** — it records how we *first* met someone, so an earlier value is the truer one |
 | `First Contacted` | the request's `created_on` | **only if empty** |
 | `Related Company` | the resolved company | **unioned**, never replaced |
@@ -125,14 +136,14 @@ The credential belongs on the **trigger**, not in `--connections`: like `zapier-
 | --- | --- |
 | `Deal Name` (title) | the request's project name, else `<Company> — Zapier Partner Directory request` |
 | `Company` · `Contact` (relation, limit 1) | the resolved pages |
-| `Description` | the brief, with the stated budget and timeline appended |
+| `Description` | the brief (`Comments`), with services needed, tools to connect, budget and timeline appended |
 | page body | the brief rendered as markdown, then the **raw payload** in a fenced JSON block |
 | `Status` | **`Lead`, from the default template — never written by this workflow** |
 
 ### What is deliberately left empty
 
 - **`Status`.** The Deals default template (`21a91b07-11ac-80a9-…`) already sets it to `Lead`, which is exactly right for an unqualified inbound. That is worth stating because it also means the `properties|||Status|||status` key form — unproven anywhere in this repo, and unverifiable here because `create_database_item`'s dynamic property schema would not resolve for this data source over MCP — is never needed. The template also assigns `Owner`.
-- **`Type`.** Full Retainer / Project / Support Retainer / Vanta Subscription / Workshop name a *commercial model* chosen while scoping. A brief does not state one.
+- **`Type`.** Full Retainer / Project / Support Retainer / Vanta Subscription / Workshop name a *commercial model* chosen while scoping. A brief does not state one — and specifically, `Services needed: Technical support/troubleshooting` is **not** mapped to `Support Retainer`. Asking for troubleshooting help is not agreeing to a retainer, and the difference is a pricing decision.
 - **`Value`** and **`Deal Currency`.** A stated budget is a band ("$5k–$10k"), not a number, and `Deal Currency` is a relation to an FX Rates row needing its own lookup. Whatever the request said is in `Description` and on the page body; the number is for whoever scopes it. (The Deals template's own body callout spells out the three-step multi-currency convention — worth not half-doing.)
 - **`Expected Close`.** A brief's timeline is a *delivery* timeline, not a close date.
 - **`Size` / `Country` / `Industry` when the value doesn't match an option exactly.** Writing an unrecognised option into a Notion select is how you silently mint schema. `Tech` does not become `Technology`; it becomes nothing, and a human sees a blank.
@@ -164,6 +175,8 @@ Nothing here uses AI. Zapier Table reads and writes are free; a Notion `runActio
 ## Publish runbook
 
 Nothing here has been done — the session that wrote this had no `zapier-sdk` credentials and no browser to `login` with, so it could not reach the CLI at all (`workflows-doctor`'s compatibility gate included; **run that first** in a session that can). Every command below is for a local, logged-in session, run from this directory.
+
+**Timing.** Steps 1–3 are safe now. Step 4 claims the trigger, and a polling trigger records its first poll after being claimed as already-seen rather than firing it — so claim it **before** the ~2026-08-03 cutover, not after, or the first request through the new path may be swallowed as backlog. Nothing before the cutover can fire it, so claiming early costs nothing.
 
 The workflow **refuses to run** until step 1 is done, returning `skipped: true` with the reason rather than proceeding. An unconfigured dedupe store is not something to discover from duplicate deals.
 
@@ -264,9 +277,10 @@ Then write `zap.json` (this directory does not have one yet), following the sibl
 
 ## Open questions
 
-- **Should an unqualified inbound really open a Deal?** The task said so and the design does it, but it is worth naming the contrast with `zapier-partner-lead-status-to-notion`, which gates adoption *hard* because that trigger's history is one bulk event submission of ~247 attendees. This trigger is different in kind — a project request is a customer who found the directory listing, read it, and wrote a brief — and the account has received **zero** so far, so there is no volume argument for a gate. If directory volume ever turns out to be junk, the gate goes in the same place the sibling's does.
-- **Is `Lead Source: Zapier Partner Directory` right, or should the Deal carry the provenance too?** Deals has no lead-source property. Right now the provenance lives on the Contact and in the Deal's title and page body.
-- **What are the request's stages?** `updated_project_request` ("Triggers when a project request stage changes") is the natural sibling to this workflow — it would move the Deal's `Status` along the pipeline. It needs the stage vocabulary, which is unknowable until a real request exists. Out of scope here; the request Table already carries a `Stage` column for it to update.
+- **Confirm the cutover actually happened.** From ~2026-08-03 requests should arrive via SPOT. Poll `new_project_request` after that date; if it is still empty while directory requests are still landing as PartnerPage emails, the cutover slipped and the trigger has nothing to claim.
+- **What are the request's stages?** `updated_project_request` ("Triggers when a project request stage changes") is the natural sibling — it would move the Deal's `Status` along the pipeline. It needs the stage vocabulary, unknowable until a real request exists. Out of scope here; the request Table already carries a `Stage` column for it. Note it would be the *only* thing allowed to write `Status` on an existing Deal, and it must not undo a human's `Declined`.
+- **What does the classic Zap do that this does not?** `Add Zapier Directory Leads to Contacts DB` has not been read (see above — classic Zaps are invisible to this repo's tooling). Before turning it off, someone should open it in the Zapier UI and check nothing it does is missing here.
+- **Should the ~14 historical PartnerPage requests be backfilled?** They are all still in Gmail under `Zapier Partner Leads`, and the broken Zap means some number of them never reached the CRM. Not attempted: they are stale, and a backfill would need an email parser this workflow does not have now that the intake path is SPOT.
 
 ## Verified
 
@@ -282,6 +296,10 @@ Everything below was checked live on 2026-07-31 through the Zapier MCP connector
 | Deals default template sets `Status: Lead` and `Owner` | `notion-fetch` on `21a91b07-11ac-80a9-…` | `"Status": "Lead"`, `Owner` = Dennis. Removes the need to write a `status`-typed property at all |
 | Proven `properties\|\|\|…\|\|\|<type>` key forms | grep across every `workflow.ts` in this repo | `title` · `rich_text` · `select` · `multi_select` · `email` · `phone_number` · `url` · `checkbox` · `relation` · `date__start` · `date__end`. **No `status`** — hence the design above |
 | Table filter operators | `@zapier/zapier-sdk@0.91.0` README | `exact` and `icontains` both available; `icontains` is what makes the `Domain` link-field lookup work |
+| **The field set the directory form collects** | The last PartnerPage delivery of a real request (2026-07-31) | First/Last name · Email · Company name · Website · Phone · Comments · Tools to connect · Country · Time zone · Services needed · Project Budget · Zapier account email. Grounds `extractRequest` in a real field set; only the SPOT key *spellings* remain inferred |
+| Contacts vs Companies `Country` vocabularies | Both data-source schemas | Contacts = 64 **full names** (incl. `United States`); Companies = 8 **alpha-2** codes. Hence the explicit name→code map |
+| `Add Zapier Directory Leads to Contacts DB` is **not** a Durable | `list_workflows` — all 30 durables on the account enumerated | Absent, so it is a classic Zap. Its contents remain **uninspected**: the alert email is the only evidence, and classic Zaps are not exposed by the SDK CLI or the MCP connector |
+| Nothing landed for the 2026-07-31 request | Notion queries across all three data sources | No contact for the requester; newest Deal `2026-07-28`; newest Company `2026-07-30 09:48` |
 | Types | `tsc --strict` against durable `0.10.1` + sdk `0.91.0` | Clean |
 
-**Not verified, and not verifiable yet:** the payload field names, and therefore every property this workflow maps *from* the request. The first real request settles all of it at once — which is why the raw payload is captured three ways.
+**Not verified, and not verifiable before the cutover:** the payload's key *spellings*, and therefore every property this workflow maps *from* the request. The field set itself is now evidenced. The first real request through SPOT settles the spellings at once — which is why the raw payload is captured three ways.
