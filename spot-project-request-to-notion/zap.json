@@ -1,0 +1,58 @@
+{
+  "name": "spot-project-request-to-notion",
+  "workflow_id": "019fb61c-c04e-7783-90ba-37a70bc3415c",
+  "current_version_id": "019fb620-080f-7626-b093-4b85554b5a4a",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVQztSWpPmcqN6-IJU8wfQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "App227952CLIAPI@1.5.0",
+    "action": "new_project_request",
+    "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
+    "params": {},
+    "status": "active",
+    "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger — the workflow code never calls the partner tool, so it is not in --connections.",
+    "trigger_note": "Polling trigger, one run per new project request. Claimed 2026-07-31 with status 'active' and zero runs — DELIBERATELY claimed BEFORE Zapier's ~2026-08-03 cutover of directory lead delivery onto SPOT. A polling trigger banks its first poll after being claimed as already-seen rather than firing it, so claiming after the cutover risked swallowing the first real request as backlog. Nothing before the cutover can fire it, so claiming early cost nothing."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "tables": {
+    "01KYV1R8BWAZ697HQ8P1QV80AF": "SPOT Project Requests — request id -> the Notion Deal/Contact/Company page ids it produced, plus the raw payload. Owned by this Zap; the dedupe key that makes a retry or re-poll a no-op. 'Created On' is a Text field, not Date & Time, because Tables coerces a bare YYYY-MM-DD into the account timezone and stores the previous day.",
+    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> Notion Contact page id, owned by contact-emails-to-zapier-table. Read here, and written when this Zap creates a contact.",
+    "01JM8PH8YM93A482M8BFZ6WKW6": "Notion Companies mirror, owned by notion-companies-to-zapier-table (read-only here; the domain -> company page id lookup)."
+  },
+  "notion_data_sources": {
+    "21991b07-11ac-81a6-a894-000be4a09a67": "Contacts — found by email or created. Country is stored as a FULL NAME here (64 options).",
+    "21991b07-11ac-80b0-b787-000b3d3995f6": "Companies — resolved by domain or created. Country is stored as ISO ALPHA-2 here (8 options), so a full name must be mapped down; writing 'United States' would mint a ninth option beside 'US'.",
+    "21a91b07-11ac-808d-9657-000b1390d20b": "Deals — always created, one per request. Its default template already sets Status=Lead and Owner, so this Zap never writes a status-typed property."
+  },
+  "partner_app": {
+    "app_key": "App227952CLIAPI",
+    "app_version": "1.5.0",
+    "trigger": "read/new_project_request",
+    "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and updated_project_request (unused — the natural phase-2 sibling that would move the Deal's Status along the pipeline)."
+  },
+  "created_at": "2026-07-31T02:59:25.394Z",
+  "version_created_at": "2026-07-31T03:03:00.510Z",
+  "description": "New Zapier Solution Partner project request -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
+  "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three.",
+  "unexercised": {
+    "state": "Published and enabled, trigger active, ZERO runs. Nothing in this workflow has executed.",
+    "why": "The trigger has never carried a payload: directory requests arrived as PartnerPage emails until Zapier's ~2026-08-03 cutover. Published ahead of it deliberately (see trigger_note).",
+    "unproven": [
+      "The payload key SPELLINGS. The field SET is evidenced from the last PartnerPage delivery, but the snake_case keys SPOT uses are inferred, so extractRequest reads each field from a candidate list.",
+      "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). These are addressed through create_database_item's CACHED schema, which could not be resolved from the publishing session — the Zapier MCP server's own Notion connection returned an empty dynamic_properties_schema for these data sources, which means it cannot see them, NOT that the keys are wrong."
+    ],
+    "first_run_checklist": [
+      "Read the run output: it echoes the raw payload, so the true key spellings are readable without opening Notion.",
+      "Check the Deal page body's 'Raw request payload' block against the mapped properties — an empty property with a populated payload key means a candidate spelling missed.",
+      "Confirm no new select option appeared on Companies Country / Industry / Size or Contacts Country."
+    ]
+  }
+}

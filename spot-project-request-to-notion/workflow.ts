@@ -30,18 +30,21 @@ const COMPANY_TABLE = "01JM8PH8YM93A482M8BFZ6WKW6";
 /**
  * Project request id -> the records this workflow created for it.
  *
- * **Not yet created — this workflow is source-only and refuses to run until the
- * id is filled in** (see `README.md` → Publish runbook). That is deliberate: with
- * no dedupe store there is nothing to stop a retry, or a re-poll after the
- * trigger is re-claimed, from minting a second Contact/Company/Deal for a
- * request already in the CRM. Failing loudly on the first run beats discovering
- * it from duplicate deals.
+ * This is what makes the workflow safe to retry: without it, nothing stops a
+ * durable retry — or a re-poll after the trigger is re-claimed — from minting a
+ * second Contact/Company/Deal for a request already in the CRM. The workflow
+ * refuses to run if this is ever blanked, rather than proceeding unguarded.
  *
  * Columns: `Request Id` (key) · `Deal Page ID` · `Contact Page ID` ·
  * `Company Page ID` · `Email` · `Company Name` · `Stage` · `Created On` ·
  * `Payload` (the raw trigger JSON — see the note on `extractRequest`).
+ *
+ * `Created On` is deliberately a **Text** field, not Date & Time: Tables coerces
+ * a bare `YYYY-MM-DD` into the account timezone and stores `T16:00:00Z` on the
+ * *previous* day, which is the trap `register-zapier-partner-lead` had to pin
+ * `T00:00:00Z` to avoid. Here the value is only ever read back as a date.
  */
-const REQUEST_TABLE = "";
+const REQUEST_TABLE = "01KYV1R8BWAZ697HQ8P1QV80AF";
 
 /**
  * The Contacts `Lead Source` option a partner-directory request earns. Already
