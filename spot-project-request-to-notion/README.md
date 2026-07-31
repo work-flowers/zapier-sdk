@@ -4,7 +4,7 @@ A **new project request** in the Zapier **Solution Partner Operations Tool** (SP
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ⚠️ **Design and source only — not created on Zapier, not published.** `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`; the [Publish runbook](#publish-runbook) below is the copy-paste path from here to deployed, for a session that can reach the CLI. One thing about it is a genuine blocker, and it is the next section.
+**Status:** ⚠️ **Design and source only — not created on Zapier, not published, and the trigger is now an open question.** `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`, and the [Publish runbook](#publish-runbook) is the copy-paste path to deployed — but **do not publish yet**: a real directory request arrived on 2026-07-31 and it did **not** come through SPOT. See [the update below](#update-later-on-2026-07-31-a-real-request-arrived-and-it-did-not-come-through-spot), which also records that the existing classic Zap for this flow is broken and dropped that request.
 
 ## The blocking unknown: nobody has ever sent us a project request
 
@@ -28,7 +28,39 @@ Every field name in `extractRequest` is therefore **inferred** from the naming s
 
 The corollary is a scheduling argument, not just a caveat: **a polling trigger records its first poll after being claimed as already-seen rather than firing it** (verified on the sibling — claiming its trigger did not replay the account's 247 historical leads). A project request that lands *before* this workflow's trigger is claimed is therefore never delivered. If inbound directory requests matter, claiming the trigger sooner is worth more than waiting for a payload to design against.
 
+## Update, later on 2026-07-31: a real request arrived, and it did not come through SPOT
+
+Dennis received a directory request the same morning this was written. It is **not** in SPOT — re-polling `new_project_request`, `updated_project_request` and `find_project_request` after it arrived still returns `{"results": []}`, and the referral-lead list is unchanged at 247 (newest created `2026-07-20`, newest modified `2026-07-23`). What actually arrived was an **email**:
+
+- **From** `no-reply@partnerpage.io`, subject **"New contact request from Zapier"**, `2026-07-30T23:02:49Z` (07:02 SGT).
+- PartnerPage — the vendor behind the directory — calls it a **contact request**, not a project request. Body carries labelled fields (First name, Last name, Email, Company name, Website, Phone number, Comments) plus a variable **Request Details** table: *Tools you are trying to connect · Your Country · Your Time Zone · Services needed · Project Budget · Zapier account email*.
+- A hidden `<input name="lead_id">` holds a UUID (`b2527eb3-…`), repeated in the "Update status" link along with the solution-profile and partner ids. **That UUID is a natural dedupe key.**
+- Gmail already labels these **`Zapier Partner Leads`** (`Label_29`) — **15 messages, 14 threads**, so there is a real corpus to validate a parser against rather than one sample.
+
+So the two objects are not the same thing, and `new_project_request` is very likely **not the intake path** for directory requests at all. The best remaining hypothesis for what would populate it is the email's own closing line — *"Update the request status so Zapier knows you're handling it!"* — i.e. a request may only become visible to SPOT once the partner updates its status in the directory. That is cheap to test: update the status on this request, then re-poll. Until someone does, the SPOT trigger this workflow is designed around has never been observed to carry anything.
+
+### The existing Zap for this is broken, and this morning's request was dropped
+
+One minute after the PartnerPage email, Zapier sent `[ALERT] Possible error on your **Add Zapier Directory Leads to Contacts DB** Zap`, with:
+
+> Notion — `Pipeline Stage is not a property that exists.`
+
+There is no `Pipeline Stage` on Contacts, Companies **or** Deals. Deals has `Status` (a `status`-type property), so this looks like a rename the classic Zap was never updated for.
+
+Confirmed in the CRM: **nothing landed.** No contact matches `absqrd@aol.com` or the name; the newest Deal is Sea Group from `2026-07-28`; the newest Company is EBER from `2026-07-30 09:48`. The request exists only in Dennis's inbox.
+
+### What this means for this design
+
+- **The trigger is now an open decision, not a settled one.** A Gmail-label trigger on `Zapier Partner Leads` is the only *proven* source, fires immediately, carries the brief/budget/services fields, and has 14 threads to validate against. The SPOT trigger may be a phase-2 path, or a dead end.
+- **The rest of the design is unaffected.** Company/Contact/Deal resolution, the fill-only-empty-fields discipline, the create race, the template handling and the dedupe store all key off a normalised request, not off where it came from. Only `extractRequest` and the trigger binding change.
+- **This stops being greenfield and becomes a migration** of `Add Zapier Directory Leads to Contacts DB`, which puts it in the same shape as every other Zap in this repo — and means the migration notes should record the `Pipeline Stage` fault and whatever else that Zap gets wrong.
+- **Alan Bond's request is a useful data point for the "should an unqualified inbound open a Deal?" question** rather than a hypothetical: an AOL address, a `$100–$250` budget, `Technical support/troubleshooting`, and a brief about Facebook/Instagram campaign posts. Whatever the policy is, it should survive that arriving weekly.
+
+`workflow.ts` has deliberately **not** been rewritten pending the trigger decision, so nothing here claims to be verified against the email format.
+
 ## What it does
+
+The shape below is written against the SPOT trigger as originally designed. Everything from "domain =" onwards is independent of the intake path and survives a switch to the Gmail-label trigger described above.
 
 ```mermaid
 flowchart TD
