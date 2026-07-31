@@ -88,6 +88,9 @@ Run against production on 2026-07-31 via `run-durable`:
 | Event with no meeting note | `id: no-such-event-id-abc123` | `skipped: no-meeting-note-for-event` |
 | Cancelled occurrence | same id, `status: cancelled` | `skipped: event-cancelled` |
 | All-day event | `start.date` only, no `dateTime` | `skipped: not-a-timed-event` |
+| **First live trigger run** (`019fb772-a39d…`, 09:12Z) | a real edit to the recurring `💛 SG HK TW Ambassador Quarterly` occurrence on 5 Aug | `skipped: no-meeting-note-for-event` — correct; that meeting has not happened, so it has no note |
+
+That last row settles the design's central premise with production evidence rather than inference: the trigger delivered `id: d839afd543fc469494cd72dfc5beacd4_20260805T050000Z` — the **per-occurrence** id — for a recurring instance with `expand_recurring: false`. So a single-occurrence edit really does arrive keyed the way the table is keyed. (Its `iCalUID` was the bare `d839afd543fc469494cd72dfc5beacd4@google.com`, another example of a recurring series whose UID looks exactly like a one-off's.)
 
 ## Maintainer notes
 
