@@ -1,0 +1,35 @@
+{
+  "name": "gcal-event-updated-to-meeting-note",
+  "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
+  "current_version_id": "019fb770-487e-72fc-abc1-12a31b78f625",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Aer77C2EnpxTXUZysGSaog",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleCalendarCLIAPI@1.15.0",
+    "action": "event_updated",
+    "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "params": {
+      "calendarid": "dennis@work.flowers",
+      "expand_recurring": false
+    },
+    "status": "active",
+    "authentication_note": "Google Calendar connection 'Google Calendar dennis@work.flowers'. The Google credential lives HERE, on the trigger — the workflow never calls Google back, so it is not in --connections.",
+    "trigger_note": "Polling trigger. `expand_recurring: false` matches the classic Zap it replaces: a single-occurrence edit (the common case, and the one that was failing) arrives with its own occurrence id, while a whole-series edit arrives as the master event and matches no note. See the README's 'What it deliberately does not do'."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.11.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.92.0"
+  },
+  "tables": {
+    "01JZCVG73MBWWB0357CEPS4903": "[Table] Meeting Note IDs — read for the page lookup, written back to keep Start/End/iCal UID current. Owned by the meeting-note-db-updates Notion Worker."
+  },
+  "created_at": "2026-07-31T09:10:03.422Z",
+  "version_created_at": "2026-07-31T09:10:17.098Z",
+  "replaces_classic_zap": "Updated Meeting -> Update Meeting Note in Notion",
+  "description": "Google Calendar event updated -> update the Date on its Notion meeting note. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates."
+}

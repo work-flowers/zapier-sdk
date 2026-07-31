@@ -1,0 +1,16 @@
+{
+  "name": "gcal-event-updated-to-meeting-note",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@zapier/zapier-durable": "0.11.1",
+    "@zapier/zapier-sdk": "0.92.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  },
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+  }
+}
