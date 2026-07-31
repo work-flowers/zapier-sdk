@@ -24,14 +24,14 @@ const DEALS_DS = "21a91b07-11ac-808d-9657-000b1390d20b";
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 // Notion Companies mirror, owned by `notion-companies-to-zapier-table`. Keyed on
 // "Notion Page ID"; carries "Company Name" and "Domain" (a link field, so Tables
-// normalises a bare host to `https://…` — see `findCompanyByDomain`).
+// normalises a bare host to `https://…` — see `resolveCompany`).
 const COMPANY_TABLE = "01JM8PH8YM93A482M8BFZ6WKW6";
 
 /**
  * Project request id -> the records this workflow created for it.
  *
  * **Not yet created — this workflow is source-only and refuses to run until the
- * id is filled in** (see `README.md` → Prerequisites). That is deliberate: with
+ * id is filled in** (see `README.md` → Publish runbook). That is deliberate: with
  * no dedupe store there is nothing to stop a retry, or a re-poll after the
  * trigger is re-claimed, from minting a second Contact/Company/Deal for a
  * request already in the CRM. Failing loudly on the first run beats discovering
@@ -920,7 +920,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         skipped: true,
         reason:
           "REQUEST_TABLE is not configured — create the SPOT Project Requests " +
-          "Table and set its id before publishing (see README → Prerequisites)",
+          "Table and set its id before publishing (see README → Publish runbook)",
         requestId: req.requestId,
         raw: req.raw,
       };

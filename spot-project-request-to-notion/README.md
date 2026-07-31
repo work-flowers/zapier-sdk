@@ -4,7 +4,7 @@ A **new project request** in the Zapier **Solution Partner Operations Tool** (SP
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ⚠️ **Design and source only — not created on Zapier, not published.** Two things must happen before it can be (see [Prerequisites](#prerequisites)), and one of them is a genuine blocker. `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`.
+**Status:** ⚠️ **Design and source only — not created on Zapier, not published.** `tsc --strict` is clean against durable `0.10.1` + sdk `0.91.0`; the [Publish runbook](#publish-runbook) below is the copy-paste path from here to deployed, for a session that can reach the CLI. One thing about it is a genuine blocker, and it is the next section.
 
 ## The blocking unknown: nobody has ever sent us a project request
 
@@ -33,7 +33,7 @@ The corollary is a scheduling argument, not just a caveat: **a polling trigger r
 ```mermaid
 flowchart TD
     A["SPOT: New Project Request<br/>(polling trigger)"] --> B{"REQUEST_TABLE<br/>configured?"}
-    B -- no --> B0(["refuse — no dedupe store,<br/>see Prerequisites"])
+    B -- no --> B0(["refuse — no dedupe store,<br/>see the Publish runbook"])
     B -- yes --> C{"usable email?"}
     C -- no --> C0(["skip — nothing to key a Contact on"])
     C -- yes --> D{"Request Id already<br/>in the request Table?"}
@@ -129,14 +129,97 @@ Nothing here uses AI. Zapier Table reads and writes are free; a Notion `runActio
 | Existing contact, company found in the mirror Table | 3–4 (contact read, optional fill, deal create, page body) |
 | Everything new | **6** (Companies query, create Company, create Contact, create Deal, page body, comment) |
 
-## Prerequisites
+## Publish runbook
 
-Neither is done. The workflow **refuses to run** without the first, returning `skipped: true` with the reason rather than proceeding — an unconfigured dedupe store is not something to discover from duplicate deals.
+Nothing here has been done — the session that wrote this had no `zapier-sdk` credentials and no browser to `login` with, so it could not reach the CLI at all (`workflows-doctor`'s compatibility gate included; **run that first** in a session that can). Every command below is for a local, logged-in session, run from this directory.
 
-1. **Create the `SPOT Project Requests` Zapier Table** and set `REQUEST_TABLE` in `workflow.ts`. Columns: `Request Id` (the key) · `Deal Page ID` · `Contact Page ID` · `Company Page ID` · `Email` · `Company Name` · `Stage` · `Created On` · `Payload`.
-2. **Create the workflow on Zapier** — `create-workflow` **without** `--private` (repo rule 7; visibility cannot be changed afterwards), publish with `--trigger` bound to `App227952CLIAPI@1.5.0` / `new_project_request` on connection `02a5085e-…` and `--connections notion_wf=02b73654-15c8-85c3-b16a-07304d2beb17`, then write the `zap.json` this directory does not yet have.
+The workflow **refuses to run** until step 1 is done, returning `skipped: true` with the reason rather than proceeding. An unconfigured dedupe store is not something to discover from duplicate deals.
 
-Pin `@zapier/zapier-durable` to **0.10.1**, as both siblings do — a publish on 0.11.0 failed at run time with `Dependency installation failed` because the durable runtime's pnpm enforces a minimum release age. Check a version's publish date before bumping.
+### 1. Create the dedupe Table
+
+```bash
+TABLE_ID="$(npx zapier-sdk create-table "SPOT Project Requests" \
+  --description "Zapier partner-directory project request id -> the Notion Contact/Company/Deal it produced. Written by spot-project-request-to-notion." \
+  --json | jq -r '.data.id')"
+
+npx zapier-sdk create-table-fields "$TABLE_ID" '[
+  {"type":"string","name":"Request Id"},
+  {"type":"string","name":"Deal Page ID"},
+  {"type":"string","name":"Contact Page ID"},
+  {"type":"string","name":"Company Page ID"},
+  {"type":"email","name":"Email"},
+  {"type":"string","name":"Company Name"},
+  {"type":"string","name":"Stage"},
+  {"type":"string","name":"Created On"},
+  {"type":"text","name":"Payload"}
+]' --json
+
+npx zapier-sdk list-table-fields "$TABLE_ID"   # check what starter fields came with it
+echo "$TABLE_ID"                               # -> REQUEST_TABLE in workflow.ts
+```
+
+Two deliberate choices in those types. **`Created On` is a `string`, not a `datetime`** — Tables coerces a bare `YYYY-MM-DD` into the account timezone and stores `T16:00:00Z` the *previous* day, which is the bug `register-zapier-partner-lead` had to pin `T00:00:00Z` to work around. Here the value is only ever read back as a date, so keeping it a plain string sidesteps it. **`Payload` is `text`, not `string`**, because it holds a whole JSON document.
+
+Then set `REQUEST_TABLE` in `workflow.ts` and re-run `tsc`.
+
+### 2. Optional: exercise the main path first
+
+There is no real payload, so a `run-durable` test needs a hand-made one — and **it must reach the main path.** A payload that returns at an early guard proves nothing about the code after it, which is exactly how `drive-invoice-to-xero` shipped a `DeterminismViolation` that killed 100% of its runs. So include a request id *and* an email:
+
+```bash
+SOURCE_FILES="$(jq -n --rawfile w workflow.ts '{"workflow.ts": $w}')"
+
+npx zapier-sdk --experimental run-durable "$SOURCE_FILES" \
+  --dependencies '{"@zapier/zapier-sdk":"0.91.0","zod":"4.4.3"}' \
+  --zapier-durable-version '0.10.1' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
+  --input '{"id":"TEST-0001","email":"dennis@work.flowers","first_name":"Dennis","last_name":"Chiuten","company_name":"work.flowers","website":"https://work.flowers","description":"Smoke test for spot-project-request-to-notion.","budget":"$5k-$10k","timeline":"Q4","created_on":"2026-07-31T00:00:00"}' \
+  --json
+```
+
+**This writes to production Notion** — it will create a real Deal, and link it to the existing contact and company that address already resolves to (so it exercises the *existing*-record branches, which are the ones with the fill-only-empty-fields logic). Delete the Deal and its Table row afterwards. Poll `get-durable-run <run-id> --json` until `status: "finished"`; the run output echoes the raw payload, so you can confirm extraction without opening Notion.
+
+### 3. Create the workflow — account-visible
+
+```bash
+npx zapier-sdk --experimental create-workflow "spot-project-request-to-notion" \
+  --description "New Zapier Solution Partner project request -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it. Raw payload preserved on the Deal page." \
+  --json
+```
+
+**No `--private`** — repo rule 7, and this deliberately overrides the `workflows-create` skill's EA default. **Visibility cannot be changed after creation**, so this is the only chance to get it right. Record it as `is_private: false` in `zap.json`.
+
+### 4. Publish with the trigger claimed
+
+```bash
+SOURCE_FILES="$(jq -n --rawfile w workflow.ts '{"workflow.ts": $w}')"
+
+npx zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES" \
+  --dependencies '{"@zapier/zapier-sdk":"0.91.0","zod":"4.4.3"}' \
+  --zapier-durable-version '0.10.1' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
+  --trigger '{"selected_api":"App227952CLIAPI@1.5.0","action":"new_project_request","authentication_id":"02a5085e-1d27-853d-89b7-115a57fc4d32","params":{}}' \
+  --enabled \
+  --json
+```
+
+`selected_api` **must** carry the `@1.5.0` version pin. A bare `App227952CLIAPI` makes the trigger claim fail **silently** — publish returns success, and the workflow just stays disabled with nothing saying why.
+
+Pin `@zapier/zapier-durable` to **0.10.1**, as both siblings do. A publish on 0.11.0 failed at run time with `Dependency installation failed`: the durable runtime's pnpm enforces a 24-hour minimum release age and 0.11.0 was under a day old. The same guard applies to `@zapier/zapier-sdk` and `zod`, which publish often — check a version's publish date before bumping any of the three.
+
+### 5. Verify, then sync back
+
+```bash
+npx zapier-sdk --experimental get-workflow <workflow-id> --json          # enabled MUST be true
+npx zapier-sdk --experimental list-workflow-versions <workflow-id> --json
+npx zapier-sdk --experimental list-workflow-runs <workflow-id> --json    # expect empty
+```
+
+`enabled: false` after publishing with `--enabled` means the trigger claim failed — almost always the unpinned `selected_api` above. Don't call it deployed until that reads `true`.
+
+`list-workflow-runs` should be **empty**. A polling trigger's first poll after being claimed is recorded as already-seen, and there are no project requests anyway — but check, because a surprise here would mean the account has history the four probes above did not see.
+
+Then write `zap.json` (this directory does not have one yet), following the sibling's shape: `workflow_id`, `current_version_id`, `trigger_url`, `enabled`, `is_private: false`, the trigger block, `connections`, `zapier_durable_version`, `dependencies`, `tables`, and a `partner_app` block. Update the root README's status column, and this file's — from ⚠️ to ✅.
 
 ## Maintainer notes
 
