@@ -43,9 +43,9 @@ function normalizeInput(rawInput: unknown): unknown {
   return v;
 }
 
-function extractPageId(raw: unknown): string {
+function extractPageId(raw: unknown): string | null {
   if (!raw) throw new Error("No input provided to workflow.");
-  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "string") return raw.trim() || null;
   const o = raw as Record<string, any>;
   const candidate =
     o.page_id ||
@@ -55,12 +55,7 @@ function extractPageId(raw: unknown): string {
     (o.page && o.page.id) ||
     o["data.id"] ||
     o["data__id"];
-  if (!candidate) {
-    throw new Error(
-      "Could not find a Notion page id in webhook payload: " +
-        JSON.stringify(raw).slice(0, 300),
-    );
-  }
+  if (!candidate) return null;
   return String(candidate).trim();
 }
 
@@ -232,6 +227,12 @@ const workflow = defineDurable({
   run: async (ctx, rawInput) => {
     const norm = normalizeInput(rawInput);
     const pageId = extractPageId(norm);
+    // Webhooks by Zapier sends periodic GET probes with an empty body
+    // ({"querystring": {}}) to verify the hook is alive. Return early rather
+    // than failing — there is nothing to process.
+    if (pageId === null) {
+      return { skipped: true, reason: "no Notion page id in payload — likely a platform probe" };
+    }
     const flags =
       norm && typeof norm === "object"
         ? {
