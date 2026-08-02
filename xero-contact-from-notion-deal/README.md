@@ -2,7 +2,7 @@
 
 Creates a company's contact in Xero from the Notion CRM, so a deal that is about to be invoiced has somewhere to be invoiced to.
 
-**Status:** enabled on Zapier. Replaces the classic Zap **Create Xero Contact from Notion**.
+**Status:** enabled on Zapier, cutover complete (2026-08-02). Replaces the classic Zap **Create Xero Contact from Notion**, which is now disabled — the Companies button and the Deals automation both post here, and nothing else serves them.
 
 ## What it does
 
