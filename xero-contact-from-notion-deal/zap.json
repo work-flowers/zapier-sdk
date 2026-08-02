@@ -1,0 +1,45 @@
+{
+  "name": "xero-contact-from-notion-deal",
+  "workflow_id": "019fc24d-bf2b-7139-932f-dcda6d0330b8",
+  "current_version_id": "019fc24d-fe8c-72a8-90b4-404c07cfc1ec",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQN2WN_Gbsv_lu90yt8OvA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/igoRSxsAwMIxDwO6/",
+    "trigger_note": "Catch hook. TWO Notion senders post here: the Companies 'Create Xero Contact' button property (sends a Company page) and a Deals stage automation (sends a Deal page). The workflow accepts either and resolves the Company/Deal pair itself — the classic Zap only ever understood the Company shape. `webhook_url` is the one external systems call; `trigger_url` is Zapier-internal."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
+    "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "api_version": "2026-03-11",
+    "note": "Pages are read and written with sdk.fetch against the Notion REST API rather than the Notion actions, matching the rest of this repo — the action schema cache goes stale on newly added properties."
+  },
+  "xero": {
+    "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+    "action": "XeroCLIAPI write contact (\"Create/Update Contact\")",
+    "note": "Xero matches this action on contact NAME, so it is an upsert, not a create. That is why the Xero Contact ID write-back matters: without it a repeat trigger silently overwrites the live contact's people."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read by this workflow. The classic Zap's dedupe guard queried it; the durable reads `Xero Contact ID` off the company page it already fetched instead (fresher, no extra call). The Table still receives the id, mirrored from Notion by notion-companies-to-zapier-table."
+  },
+  "zapier_durable_version": "0.12.3",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.93.0"
+  },
+  "created_at": "2026-08-02T11:48:26.000Z",
+  "version_created_at": "2026-08-02T11:48:39.375Z",
+  "replaces_classic_zap": "Create Xero Contact from Notion",
+  "description": "Notion Company or Deal webhook -> create the company's contact in Xero. Skips when the company already carries a Xero Contact ID, and writes the new id back to Notion so the guard has teeth. Closes two branch cases the classic Zap silently dropped."
+}
