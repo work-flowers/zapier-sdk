@@ -43,7 +43,8 @@
   "cutover": {
     "notion_button_repointed": "2026-08-02",
     "notion_deals_automation_repointed": "2026-08-02",
-    "classic_zap_disabled": "unconfirmed — classic Zaps are not exposed by the SDK CLI or the MCP connector, so this cannot be verified from here"
+    "classic_zap_disabled": "2026-08-02 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector",
+    "status": "complete — this durable is the only thing serving these two Notion senders"
   },
   "replaces_classic_zap": "Create Xero Contact from Notion",
   "description": "Notion Company or Deal webhook -> create the company's contact in Xero. Skips when the company already carries a Xero Contact ID, and writes the new id back to Notion so the guard has teeth. Closes two branch cases the classic Zap silently dropped."
