@@ -149,6 +149,32 @@ function extractPageId(raw: unknown): string {
   return dashUuid(id);
 }
 
+/**
+ * True when the payload carries no event at all — an empty POST or a bare GET
+ * of the catch URL.
+ *
+ * A catch hook is a public URL: pasting it into a browser, curling it, or
+ * hitting "test" while wiring up the Notion side all deliver a body like
+ * `{"querystring":{}}`. Those are pings, not events, and failing the run on
+ * them means a Zapier error alert every time someone touches the URL — which
+ * is exactly what happened on 2026-08-02 during cutover.
+ *
+ * A payload that DOES carry content but no page id is a different thing: a
+ * real event we failed to understand. That still throws, loudly.
+ */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper with something in it — treat as a real event
+  }
+  return true;
+}
+
 function previewOnlyFlag(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
   const o = raw as Record<string, any>;
@@ -237,6 +263,14 @@ const workflow = defineDurable<Input, unknown>(
   "xero-contact-from-notion-deal",
   async (ctx: DurableContext, rawInput: Input) => {
     const payload = normalizeInput(InputSchema.parse(rawInput));
+
+    // Someone pinged the catch URL rather than sending an event. Nothing to do,
+    // and nothing worth alerting on.
+    if (isEmptyPing(payload)) {
+      console.log("empty payload — treating as a ping of the catch URL, not an event");
+      return { skipped: "empty-payload" } satisfies Outcome;
+    }
+
     const triggerPageId = extractPageId(payload);
     const previewOnly = previewOnlyFlag(payload);
 

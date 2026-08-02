@@ -59,6 +59,8 @@ The classic Zap only understood the Company shape, so a Deal-shaped payload woul
 
 `previewOnly: true` in the payload resolves the whole chain and returns the exact Xero inputs it *would* send, without writing anything. Use it for testing — see the maintainer notes.
 
+**An empty payload is treated as a ping, not an event.** A catch URL is public: opening it in a browser, curling it, or hitting "test" while wiring up the Notion side delivers `{"querystring":{}}`. Those return `skipped: "empty-payload"` rather than failing. A payload that *does* carry content but no page id still throws — that is a real event we failed to understand, and it should be loud.
+
 ## Verified cases
 
 All against live CRM records, 2026-08-02. The first three are dry runs (`previewOnly`, Notion reads only); the last two are real.
@@ -70,6 +72,8 @@ All against live CRM records, 2026-08-02. The first three are dry runs (`preview
 | Knoxx Business Group | Company (button) | preview | `single-person` — billing contact **is** the deal contact, so it collapses to one person |
 | GastroGig — Notion Implementation | Deal | **live**, via the deployed catch hook | Xero contact `a0d4f085-8e7b-4834-9f1a-c5c8cf1b5747` created; `writeBack: "written"` and the id verified back on the Notion company |
 | GastroGig, fired a second time | Deal | **live** | `skipped: "already-in-xero"` — returns before the Xero call. This is the repeat the classic Zap could not stop, and it is the whole point of the write-back |
+| `{"querystring":{}}` — the real payload that failed during cutover | — | replay | `skipped: "empty-payload"`, no longer a failed run |
+| `{"data":{"properties":{...}}}` with no id | — | replay | still fails loudly, as a malformed real event should |
 
 ## What changed from the classic Zap
 
