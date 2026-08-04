@@ -1,0 +1,137 @@
+{
+  "note": "One shared `shared.ts` deployed as TWO workflows — one per eSignatures trigger — so this file mirrors both deployments instead of one. Each deployment publishes its own `workflow.<phase>.ts` as `workflow.ts` alongside `shared.ts` verbatim. Republish both together whenever `shared.ts` changes.",
+  "deployments": [
+    {
+      "name": "esignatures-contract-sent-to-notion",
+      "entry_file": "workflow.sent.ts",
+      "workflow_id": "019fcc6b-9c2e-7f83-a559-8863fcb45e09",
+      "current_version_id": "019fcc7e-e4aa-7f00-ac5a-a27b9dc61236",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AWNgQaJLXCiXn4-K76_fGg",
+      "enabled": true,
+      "is_private": false,
+      "trigger": {
+        "selected_api": "EsignaturesioCLIAPI@1.3.17",
+        "action": "contract_sent_to_signer",
+        "authentication_id": "026935e5-48e9-8cea-9bfc-c46d042addf7",
+        "params": {},
+        "status": "active",
+        "webhook_url": "https://hooks.zapier.com/hooks/standard/20495893/ad319ac6cd5c4a49a80ef8baa5013cbb/",
+        "webhook_url_note": "eSignatures registers this itself when the trigger is claimed — there is nothing to paste anywhere. Recorded only for debugging.",
+        "params_note": "This trigger takes ZERO input fields (`list-trigger-input-fields` returns []), so there is nothing to configure and nothing that can be mis-shaped."
+      },
+      "created_at": "2026-08-04T10:57:12.239Z",
+      "version_created_at": "2026-08-04T11:18:16.099Z",
+      "replaces_classic_zap": "Update SOW / Project Addendum Status When Sent for Signature",
+      "description": "eSignatures contract_sent_to_signer -> mark the mapped SOW or Project Addendum as out for signature."
+    },
+    {
+      "name": "esignatures-contract-signed-to-notion",
+      "entry_file": "workflow.signed.ts",
+      "workflow_id": "019fcc6b-a9d0-705d-a6d1-a22c974946a4",
+      "current_version_id": "019fcc7e-f2aa-72f7-9be8-f9420e207012",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZzfxEFq8ZlLjGlLCDEX_Q",
+      "enabled": true,
+      "is_private": false,
+      "trigger": {
+        "selected_api": "EsignaturesioCLIAPI@1.3.17",
+        "action": "contract_signed",
+        "authentication_id": "026935e5-48e9-8cea-9bfc-c46d042addf7",
+        "params": {},
+        "status": "active",
+        "webhook_url": "https://hooks.zapier.com/hooks/standard/20495893/4ecc60b6f8bc47a59cabb402471c7239/",
+        "params_note": "Zero input fields, as above."
+      },
+      "created_at": "2026-08-04T10:57:15.730Z",
+      "version_created_at": "2026-08-04T11:18:19.693Z",
+      "replaces_classic_zap": "Signed SOWs / Project Addenda",
+      "description": "eSignatures contract_signed -> mark the mapped SOW Signed / Project Addendum Executed, and file the executed PDF on the record."
+    }
+  ],
+  "connections": { "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17" },
+  "connection_notes": {
+    "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da).",
+    "esignatures": "The eSignatures connection (026935e5-48e9-8cea-9bfc-c46d042addf7, the PUBLIC `EsignaturesioCLIAPI` app) is bound as the TRIGGER's authentication_id, not as a workflow connection — no eSignatures action is ever called here. That app owns the triggers; the private `App236843CLIAPI` app used by `esignatures-send-for-signing` has no usable trigger."
+  },
+  "trigger_asymmetry": "The two triggers disagree about where the contract id lives: `contract_sent_to_signer` nests it at `.contract.id`, `contract_signed` delivers it flat at `.id`. `extractContractId` reads BOTH paths rather than branching on phase, so neither deployment can be broken by the asymmetry and a hand-built replay payload works either way.",
+  "notion": {
+    "sows": {
+      "datasource_id": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
+      "datasource_name": "SOWs",
+      "properties_written": [
+        "Status (status) = \"Sent for signature\" (sent) / \"Signed\" (signed)",
+        "Signed PDF (files) — the executed PDF, signed phase only"
+      ]
+    },
+    "project_addendums": {
+      "datasource_id": "46234707-641a-4aa4-96f6-295554e6543f",
+      "datasource_name": "Project Addendums",
+      "properties_written": [
+        "Status (status) = \"Sent for signing\" (sent) / \"Executed\" (signed)",
+        "Executed Agreement (files) — the executed PDF, signed phase only"
+      ]
+    },
+    "status_note": "Both `Status` properties are type `status` and `update_database_item` writes them fine (verified against both data sources — `properties|||Status|||status` is exposed). Note the SOW's option is \"Sent for signature\" while the addendum's is \"Sent for signing\"; the two differ and a mismatch fails silently.",
+    "template_mode_note": "Repo rule 5 does not apply — this workflow only updates existing pages."
+  },
+  "signed_pdf": {
+    "behaviour_change": "NEW. The classic Zap passed `properties|||Signed PDF|||files: []` — an empty array, a silent no-op — so the executed PDF was never actually filed on any record. This workflow files it: `Signed PDF` on SOWs, `Executed Agreement` on Project Addendums.",
+    "url_expiry": "eSignatures supplies a PRESIGNED S3 URL with `X-Amz-Expires=259200` — 72 hours. The app exposes no Get/Find-Contract action and no raw-request action, so the webhook payload is the only chance to fetch it; there is no way to re-fetch a fresh URL later.",
+    "why_not_simpler": [
+      "Handing the URL to `properties|||…|||files` on update_database_item DOES store it, but as `{type:\"external\"}` — Notion does not re-host external property URLs, so the property would look populated and the link would die after 72h. Verified live on 2026-08-04.",
+      "Notion's `POST /v1/file_uploads` with `mode:\"external_url\"` fails on this URL: Notion probes it with HEAD to read Content-Type, and an S3 presigned URL signed for GET answers HEAD with 403 (`Failed to fetch the headers of the external URL`)."
+    ],
+    "route_used": "Download the bytes, then a `single_part` Notion file upload: GET the PDF -> POST /v1/file_uploads {filename, content_type} -> POST /v1/file_uploads/{id}/send with the bytes -> PATCH the page property with {type:\"file_upload\", file_upload:{id}}. Result is a Notion-hosted `{type:\"file\"}` on prod-files-secure, i.e. permanent.",
+    "gotchas": [
+      "The multipart file part MUST declare the same Content-Type the upload was created with, or Notion rejects the send: `Current file content type of 'application/octet-stream' does not match the original content type`. The body is hand-built (rather than via FormData) because that exact byte layout is the one verified against Notion.",
+      "A files-entry `name` is capped at 100 characters — Notion 400s the whole PATCH otherwise (`files[0].name.length should be ≤ 100`). eSignatures names its PDFs after the full agreement title plus both signers, which runs past that, so the stem is truncated and \".pdf\" preserved.",
+      "The durable sandbox has NO DNS for arbitrary hosts — a bare `fetch()` dies with `getaddrinfo ENOTFOUND`. The download goes through `sdk.fetch` with NO connection: the URL is already presigned, and binding one would hand a Zapier-held credential to AWS."
+    ],
+    "failure_handling": "All four steps sit in ONE `ctx.step`, so a retry cannot re-download against an expired URL or attach a second copy. Filing never throws — the status write has already happened and must not be undone by a filing problem. Failures come back as `{ok:false, stage, detail}` and are surfaced in the run OUTPUT as `pdfError`, because a durable run's console output is not retrievable from `get-durable-run` (the run object exposes step status but no logs), so a silently-swallowed failure would be undiagnosable.",
+    "url_field_unverified": "No CLI command exposes a trigger's output shape, so the exact payload field holding the PDF URL could not be pinned from a schema. `extractSignedPdfUrl` tries an ordered candidate list and then falls back to scanning the payload for any https URL whose path ends in .pdf. The fallback is verified: a run with the URL buried at `some_unexpected_wrapper.documents[0].totally_unknown_key` still found and filed it. Tighten the candidate list once a real payload has been seen."
+  },
+  "tables": {
+    "esignatures_mapping": {
+      "id": "01KHZEP4FA560E9GMTGTBR1E2N",
+      "name": "eSignatures Mapping",
+      "role": "READ ONLY here. Owned and written by `esignatures-send-for-signing`.",
+      "key_field": "Contract ID",
+      "fields": {
+        "Page ID": "f1, string — the Notion SOW / Project Addendum page id",
+        "Contract ID": "f2, string — the eSignatures contract id, looked up here",
+        "Agreement Type": "f3, labeled_string — \"SOW\" or \"Project Addendum\"; selects the data source, status value and file property"
+      },
+      "miss_note": "A contract with no row here is a SKIP, not an error. The classic Zap's search was configured to fail on a miss (`_zap_search_success_on_miss: false`), which turned every contract created outside these flows into an error alert."
+    }
+  },
+  "zapier_durable_version": "0.12.3",
+  "dependencies": { "@zapier/zapier-sdk": "0.93.0", "zod": "4.4.3" },
+  "live_runs": {
+    "note": "Verified 2026-08-04 with `run-durable`.",
+    "runs": [
+      {
+        "case": "contract_signed, main path, real record",
+        "target": "contract 28e9b5ff-59e7-4e45-98bb-754855e2aff1 -> Project Addendum \"NUS (LKYSPP) — Nasri Nasir — Notion Enablement Programme (Pilot)\" (97f428f1-ab76-434e-aae3-bf8fed508866)",
+        "outcome": "Status Executed; executed PDF filed into `Executed Agreement` — 154643 bytes, stored as `{type:\"file\"}` on prod-files-secure, name truncated to exactly 100 chars. This record's Status was already Executed from the classic Zap but its PDF had never been filed, so the run fixed real missing data rather than being a throwaway test."
+      },
+      {
+        "case": "contract_signed, fallback URL extraction",
+        "outcome": "URL placed at `some_unexpected_wrapper.documents[0].totally_unknown_key` was still found and filed — proves the scan protects against the unverified field name"
+      },
+      {
+        "case": "contract_sent_to_signer, main path",
+        "target": "contract 2a875453-… (scratch SOW), nested `{\"contract\":{\"id\":…}}` payload shape",
+        "outcome": "resolved the row, agreementType SOW, Status \"Sent for signature\""
+      },
+      { "case": "empty ping", "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}} for both deployments, no error raised" }
+    ]
+  },
+  "cutover": {
+    "status": "LIVE ALREADY — unlike the send pair, these two claimed their eSignatures triggers at publish time, so they are running in parallel with the classic Zaps from 2026-08-04.",
+    "parallel_running_note": "Benign and deliberate. Both the classic Zap and the durable set the same Status value, so the duplicate write is idempotent; the durable additionally files the executed PDF, which is the improvement. Disable either with `disable-workflow <id>` if the parallel run is unwanted.",
+    "steps": [
+      "Turn off the classic 'Update SOW / Project Addendum Status When Sent for Signature' and 'Signed SOWs / Project Addenda' Zaps once a real signature has gone through the durables.",
+      "After the first real `contract_signed`, read `pdfError` / `pdfFound` on the run output and tighten `extractSignedPdfUrl`'s candidate list to the actual field name."
+    ]
+  },
+  "determinism_note": "No `new Date`, `Date.now`, `Math.random`, `setTimeout` or bare `fetch` anywhere — the PDF download uses `sdk.fetch` inside a `ctx.step`."
+}
