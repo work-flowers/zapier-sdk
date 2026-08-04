@@ -1,0 +1,73 @@
+{
+  "name": "xero-draft-bill-to-slack-alert",
+  "workflow_id": "019fca25-2519-7705-8148-16d461e36ccd",
+  "current_version_id": "019fca25-8ed9-7570-8cf3-cdafe5182913",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYWAdRB-f7k2dV4UgqstXQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "XeroCLIAPI@2.21.0",
+    "action": "bill",
+    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "authentication_note": "Xero work.flowers. Only bound on the trigger — the workflow body never re-reads Xero, it just formats whatever the poll delivered.",
+    "params": {
+      "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+      "status": "draft"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New Bill), filtered to status=draft, identical params to the classic Zap. A polling read trigger, so it has no webhook_url (expected — same as the other Xero pollers in this repo)."
+  },
+  "connections": {
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74"
+  },
+  "connections_note": "Slack @dennis (Work.Flowers), SlackCLIAPI@1.39.3 — same connection and app version as the classic Zap's Slack step.",
+  "zapier_durable_version": "0.12.3",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.93.0"
+  },
+  "version_pinning_note": "Newest versions of each direct dependency published at least 24h before build time, per the Vercel sandbox's pnpm minimumReleaseAge=1440 requirement.",
+  "tasks_per_run": {
+    "every_draft_bill": "1 (Slack private_channel_message)",
+    "note": "Same cost as the classic Zap — no Xero re-read, since the New Bill trigger already delivers the full bill (Contact, Total, CurrencyCode, DueDate, InvoiceNumber, InvoiceID)."
+  },
+  "message": {
+    "channel": "C08GRA41E1J (#finance)",
+    "action": "SlackCLIAPI write private_channel_message",
+    "text_format": "Same wording/emoji as the classic Zap: '📋 <link|New Bill Alert>' plus Vendor/Amount/Due Date/Invoice #.",
+    "formatting_fixes": [
+      "Amount is now two-decimal, thousands-separated (classic Zap pasted Xero's raw Total, which can render as e.g. 1234.5 with no cents or a long float).",
+      "Due Date is now YYYY-MM-DD regardless of which of Xero's two date shapes (DueDateString or /Date(ms+tz)/ DueDate) the trigger delivers.",
+      "A bill with no InvoiceNumber (an absent key on the trigger payload, not null — confirmed in xero-bill-approved-to-wise-transfer's design notes) renders '(not numbered)' instead of a blank line."
+    ]
+  },
+  "verified_cases": [
+    {
+      "case": "Synthetic draft bill, dryRun:true",
+      "run": "019fca24-21bd-748f-ae63-1f18304b8a1e",
+      "result": "Built the exact expected message text; no Slack call made. No draft bills existed in the live Xero org at build time, so this is the closest available substitute for a real trigger delivery."
+    },
+    {
+      "case": "Empty/test payload ({\"querystring\":{}})",
+      "run": "019fca24-9479-7f30-9350-e64a63b17124",
+      "result": "skipped, reason 'no invoice id in payload'. No Slack call, no throw."
+    }
+  ],
+  "manual_dry_run_note": "A manual run accepts {\"dryRun\": true, \"bill\": {...}} and returns the composed message without posting to Slack. The Xero trigger never sets dryRun, so production is unaffected.",
+  "description": "Xero new draft bill -> post an alert to the #finance Slack channel with vendor, amount, due date and invoice number, plus a link to the bill in Xero. Migration of the classic 'New Draft Bill Alert' Zap.",
+  "replaces_classic_zap": {
+    "title": "New Draft Bill Alert",
+    "old_shape": "XeroCLIAPI@2.21.0 bill (status: draft) -> SlackCLIAPI@1.39.3 write private_channel_message. Two nodes, no lookup, no conditions.",
+    "status": "The trigger node was NOT paused (still polling), but the Slack write node WAS paused: true in the export — so the classic Zap has never actually posted an alert. Turn the classic Zap off in the Zapier UI rather than unpausing it, since both would otherwise post the same alert once a draft bill is created.",
+    "known_issues_fixed": [
+      "Raw Total/DueDate interpolation is now formatted (see formatting_fixes above).",
+      "No guard against an empty/test delivery of the trigger — now skips cleanly instead of posting a malformed message."
+    ],
+    "deliberately_preserved": [
+      "Message wording, emoji (📋), and layout, verbatim.",
+      "Same channel (#finance / C08GRA41E1J), same Slack connection, same private_channel_message action with the same flags (add_app_to_channel, as_bot, add_edit_link, unfurl, link_names all yes; reply_broadcast no)."
+    ]
+  },
+  "created_at": "2026-08-04T00:20:59.803Z",
+  "version_created_at": "2026-08-04T00:21:27.013Z"
+}
