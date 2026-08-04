@@ -103,9 +103,10 @@ had never sent a confirmation. **Turn it off (or delete it) rather than unpausin
 and this workflow will email the customer.
 
 Because it never ran, going live here is a genuine behaviour change: invoices marked paid from now on
-will produce customer-facing email that previously did not exist. Nothing is back-mailed — a Zapier
-polling trigger primes its dedupe on first poll, so invoices settled before now are not confirmed,
-which is the right outcome.
+will produce customer-facing email that previously did not exist. Nothing is back-mailed — the trigger
+is a REST hook subscription (not a poll; confirmed via `get-workflow`, whose live claim carries a
+`webhook_url`), so it only receives events from the moment it's claimed onward, with no backlog
+delivered. Invoices settled before now are therefore not confirmed, which is the right outcome.
 
 ## Body changes
 
