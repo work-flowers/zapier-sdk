@@ -1,0 +1,142 @@
+{
+  "note": "One shared `shared.ts` deployed as TWO workflows — one per Notion data source — so this file mirrors both deployments instead of one. Each deployment publishes its own `workflow.<kind>.ts` as `workflow.ts` alongside `shared.ts` verbatim, following the `whatsapp-slack-bridge` pattern. Republish both together whenever `shared.ts` changes.",
+  "deployments": [
+    {
+      "name": "sow-send-for-signing",
+      "entry_file": "workflow.sow.ts",
+      "workflow_id": "019fcc6b-7cd4-7ad7-a75a-f1deee3d3669",
+      "current_version_id": "019fcc7e-c8dc-75a3-9e57-a1b90bd55349",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUy6Fmun9xI3-Y7udady-g",
+      "enabled": true,
+      "is_private": false,
+      "trigger": {
+        "selected_api": "WebHookCLIAPI@1.1.1",
+        "action": "hook_v2",
+        "authentication_id": null,
+        "params": {},
+        "status": "active",
+        "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/",
+        "webhook_url_note": "This is the URL the Notion SOWs `Send for signing` button must POST to. It is NOT returned at get-workflow's top level — it lives at `triggers[0].details.webhook_url`. The `trigger_url` above is Zapier-internal and requires a JWT; do not point Notion at it."
+      },
+      "created_at": "2026-08-04T10:57:04.213Z",
+      "version_created_at": "2026-08-04T11:18:08.991Z",
+      "replaces_classic_zap": "Send SOW for Signing",
+      "description": "Notion SOWs 'Send for signing' button -> eSignatures draft contract built from the SOW page body, contract URL + Status written back, linked Deal moved to In signing."
+    },
+    {
+      "name": "project-addendum-send-for-signing",
+      "entry_file": "workflow.addendum.ts",
+      "workflow_id": "019fcc6b-8b6e-7908-aad6-35e2965037a2",
+      "current_version_id": "019fcc7e-d83c-7b47-bea2-8331ed1072e1",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AePG0VTqs8lhyKd8bKmtHg",
+      "enabled": true,
+      "is_private": false,
+      "trigger": {
+        "selected_api": "WebHookCLIAPI@1.1.1",
+        "action": "hook_v2",
+        "authentication_id": null,
+        "params": {},
+        "status": "active",
+        "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/",
+        "webhook_url_note": "Target for the Notion Project Addendums `Send for signing` button. Same warning as above — not `trigger_url`."
+      },
+      "created_at": "2026-08-04T10:57:07.951Z",
+      "version_created_at": "2026-08-04T11:18:12.923Z",
+      "replaces_classic_zap": "Send Project Addendum for Signing",
+      "description": "Notion Project Addendums 'Send for signing' button -> eSignatures draft contract built from the addendum page body, addressed to the Consultant."
+    }
+  ],
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "esign_unofficial": "026cd1af-bdf8-8ffe-afb3-e6a5708d17a9"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
+    "esign_unofficial": "`eSignatures.com (Unofficial)` — App236843CLIAPI, a by-invite private app. Used because its create_contract is the only one that accepts a single `markdown` body plus the name of the placeholder to inject it into. The PUBLIC `EsignaturesioCLIAPI` app has no markdown field (only a placeholder map) and is used by `esignatures-status-to-notion` for its triggers instead. The connection is pinned to App236843CLIAPI@1.0.0 while the app's latest is @1.0.1; that only matters for trigger claims, and this app is used for actions only."
+  },
+  "esignatures": {
+    "templates": {
+      "sow": "6eaa0583-2cde-42d2-bf3e-2fe9b0808f3e (\"Scope of Work\")",
+      "addendum": "443d6bed-607d-458e-a0de-27dd627bf96f (\"Consultant Project Addendum\")"
+    },
+    "template_note": "Templates are bare shells: a title, one `{{contract-body}}` placeholder, and signature fields eSignatures manages itself. So `template_id` and `placeholder_field_name` are the only template-coupled values.",
+    "template_fix": "The classic 'Send Project Addendum for Signing' Zap used the SOW template (6eaa0583) for addenda — a bug, confirmed with Dennis on 2026-08-04 and fixed here to 443d6bed. Both shells use the same `contract-body` placeholder, so the switch needed only the one constant.",
+    "action_note": "`test` is REQUIRED on App236843CLIAPI create_contract and its own default is \"true\" — it is set to false explicitly, or every run would produce a throwaway test contract. `save_as_draft: true` means nothing reaches a signer until a human sends the draft.",
+    "result_shape": "create_contract returns `{ data: [ { status: \"queued\", data: { contract: { id } } } ] }` — runAction supplies the outer `data` array and the app's envelope adds a SECOND `data` inside each row. The classic Zap's `gives[...][\"data\"][\"contract\"][\"id\"]` was addressing that inner `data`. Getting this wrong throws rather than writing a wrong id."
+  },
+  "notion": {
+    "sows": {
+      "datasource_id": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
+      "datasource_name": "SOWs",
+      "name_note": "Named `SOWs`, not \"Scope of Work Database\" as the classic Zap's parammap labelled it.",
+      "properties_written": ["Status (status) = \"Sent for signature\"", "eSignature contract (url)"],
+      "properties_read": [
+        "Agreement Name (title)",
+        "Signatory Name (rollup via Counterparty signatory -> title)",
+        "Signatory Primary Email (rollup via Counterparty signatory -> email)",
+        "Override Email (Optional) (email) — wins over the rollup when set",
+        "Deal (relation)"
+      ]
+    },
+    "project_addendums": {
+      "datasource_id": "46234707-641a-4aa4-96f6-295554e6543f",
+      "datasource_name": "Project Addendums",
+      "properties_written": ["Status (status) = \"Sent for signing\"", "eSignatures Contract (url)"],
+      "properties_read": ["SOW Name (rollup via Client SOW -> title)", "Consultant (person, limit 1)", "Client SOW (relation)"]
+    },
+    "deals": {
+      "datasource_id": "21a91b07-11ac-808d-9657-000b1390d20b",
+      "properties_written": ["Status (status) = \"In signing\" — SOW flow only, skipped when the SOW has no Deal relation"]
+    },
+    "status_note": "All three `Status` properties are type `status`, and `update_database_item` writes them fine — verified via `list-action-input-fields NotionCLIAPI write update_database_item --inputs '{\"datasource\":\"...\"}'`, which exposes `properties|||Status|||status`. An earlier note in spot-project-request-to-notion/README.md records status as unproven in this repo; that was an absence of local precedent, not a capability limit. No raw PATCH is needed for property writes here.",
+    "rollup_note": "`Signatory Name`, `Signatory Primary Email` and `SOW Name` are rollups, listed in the data source's `notAvailableInQuerySql`. They cannot be read via a SQL-mode query, so the page is fetched with `sdk.fetch` GET /v1/pages/{id} and the rollups read from `rollup.array[0]`.",
+    "template_mode_note": "Repo rule 5 does not apply — these workflows only UPDATE existing pages and never create any, so no data source default template is involved.",
+    "markdown_export": "The page body becomes the contract body via Notion's native `GET /v1/pages/{id}/markdown`. This replaces the classic Zap's `ae:577300` step — a hidden Zapier action extension that `runAction` cannot invoke at all (`ZAPIER_RESOURCE_NOT_FOUND_ERROR`). The native export is also more faithful than the Zapier block_children converter it used."
+  },
+  "tables": {
+    "esignatures_mapping": {
+      "id": "01KHZEP4FA560E9GMTGTBR1E2N",
+      "name": "eSignatures Mapping",
+      "role": "Written here (find-or-create on Page ID, then the Contract ID once the draft exists). Read by `esignatures-status-to-notion`, which only has a contract id to work from.",
+      "key_field": "Page ID",
+      "fields": {
+        "Page ID": "f1, string — the Notion SOW / Project Addendum page id",
+        "Contract ID": "f2, string — the eSignatures contract id",
+        "Agreement Type": "f3, labeled_string — \"SOW\" or \"Project Addendum\", written as { value, label }"
+      },
+      "access_note": "Read and written with `keyMode: \"names\"` via sdk.listTableRecords / createTableRecords / updateTableRecords, so the f-numbers never appear in code. Table calls consume no Zapier tasks."
+    }
+  },
+  "zapier_durable_version": "0.12.3",
+  "dependencies": { "@zapier/zapier-sdk": "0.93.0", "zod": "4.4.3" },
+  "live_runs": {
+    "note": "Verified 2026-08-04 with `run-durable` against purpose-made scratch records (since every real mapped record is a live client agreement). Scratch pages and their mapping rows were deleted afterwards; the three eSignatures drafts they produced are listed in the README for manual deletion.",
+    "runs": [
+      {
+        "case": "sow send, main path",
+        "target": "scratch SOW with a real Counterparty signatory (rollup) plus an override email",
+        "outcome": "draft 2a875453-37cf-4c8a-a55e-5443f7720187 created; signer name \"Kelvin Tan\" from the rollup, email dennis@work.flowers from the override (override precedence confirmed); Status \"Sent for signature\"; 575 chars of body"
+      },
+      {
+        "case": "addendum send, main path",
+        "target": "scratch Project Addendum with Consultant + Client SOW set",
+        "outcome": "draft c9738320-214b-44dd-b310-8adba581f1ae created; title \"[Project Addendum] <SOW Name rollup>\"; Status \"Sent for signing\""
+      },
+      {
+        "case": "retry idempotency",
+        "outcome": "a re-run after a mid-flow failure returned tableRowCreated:false — it reused the existing mapping row rather than duplicating it"
+      },
+      { "case": "empty ping", "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}}, no error raised" }
+    ]
+  },
+  "cutover": {
+    "status": "Pending — the durables are live but nothing points at them yet.",
+    "steps": [
+      "Notion SOWs -> `Send for signing` button -> repoint to https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/",
+      "Notion Project Addendums -> `Send for signing` button -> repoint to https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/",
+      "Turn off the classic 'Send SOW for Signing' and 'Send Project Addendum for Signing' Zaps once a real signing round has gone through end to end.",
+      "Delete the three test drafts in eSignatures: 1041daf2-d152-4d21-8084-5dca1e6448b8, 2a875453-37cf-4c8a-a55e-5443f7720187, c9738320-214b-44dd-b310-8adba581f1ae."
+    ]
+  },
+  "determinism_note": "No `new Date`, `Date.now`, `Math.random`, `setTimeout` or bare `fetch` anywhere — every external call goes through `sdk.fetch` or `sdk.runAction` inside a `ctx.step`."
+}
