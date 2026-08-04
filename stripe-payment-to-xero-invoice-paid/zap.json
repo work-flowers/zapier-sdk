@@ -1,0 +1,103 @@
+{
+  "name": "stripe-payment-to-xero-invoice-paid",
+  "workflow_id": "019fca55-0aeb-7898-b5f1-298e4de3b657",
+  "current_version_id": "019fca55-7a33-72a2-805b-76512873c547",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ach0L6lLYmG_BwUYqn3tDQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "StripeCLIAPI@2.25.2",
+    "action": "new_payment",
+    "authentication_id": "024d9d46-9e33-89c7-bfec-e03f8e7a2dd0",
+    "authentication_note": "Stripe dennis@work.flowers — the exact connection/version the classic Zap used. NOT the other similarly-named connection in the account ('Stripe dennis@work.flowers #2', StripeCLIAPI@2.25.1) — do not confuse the two on any future edit.",
+    "params": {},
+    "status": "active",
+    "trigger_note": "No filter params — fires on every completed Stripe payment (subscriptions, direct Stripe invoices, one-off charges, Harvest-issued invoices, everything). All the Harvest-specific scoping happens in code (via metadata + description parsing), matching the classic Zap's design. This trigger DOES carry a details.webhook_url (Zapier's own internal subscription mechanism for this trigger type, not an external catch URL)."
+  },
+  "connections": {
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "connections_note": "Xero work.flowers, XeroCLIAPI@2.21.0 — same connection every other Xero Zap in this repo uses. Used twice in the workflow body: once to find the invoice, once to record the payment against it. Not bound on the trigger (Stripe is).",
+  "zapier_durable_version": "0.12.3",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.93.0"
+  },
+  "version_pinning_note": "Newest versions of each direct dependency published at least 24h before build time, per the Vercel sandbox's pnpm minimumReleaseAge=1440 requirement.",
+  "tasks_per_run": {
+    "non_harvest_payment": "0 (skipped in code before any app action — most Stripe payments aren't Harvest invoices)",
+    "harvest_payment_already_paid": "1 (Xero find-invoice) — idempotency guard fires after the lookup, before any write",
+    "harvest_payment_recorded": "2 (Xero find-invoice + Xero record-payment)"
+  },
+  "money_adjacent_design": {
+    "note": "This workflow WRITES a real payment record to Xero's ledger — reviewed and scoped carefully given the stakes, since the classic Zap had zero validation (never live-tested).",
+    "idempotency_guard": "If the matched invoice is already Status=PAID or AmountDue<=0, skip cleanly rather than record a duplicate payment. Verified against real data: invoice HAR-13 is already PAID with Payment.Reference exactly matching the Stripe payment intent id pi_3TbFjkJYWXjnDZq80rolzF1Q used in testing.",
+    "throw_on_unresolvable": "A Harvest-tagged Stripe payment whose description doesn't match 'Charge for Invoice <number>', or whose extracted invoice number doesn't exist in Xero, THROWS (surfaces as a Zapier error alert) rather than silently skipping — deliberate choice (confirmed with Dennis) since a real payment going unrecorded with no trace would be worse than a visible error.",
+    "no_currency_or_amount_mismatch_check": "Deliberately NOT added (confirmed with Dennis) — the workflow records whatever the invoice's currency/AmountDue implies without cross-checking Stripe's amount, matching the classic Zap's design closely.",
+    "amount_scaling_verified": "Stripe's amount_received is used AS-IS, no /100 cents conversion — cross-checked against real data: Stripe amount_received=900 (amount_received_formatted 'SGD 900.00') for pi_3TbFjkJYWXjnDZq80rolzF1Q exactly matches the ALREADY-RECORDED Xero Payment.Amount '900.00' on invoice HAR-13. Zapier's Stripe app exposes these fields pre-scaled to the real currency amount, unlike Stripe's raw cents-based REST API.",
+    "account_id_verified": "Stripe SGD (a7c3277b-8f30-4d25-9aca-8237422b908b) is the ONLY Stripe-related bank/clearing account in the org (confirmed via list-action-input-field-choices across 27 accounts) — used regardless of the invoice's currency (USD Harvest invoices HAR-9/HAR-10 exist and are presumably also settled here), matching the classic Zap's hardcoded mapping. currency_rate is left unset, same as the classic Zap; Xero applies its own day rate for non-base-currency invoices."
+  },
+  "invoice_lookup": {
+    "action": "XeroCLIAPI search invoice_v2 (Find Invoice), search_by: Number",
+    "why": "Resolves the Harvest invoice number (e.g. 'HAR-13') to its real InvoiceID before recording the payment, and is what makes the idempotency/already-paid guard possible. The classic Zap never did this lookup — it would have blindly created a payment (or failed) with no idea whether one already existed."
+  },
+  "harvest_matching": {
+    "via_metadata": "charge.metadata.via === 'Harvest' (case-insensitive), read off the trigger's nested `charge` object first, falling back to the top-level PaymentIntent metadata (identical in every sample seen — Stripe copies metadata from PaymentIntent to charge).",
+    "invoice_number_extraction": "Regex against charge.description / top-level description: '^Charge for Invoice\\\\s+(.+)$' — verified against 8 real Harvest-tagged payments (HAR-1 through HAR-13), all matching exactly.",
+    "status_guard": "Also checks payload status === 'succeeded' when present, at zero cost — the New Payment trigger should only deliver completed payments anyway."
+  },
+  "verified_cases": [
+    {
+      "case": "Real already-paid Harvest invoice (idempotency guard)",
+      "payment": "pi_3TbFjkJYWXjnDZq80rolzF1Q, HAR-13, Start Right Pte Ltd, SGD 900.00",
+      "run": "019fca50-b8e9-7896-81d3-acf7b45ebe8b",
+      "result": "skipped, reason 'invoice is already fully paid in Xero' (Status PAID). Confirms the idempotency guard against real data — this exact payment is already recorded in Xero."
+    },
+    {
+      "case": "Non-Harvest Stripe payment",
+      "run": "019fca50-c62e-7a51-969d-08497f9f4b53",
+      "result": "skipped, reason 'not a Harvest-tagged payment'. Real sample data — most of the 20 sampled payments are subscriptions/direct invoices, not Harvest."
+    },
+    {
+      "case": "Empty/test payload ({\"querystring\":{}})",
+      "run": "019fca50-d159-7c70-b945-eed3b3579a84",
+      "result": "skipped, reason 'no payment intent id in payload'. No Xero call, no throw."
+    },
+    {
+      "case": "Full payment-composition path, dryRun:true, against a real currently-unpaid invoice (INV-0083, not actually a Harvest invoice — used only to exercise the code path safely with no write)",
+      "run": "019fca53-4c90-71e3-8c9a-6d2f5f8a51ad",
+      "result": "outcome 'dry-run'. Correctly resolved InvoiceID, composed payment inputs (date ISO string, amount 1500, reference the synthetic Stripe id, account_id Stripe SGD, invoice_type Invoice). No Xero write made."
+    },
+    {
+      "case": "Unparseable description (synthetic)",
+      "run": "019fca53-bfdb-72df-b619-49abc1e2e4f9",
+      "result": "THROWS: 'Could not extract an invoice number from Stripe payment pi_bad_desc's description \"Something unexpected\" (expected \"Charge for Invoice <number>\")'."
+    },
+    {
+      "case": "Invoice number not found in Xero (synthetic, HAR-99999)",
+      "run": "019fca53-cd77-7000-903a-16df9dc26c7b",
+      "result": "THROWS: 'Could not find invoice \"HAR-99999\" in Xero for Stripe payment pi_no_invoice'."
+    }
+  ],
+  "no_live_write_test": "No real Xero payment has been created by this workflow yet — every currently-existing Harvest invoice in the live org (HAR-1, HAR-2, HAR-4, HAR-9, HAR-10, HAR-13; HAR-3/HAR-7 not found, presumably voided/renumbered) is already PAID, so there was no safe real case to exercise the write step against. The first live 'record-payment' will be the next Harvest invoice a client actually pays via Stripe after publish. Watch it.",
+  "dry_run_note": "A manual run accepts the Stripe payload plus {\"dryRun\": true} and returns the composed payment without recording it. The Stripe trigger never sets dryRun, so production is unaffected.",
+  "description": "Stripe payment for a Harvest-issued invoice -> record the payment against the matching sales invoice in Xero (bank account: Stripe SGD). Migration of the classic 'Mark Harvest Invoice Paid in Xero when Stripe Payment Received' Zap.",
+  "replaces_classic_zap": {
+    "title": "Mark Harvest Invoice Paid in Xero when Stripe Payment Received",
+    "old_shape": "StripeCLIAPI@2.25.2 new_payment (no params) -> FilterAPI 'Harvest Invoice' (charge.metadata.via iexact \"Harvest\") -> ZapierFormatterCLIAPI@1.0.8 string.replace (strip 'Charge for Invoice ' prefix) -> XeroCLIAPI@2.21.0 write payment (invoice_type Invoice, account_id Stripe SGD, date/amount/reference from the Stripe charge). Four nodes.",
+    "status": "The trigger node was NOT paused (still polling), but the filter, formatter and Xero payment nodes were ALL paused: true in the export — so the classic Zap has never actually recorded a payment. Turn the classic Zap off in the Zapier UI rather than unpausing it, or it and this workflow will both attempt to record the same payment.",
+    "known_issues_fixed": [
+      "No idempotency guard at all — the classic Zap would have blindly attempted to create a payment on every matching delivery, with no lookup to check whether one already existed. Now looks up the invoice first and skips if already fully paid.",
+      "String replace transform moved from a paid Zapier Formatter step to a free pure-code regex extraction — same intent as the classic Zap, minus the formatter task.",
+      "No guard against an empty/test delivery, an unresolvable description, or a nonexistent invoice number — the first now skips cleanly, the latter two now throw loudly instead of silently failing or misbehaving."
+    ],
+    "deliberately_preserved": [
+      "The Harvest metadata filter (via === 'Harvest', case-insensitive).",
+      "The invoice-number extraction logic (strip the 'Charge for Invoice ' prefix).",
+      "invoice_type 'Invoice', account_id 'Stripe SGD', amount taken directly from Stripe with no cents conversion, reference set to the Stripe payment/charge id.",
+      "No currency or amount mismatch validation against the invoice — confirmed with Dennis to keep this close to the classic Zap's design rather than add extra guards."
+    ]
+  },
+  "created_at": "2026-08-04T01:13:18.829Z",
+  "version_created_at": "2026-08-04T01:13:18.829Z"
+}
