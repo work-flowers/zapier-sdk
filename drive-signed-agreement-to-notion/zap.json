@@ -1,0 +1,74 @@
+{
+  "name": "drive-signed-agreement-to-notion",
+  "workflow_id": "019fcc1f-4d7d-75de-b0bd-609a61f988ca",
+  "current_version_id": "019fcc25-2145-768d-8df4-8fd1d666a06d",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATx9AcvXlDiUt1ecPJUu6g",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.22.0",
+    "action": "file_in_folder_v2",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "authentication_note": "Google Drive dennis@work.flowers. The SAME connection is needed twice: here on the trigger (which polls the folder) and as the `gdrive` alias in --connections, because the workflow code renames the file.",
+    "params": {
+      "drive": "",
+      "folder": "1-1HCfTIdnngXv_1fhUHuPpjI6Nupk7-K",
+      "includeDeleted": "false"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New File in Folder) on the Signed Agreements folder. No webhook_url — nothing external needs a catch URL. The classic Zap 'Legal Agreement Summarizer' also polls this same folder; every one of its downstream steps was paused:true in the export (normal for a classic Zap export, not evidence of its live/run status either way), so there is no duplicate-processing risk from leaving it as-is."
+  },
+  "connections": {
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connectionless_apps": {
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
+  },
+  "zapier_durable_version": "0.12.3",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.93.0"
+  },
+  "notion": {
+    "datasource_id": "eb0a6e70-5cf7-4817-8140-d0e44d3ec396",
+    "datasource_name": "Signed Legal Agreements",
+    "has_default_template": false,
+    "template_note": "create_database_item with template_mode:\"default\" threw 'no default template is configured for this data source' on the live run below; createItemWithTemplate's fallback create path was taken. Per repo rule 5 the template path is still attempted first, so no code change is needed if a default template is added later.",
+    "properties_written": ["Agreement Name (title)", "File Link (url)"],
+    "properties_deliberately_not_written": [
+      "Agreement Type", "Counterparty", "Currency", "Amount", "Effective Date", "End Date",
+      "Signed date", "Signatory", "Additional Notes", "AI summary"
+    ],
+    "properties_note": "The AI step extracts Counterparty and Contract Signed Date (needed for the file rename and the page title) but neither is written as a Notion property — a separate Notion-side agent, triggered on new pages in this data source, reads the attached PDF and populates everything else, including Agreement Type. Agreement Type classification was tried during development (first a 4-option set, then a consolidated 9-category taxonomy) but was dropped entirely — it fed only the file/page name, never a Notion property, so Dennis asked to remove the AI call's classification burden rather than keep an unused output field."
+  },
+  "ai_model": {
+    "model_id": "standard/auto",
+    "authentication_id": "0",
+    "calls": 1,
+    "output_fields": ["Counterparty", "Contract Signed Date"],
+    "tier_note": "standard/auto verified sufficient across 7 real documents pulled from the live Signed Agreements folder via the offline run-action harness — see the README's verified-cases table (that testing pre-dates dropping Agreement Type, but the Counterparty fix it validated is unchanged). No tier upgrade needed; the fix was prompt/schema quality (an explicit exclusion list for the company's own entity as counterparty, an explicit empty-string rule for internal-only documents).",
+    "prompt_file": "legal-agreement-classification-prompt.md -> LEGAL_AGREEMENT_PROMPT"
+  },
+  "live_runs": {
+    "note": "One production run to date, through the deployed durable (not a synthetic payload), against a real previously-unfiled document. Predates the current version (which dropped Agreement Type) but exercised the same rename + Notion-create + file-attach mechanism unchanged.",
+    "runs": [
+      {
+        "run_id": "019fcc19-1e1d-764e-bc6a-37dee3003845",
+        "version_id": "run-once source, pre-dates first publish",
+        "started_at": "2026-08-04T09:27:06.257Z",
+        "finished_at": "2026-08-04T09:27:44.009Z",
+        "file": "Terms and Conditions for pre-paid Talk Therapy Sessions.pdf (previously unfiled since 2025-03-20)",
+        "status": "finished",
+        "outcome": "Renamed and filed into Notion (Agreement Name + File Link only; PDF attached; usedTemplate false). Also returned an Agreement Type value at the time, which was never written to Notion and has since been removed from the workflow entirely."
+      }
+    ]
+  },
+  "replaces_classic_zap": {
+    "title": "Legal Agreement Summarizer",
+    "old_shape": "Drive trigger (New File in Folder, Signed Agreements) -> AI extraction of 9 fields (currency, amount, counterparty, effective date, end date, agreement type, signatory emails, signed date, free-text summary) -> rename file -> Formatter email extraction -> branch on signatory email resolved via Zapier Table -> create_database_item (with or without Signatory relation) -> upload_file_to_page_block",
+    "status": "Classic Zap left as-is (safe — its trigger polls the same folder but every downstream step is paused, so no duplicate-processing risk). Turning its trigger off too is optional, not required."
+  },
+  "created_at": "2026-08-04T09:33:51.358Z",
+  "version_created_at": "2026-08-04T09:40:13.647Z"
+}
