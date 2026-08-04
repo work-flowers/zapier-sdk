@@ -3,9 +3,10 @@
 A Notion **Send for signing** button turns a SOW or Project Addendum page into an eSignatures
 draft contract, using the page's own body as the contract text.
 
-**Status:** ✅ Enabled (cutover pending) — both durables are live, but the Notion buttons still
-point at the classic Zaps. See [Cutover](#cutover). Replaces the classic **Send SOW for Signing**
-and **Send Project Addendum for Signing** Zaps.
+**Status:** ✅ Enabled and live — both Notion buttons were repointed to these durables on
+2026-08-04, so this is the code that runs when someone clicks **Send for signing**. Replaces the
+classic **Send SOW for Signing** and **Send Project Addendum for Signing** Zaps. Two follow-ups
+remain, neither affecting behaviour — see [Cutover](#cutover).
 
 **Durable ×2.** One shared [`shared.ts`](shared.ts) deployed twice:
 
@@ -143,13 +144,23 @@ that needs a human eye on a draft. Open one of the drafts below and check the bo
 
 ## Cutover
 
-1. Notion **SOWs** → `Send for signing` button → repoint to
-   `https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/`
-2. Notion **Project Addendums** → `Send for signing` button → repoint to
-   `https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/`
-3. Turn off the two classic Zaps once a real signing round has gone through end to end.
-4. Delete the three test drafts left in eSignatures: `1041daf2-d152-4d21-8084-5dca1e6448b8`,
-   `2a875453-37cf-4c8a-a55e-5443f7720187`, `c9738320-214b-44dd-b310-8adba581f1ae`.
+- [x] Notion **SOWs** → `Send for signing` button repointed to
+      `https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/` — **done 2026-08-04**
+- [x] Notion **Project Addendums** → `Send for signing` button repointed to
+      `https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/` — **done 2026-08-04**
+- [ ] Turn off the two classic Zaps once a real signing round has gone through end to end.
+- [ ] Delete the three test drafts left in eSignatures: `1041daf2-d152-4d21-8084-5dca1e6448b8`,
+      `2a875453-37cf-4c8a-a55e-5443f7720187`, `c9738320-214b-44dd-b310-8adba581f1ae`.
+
+**No double-drafting risk while the classic Zaps stay on.** Each button posts to one URL, so the
+classic Zaps' catch URLs now simply never fire — they are dead weight rather than a duplicate. The
+one thing that *would* duplicate is a button configured to POST to both the old and new URL, which
+would create two contracts per click; worth a glance at the button config if a stray draft ever
+appears.
+
+**Still worth a human eye on the first real draft:** that eSignatures substitutes
+`{{contract-body}}` as expected is the one thing that could not be verified from here, since the app
+exposes no Get-Contract action.
 
 ## Maintainer notes
 

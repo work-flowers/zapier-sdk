@@ -130,13 +130,17 @@
     ]
   },
   "cutover": {
-    "status": "Pending — the durables are live but nothing points at them yet.",
-    "steps": [
-      "Notion SOWs -> `Send for signing` button -> repoint to https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/",
-      "Notion Project Addendums -> `Send for signing` button -> repoint to https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/",
+    "status": "Live as of 2026-08-04 — both Notion `Send for signing` buttons were repointed to these durables' catch URLs, so this is the code that runs on a button click.",
+    "completed": [
+      "2026-08-04: Notion SOWs `Send for signing` button -> https://hooks.zapier.com/hooks/catch/20495893/CU1FC7PIztrRJjZzu/",
+      "2026-08-04: Notion Project Addendums `Send for signing` button -> https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/"
+    ],
+    "remaining": [
       "Turn off the classic 'Send SOW for Signing' and 'Send Project Addendum for Signing' Zaps once a real signing round has gone through end to end.",
-      "Delete the three test drafts in eSignatures: 1041daf2-d152-4d21-8084-5dca1e6448b8, 2a875453-37cf-4c8a-a55e-5443f7720187, c9738320-214b-44dd-b310-8adba581f1ae."
-    ]
+      "Delete the three test drafts in eSignatures: 1041daf2-d152-4d21-8084-5dca1e6448b8, 2a875453-37cf-4c8a-a55e-5443f7720187, c9738320-214b-44dd-b310-8adba581f1ae.",
+      "Confirm on the first real draft that eSignatures substitutes {{contract-body}} as expected — unverifiable from here, since the app exposes no Get-Contract action."
+    ],
+    "no_duplicate_risk_note": "Leaving the classic Zaps enabled does NOT double-draft: each button posts to one URL, so their catch URLs no longer fire. The failure mode to watch for is a button configured to POST to both the old and new URL, which would create two contracts per click."
   },
   "determinism_note": "No `new Date`, `Date.now`, `Math.random`, `setTimeout` or bare `fetch` anywhere — every external call goes through `sdk.fetch` or `sdk.runAction` inside a `ctx.step`."
 }
