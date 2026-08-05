@@ -1,0 +1,88 @@
+{
+  "name": "drive-screenshot-to-xero-sales-invoice",
+  "workflow_id": "019fd190-ba8f-73be-a6c0-555cc4c79f68",
+  "current_version_id": "019fd191-0746-757e-88c4-22dd891ec4dd",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVr5t2p1OaZ_8JkxYlKJdQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.22.0",
+    "action": "file_in_folder_v2",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "authentication_note": "Google Drive dennis@work.flowers. The SAME connection is needed twice: here on the trigger (which polls the folder) and as the `gdrive` alias in --connections, because the workflow code renames the file.",
+    "params": {
+      "drive": "0AHY_MJFjT0WtUk9PVA",
+      "folder": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM",
+      "includeDeleted": "false",
+      "includeSubfolders": false
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger (New File in Folder), one run per file added to the Notion Setup Session Invoices folder. No webhook_url — nothing external needs a catch URL, so the cutover was just disabling the classic Zap (done by Dennis before this migration started)."
+  },
+  "connections": {
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "connectionless_apps": {
+    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
+  },
+  "zapier_durable_version": "0.12.3",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.94.0"
+  },
+  "drive_folders": {
+    "Notion Setup Session Invoices": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM"
+  },
+  "drive_shared_drive": {
+    "id": "0AHY_MJFjT0WtUk9PVA",
+    "name": "Work.Flowers HQ"
+  },
+  "xero": {
+    "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+    "organization_name": "work.flowers",
+    "invoice_type": "new_sales_invoice (ACCREC) — billing Notion Labs, Inc., NOT a bill like drive-invoice-to-xero",
+    "contact_name": "Notion Labs, Inc.",
+    "contact_id_verified_live": "aff36f3e-ab8b-4277-ae8e-6317c761a331",
+    "branding_theme": "742441f1-81a7-498b-9f8b-bc685bb0183c (USD Payments)",
+    "line_account_code": "460 (Affiliate / Referral Income)",
+    "line_tax_type": "NONE (No Tax)",
+    "line_items_type": "NoTax",
+    "currency": "USD",
+    "reference": "PO #8900 — fixed per Dennis; the classic Zap's Zap Component variable value wasn't present in the exported Zap JSON, so it was supplied directly rather than guessed",
+    "status": "draft",
+    "line_items_shape_note": "new_sales_invoice's line_items is a fieldset of OBJECTS (array), confirmed live via list-action-input-fields — NOT five parallel top-level arrays. Each object carries its own line_item_code, line_description, line_quantity, line_account_code, line_tax_type, line_items_type.",
+    "no_contact_id_field_note": "new_sales_invoice has no contact_id input, same as new_bill on the bill side (see drive-invoice-to-xero). Safe here because contact_name is a fixed literal, never text read off a document, so there is no spelling drift for Xero's by-name match to fork into a duplicate contact."
+  },
+  "item_codes": {
+    "Calls Completed": "NOTION-CALL",
+    "No-Shows": "NOTION-NOSHOW",
+    "Late Cancellations": "NOTION-CANCEL",
+    "Workspace Conversions": "NOTION-UPGRADE",
+    "Seats Added": "NOTION-SEATS",
+    "Referral Bonuses": "NOTION-REFERRAL",
+    "note": "Ported verbatim from the classic Zap's Formatter 'Lookup Table' step (util.lookup)."
+  },
+  "ai_model": {
+    "model_id": "advanced/auto",
+    "authentication_id": "0",
+    "calls": 1,
+    "tier_note": "NOT the repo's default standard/auto. A/B'd across three real screenshots already in the Drive folder (2026-04-30, 2026-05-31, 2026-06-30) before publishing. standard/auto and advanced/auto agreed exactly on 2026-04-30 (12 lines) and 2026-05-31 (8 lines), but on 2026-06-30 standard/auto silently dropped a real line — Ernest Choo, Calls Completed: 2 — reproduced on a second standard/auto run of the same screenshot. advanced/auto caught it both times. A dropped line here is under-billed revenue with no error anywhere, so the extra task cost is the right trade. Re-run this comparison (offline via run-action against real screenshots, never by running the durable) before ever downgrading.",
+    "prompt_file": "drive-screenshot-to-xero-sales-invoice-prompt.md -> SETUP_SESSION_INVOICE_PROMPT",
+    "output_shape_note": "isOutputArray:true; rows live at data[0].result.items. Uses the outputSchema + type_/required_/options_ per-field mechanism (byte-identical to what the classic Zap's exported JSON already used), not the outputFields JSON-array mechanism drive-invoice-to-xero uses — both are valid; this migration kept the classic Zap's original shape since it was already verified live across three real screenshots.",
+    "file_input_note": "The screenshot is passed to the model as an image input (inputFieldConfig_Screenshot_isImageUrl), using the Drive trigger's `file` hydrate reference."
+  },
+  "determinism_note": "No calendar arithmetic is needed — the AI already returns the reporting month's last day — so unlike drive-invoice-to-xero there's no daysFromCivil/isoDateFromEpochMs pair. toIsoDate + daysInMonth exist purely to validate the AI's date string is a real calendar date via integer math before it reaches Xero. `Date` is not referenced anywhere in workflow.ts.",
+  "rename_gotcha": "update_file_name's `file` input takes the plain Drive file ID (file.id), NOT the AI step's hydrate token (file.fileRef) used for image content. Passing the hydrate token 404s — caught live during pre-publish testing (run 019fd188), fixed before the version that actually published. drive-invoice-to-xero's rename step already used file.id; this migration initially missed that and copied file.fileRef by mistake.",
+  "description": "Monthly 'Notion Setup Sessions' activity screenshot added to the Drive folder -> AI by Zapier (advanced/auto) extracts one line item per consultant/session-type combination -> map session type to Xero item code -> resolve the invoice period (majority value across rows) -> create a DRAFT Xero sales invoice billing Notion Labs, Inc. -> rename the screenshot to '<invoice period> Notion Setup Sessions'. Migration of the classic Zap 'Generate Setup Session Invoice'. Unlike drive-invoice-to-xero (which raises bills against varying vendor names extracted from documents), this Zap bills one fixed, constant customer, so it carries none of that Zap's vendor-contact-resolution complexity.",
+  "testing_note": "Tested end-to-end via run-durable against the real, already-processed 2026-06-30 screenshot before publishing (repo rule: never test only the skip path). First attempt hit the rename bug above; the invoice it created (a773938c-5112-4bd4-9ad8-281265a5b504) was deleted from Xero via update_sales_invoice invoice_status=deleted (confirmed via a raw GET afterward). Second attempt, with the fix, completed cleanly (invoiceId 0cda0de5-d87d-45ec-a654-70a19da84311, 10 line items, invoicePeriod 2026-06-30, periodUnanimous true, renamedTo matching the file's existing name) and was likewise deleted from Xero as a test artifact before publishing — production runs start clean.",
+  "replaces_classic_zap": {
+    "title": "Generate Setup Session Invoice",
+    "old_shape": "Drive trigger (any file) -> Filter (Image Only) -> AI extraction (OpenAI gpt-5.4-mini via AI by Zapier) -> Formatter Lookup Table (session type -> item code) -> Formatter Line-item-to-Text (collapse Invoice Period array to one string) -> Xero new_sales_invoice -> Google Drive rename",
+    "status": "Dennis disabled the classic Zap before this migration began. No webhook cutover needed — purely a polling Drive trigger.",
+    "recovered_from_export": "Everything in the exported Zap JSON except the Xero invoice's Reference field, which was a Zap Component variable (Components.variables['019c4004-7a2f-e4f0-9712-2a03fe4969ce']) whose value the export does not carry. Supplied directly by Dennis as 'PO #8900'.",
+    "model_change": "Classic Zap pinned OpenAI gpt-5.4-mini explicitly (provider_id/model_id on AI by Zapier). This migration uses the repo's tier-sentinel convention instead (advanced/auto), chosen after A/B testing per the ai_model note above rather than carried over unexamined."
+  },
+  "created_at": "2026-08-05T10:55:50.928Z",
+  "version_created_at": "2026-08-05T10:56:10.712Z"
+}
