@@ -3,8 +3,14 @@
   "workflow_id": "019fa8bc-2f55-7163-b4e6-4e6f90e8751c",
   "current_version_id": "019fa8c6-c93a-7b2a-ad8d-47b78d0b3944",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUT0oeOhPFSNE2FX3moYtg",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
+  "retired": {
+    "disabled_at": "2026-08-06T00:58:00Z",
+    "reason": "Retired to stop it consuming Xero API quota. Dennis relies on Xero's own native invoice email reminders instead, which cost no Zapier tasks and no Xero API calls.",
+    "quota_context": "This Zap was one of five Xero POLLING triggers on tenant 62699a8c, which together exhausted Xero's 5,000-calls/day-per-tenant limit on 2026-08-06 (verified: `x-rate-limit-problem: day`, `x-daylimit-remaining: 0`, `x-minlimit-remaining: 60` — a daily-quota problem, not a burst). The exhaustion broke every Xero Zap in the workspace, including two dropped invoices in drive-invoice-to-xero. This Zap's classic predecessor carried polling_interval_override: 15, which the durable --trigger payload has no field for, so migration silently sped it up as much as 15x. See memory/durable-trigger-no-polling-interval.md.",
+    "how_to_revive": "`enable-workflow 019fa8bc-2f55-7163-b4e6-4e6f90e8751c` reclaims the trigger as `active` — no republish needed, the version is intact. But do NOT revive without first accounting for the Xero daily quota: a durable poller cannot be rate-limited, so re-enabling adds its full default-interval poll rate back."
+  },
   "trigger": {
     "selected_api": "XeroCLIAPI@2.20.5",
     "action": "overdue_sales_invoice",
@@ -14,8 +20,9 @@
       "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
       "days_overdue": 1
     },
-    "status": "active",
-    "trigger_note": "Polling trigger (Overdue Sales Invoice), one run per invoice. `days_overdue` is sent as the NUMBER 1, not the string \"1\" the classic Zap carried: `list-trigger-input-fields` gives it `type: number`, and a scalar/array or string/number mismatch in trigger params makes the trigger claim fail SILENTLY at publish — the publish returns success and the workflow just stays disabled. Confirmed claimed here (`status: active`). The classic Zap also carried polling_interval_override: 15, which the durable --trigger payload has no field for; the default interval applies."
+    "status": "released",
+    "trigger_note": "Polling trigger (Overdue Sales Invoice), one run per invoice. NOW `released` — disable-workflow unclaimed it on 2026-08-06; see `retired`. `days_overdue` is sent as the NUMBER 1, not the string \"1\" the classic Zap carried: `list-trigger-input-fields` gives it `type: number`, and a scalar/array or string/number mismatch in trigger params makes the trigger claim fail SILENTLY at publish — the publish returns success and the workflow just stays disabled. The classic Zap also carried polling_interval_override: 15, which the durable --trigger payload has no field for; the default interval applied, which is why this Zap became a quota problem.",
+    "no_webhook_available": "Confirmed 2026-08-06 via `list-trigger-input-fields xero overdue_sales_invoice`: fields are [organization, days_overdue] with no `trigger_preference`, so there is no hook/push variant of this trigger. Polling was the only delivery mode available — retiring it was the only way to remove its quota cost."
   },
   "connections": {
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",

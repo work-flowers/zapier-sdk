@@ -1,5 +1,34 @@
 # Xero Overdue Invoice → Gmail Reminder Draft
 
+> ## 🛑 Retired 2026-08-06 — disabled, not deleted
+>
+> **Xero's own native invoice email reminders do this job instead**, at no Zapier task cost and no
+> Xero API cost. This Zap was switched off to stop it consuming Xero API quota.
+>
+> **Why it had to go.** It was one of **five** Xero *polling* triggers on tenant `62699a8c`, which
+> together exhausted Xero's **5,000-calls-per-day-per-tenant** limit on 2026-08-06. That was
+> confirmed from Xero's own quota headers, not inferred:
+>
+> ```
+> x-rate-limit-problem: day
+> x-daylimit-remaining: 0        ← daily quota gone
+> x-minlimit-remaining: 60       ← per-minute budget untouched, so NOT a burst
+> ```
+>
+> The exhaustion took down *every* Xero Zap in the workspace for ~10 hours and dropped two invoices
+> in [`drive-invoice-to-xero`](../drive-invoice-to-xero/).
+>
+> **A durable poller cannot be throttled.** The classic Zap this replaced carried
+> `polling_interval_override: 15`; the durable `--trigger` payload has no such field (verified
+> across all 43 live triggers in the account), so the migration silently sped it up by as much as
+> **15×**. And `list-trigger-input-fields xero overdue_sales_invoice` returns only
+> `[organization, days_overdue]` — no `trigger_preference`, so there is **no webhook variant** to
+> move to. Retiring it was the only lever available.
+>
+> **To revive:** `enable-workflow 019fa8bc-2f55-7163-b4e6-4e6f90e8751c` reclaims the trigger as
+> `active` — the published version is intact, no republish needed. Do not do so without first
+> budgeting the Xero daily quota, because its full poll rate comes back with it.
+
 Durable workflow (trigger **`read`** — "Overdue Sales Invoice" — `XeroCLIAPI@2.20.5`,
 `days_overdue: 1`) that prepares a payment reminder when one of our sales invoices goes a day past
 due. Migrated from the classic Zap *"Overdue Invoice Reminders (1 Day)"*.
