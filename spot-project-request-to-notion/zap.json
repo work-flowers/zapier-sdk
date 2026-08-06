@@ -42,17 +42,33 @@
   "version_created_at": "2026-07-31T03:03:00.510Z",
   "description": "New Zapier Solution Partner project request -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
   "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three.",
-  "unexercised": {
-    "state": "Published and enabled, trigger active, ZERO runs. Nothing in this workflow has executed.",
-    "why": "The trigger has never carried a payload: directory requests arrived as PartnerPage emails until Zapier's ~2026-08-03 cutover. Published ahead of it deliberately (see trigger_note).",
-    "unproven": [
-      "The payload key SPELLINGS. The field SET is evidenced from the last PartnerPage delivery, but the snake_case keys SPOT uses are inferred, so extractRequest reads each field from a candidate list.",
-      "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). These are addressed through create_database_item's CACHED schema, which could not be resolved from the publishing session — the Zapier MCP server's own Notion connection returned an empty dynamic_properties_schema for these data sources, which means it cannot see them, NOT that the keys are wrong."
+  "first_run": {
+    "run_id": "019fd7e6-f307-7c32-bd2d-0f55396f11ef",
+    "durable_run_id": "019fd7e6-f502-71a9-bbf6-4ab653b89e59",
+    "at": "2026-08-06T16:27:44.773Z",
+    "request_id": "02700000000002800hE",
+    "status": "finished",
+    "outcome": "skipped — 'payload carried no usable email address'. operations: [] — NO steps ran, so nothing was written to Notion and no dedupe row exists. The request therefore remains unfiled and available to a later stage-change run.",
+    "latency": "Request created 16:26:47.423, run created 16:27:44.773 — the polling trigger picked it up inside a minute. The claim was correct all along; there had simply been nothing to deliver.",
+    "payload_keys": [
+      "id", "project_request_id", "type", "source", "lead_stage", "created_on",
+      "modified_on", "modified_by_id", "partner_account", "partner_contact",
+      "client_id", "email", "first_name", "last_name", "company", "website",
+      "company_size", "industry", "language", "location", "timezone", "budget",
+      "service_requested", "tool_requested", "project_description"
     ],
-    "first_run_checklist": [
-      "Read the run output: it echoes the raw payload, so the true key spellings are readable without opening Notion.",
-      "Check the Deal page body's 'Raw request payload' block against the mapped properties — an empty property with a populated payload key means a candidate spelling missed.",
-      "Confirm no new select option appeared on Companies Country / Industry / Size or Contacts Country."
+    "what_it_proved": [
+      "SPOT withholds identity with PROSE, not empty fields: email/first_name/last_name each carried 'Please accept or secure the lead to see the ...'. The run skipped only because that email sentence fails EMAIL_RE. The name sentences are non-empty strings that firstString accepted — they would have become the Contact and Deal titles had the address ever parsed. Fixed by SENTINEL_RE / firstRealString.",
+      "Four candidate lists missed: country <- `location` (which holds a REGION), apps <- `tool_requested`, servicesNeeded <- `service_requested`, stage <- `lead_stage`. All four now read.",
+      "Value vocabularies differ from Notion's: company_size '1-10' (Notion has 1-49/50-249/...), industry 'Retail & Wholesale' (Notion has 'Retail'), location 'Oceania (Australia & New Zealand)' (a region, not a country). All three were silently dropped by the guards — correct behaviour, but three empty fields. Now mapped; the country falls back to the website ccTLD when the region names more than one country.",
+      "This request came from `source: \"Zapier Sales\"` with `type: \"match\"` — an internal sales referral competing against other partners, NOT a directory lead. The PartnerPage-derived candidate spellings are therefore still worth keeping for a directory-sourced request."
+    ],
+    "still_unproven": [
+      "Whether an ACCEPTED payload actually carries the contact email, or whether identity only ever appears in the client-introduction email to leads@work.flowers.",
+      "Whether `updated_project_request` fires on the Pending -> Accepted transition. Nothing in this run speaks to it.",
+      "Keys absent from this payload and so still guessed: phone_number, job_title, project_name, timeline, zapier_account_email. The last matters — register-zapier-partner-lead needs it — and SPOT may simply not carry it.",
+      "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). This run wrote nothing, so they remain unexercised."
     ]
-  }
+  },
+  "repo_vs_deployed": "DIVERGED. workflow.ts in this repo carries the sentinel/key-spelling/vocabulary fixes from the first run; the deployed version 019fb620-080f-7626-b093-4b85554b5a4a does NOT. Publish before relying on the deployed behaviour, then update current_version_id and delete this key."
 }

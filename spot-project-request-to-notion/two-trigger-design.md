@@ -148,22 +148,79 @@ Fields to add: `First Seen`, `Last Stage`, `Stage History`, `Alerted`.
 later transition is swallowed. Use `<request_id>_<stage>` — exactly the composite
 `zapier-partner-lead-status-to-notion` already uses (`<lead_id>_<lead_status_modified_on>`).
 
+## The first real request (2026-08-06)
+
+Request `02700000000002800hE` arrived at 16:26:47 and the trigger fired at
+16:27:44 — inside a minute. It **confirmed the central premise of this design**
+and answered one of the four open questions outright.
+
+```json
+{
+  "id": "02700000000002800hE", "project_request_id": "02700000000002800hE",
+  "type": "match", "source": "Zapier Sales", "lead_stage": "Pending",
+  "email":      "Please accept or secure the lead to see the email.",
+  "first_name": "Please accept or secure the lead to see the first name.",
+  "last_name":  "Please accept or secure the lead to see the last name.",
+  "company": "Doecke Electrical", "website": "www.doeckeelectrical.com.au",
+  "company_size": "1-10", "industry": "Retail & Wholesale",
+  "location": "Oceania (Australia & New Zealand)", "language": "English",
+  "timezone": "UTC+10:00 (Sydney/Melbourne)", "budget": "$0 - $250",
+  "service_requested": "", "tool_requested": "",
+  "project_description": "Hi I would love some help creating a zap from email to aroflow to monday.com please, it is not working as required",
+  "created_on": "2026-08-06T16:26:47.423", "modified_on": "2026-08-06T16:26:47.423",
+  "client_id": "", "modified_by_id": "7NT00000000001F00hE",
+  "partner_account": "00100000000004F00hE", "partner_contact": "00500000000005d00hE"
+}
+```
+
+The run returned `{"skipped": true, "reason": "payload carried no usable email
+address"}` with `operations: []` — **no Notion write, no dedupe row.** Exactly
+the behaviour "Why no Notion write at Pending" argues for, though arrived at by
+accident rather than by design.
+
+**Identity is withheld with prose, not empty fields.** That is worse than this
+note assumed. The email sentence fails `EMAIL_RE` only because it has no `@`;
+the two name sentences are ordinary non-empty strings, so `firstString` took
+them, and had the address ever parsed, the Contact and Deal would have been
+titled *"Please accept or secure the lead to see the first name. Please accept
+or secure the lead to see the last name."* Now caught explicitly by
+`SENTINEL_RE` / `firstRealString`.
+
+**Four candidate lists missed**, each silently emptying a field the payload was
+carrying: `location` (country — and it holds a *region*), `tool_requested`
+(apps), `service_requested` (services), `lead_stage` (stage). All four now read.
+
+**Three value vocabularies disagree with Notion's** and were dropped by the
+guards — correct, but lossy. `company_size: "1-10"` now maps to `1-49`;
+`industry: "Retail & Wholesale"` to `Retail`; `location` names two countries, so
+the country is recovered from the website's ccTLD (`.com.au` → Australia).
+
+Note also `source: "Zapier Sales"` with `type: "match"` — an internal sales
+referral competing against other partners, not a directory lead. Both sources
+feed the same trigger, which is why the PartnerPage-derived candidate spellings
+are kept rather than collapsed.
+
 ## Open questions
 
-Cannot be resolved until a real request exists — SPOT has none.
+Narrowed by the first run, but not closed.
 
-1. **Does `updated_project_request` fire on Pending → Accepted?** The whole design
-   rests on it. If it only fires on later stages, B never creates anything and A's
-   trigger_url handoff becomes the primary path rather than the fallback.
-2. **Does the payload carry the full record or a delta?** The sibling
+1. **Does `updated_project_request` fire on Pending → Accepted?** Still the
+   question the whole design rests on. Nothing in the first run speaks to it. If
+   it only fires on later stages, B never creates anything and A's trigger_url
+   handoff becomes the primary path rather than the fallback.
+2. **Does the payload carry the full record or a delta?** Still open. The sibling
    `referral_lead_status_change` delivers the *whole* record (id, name, email,
    status, dates, commission) — good precedent, not proof. The
    `find_project_request` fetch makes B correct either way.
-3. **Real key spellings.** Still unproven, per `zap.json` → `unexercised`.
-   `extractRequest`'s candidate lists stay as they are.
-4. **Does an Accepted payload actually carry the contact email?** If Deal Exchange
-   never exposes it via the API, the Contact must be resolved from the client
-   introduction email to `leads@work.flowers` instead — a different design.
+3. ~~**Real key spellings.**~~ **Answered** — see above.
+4. **Does an Accepted payload actually carry the contact email?** Still open, and
+   now sharper: the field is *present* at Pending but filled with a sentinel, so
+   the question is whether acceptance replaces that sentence with an address or
+   leaves it standing. If it never resolves, the Contact must be resolved from the
+   client introduction email to `leads@work.flowers` instead — a different design.
+
+Question 4 is answerable the moment any request is accepted: re-read
+`find_project_request` and look at `email`.
 
 ## Rollout
 

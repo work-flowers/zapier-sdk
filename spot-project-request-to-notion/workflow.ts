@@ -65,6 +65,68 @@ const COMPANY_SIZE_OPTIONS: Record<string, string> = {
   "250-999": "250-999",
   "1000+": "1000+",
   "1,000+": "1000+",
+  // SPOT bands. Its ladder is finer than Notion's, so a band only earns an
+  // entry when it sits ENTIRELY inside one Notion option. "1-10" does; a band
+  // like "11-50" would straddle `1-49` and `50-249`, so it is deliberately
+  // absent and drops rather than guess. Observed so far: "1-10"
+  // (request 02700000000002800hE). Add others as real requests reveal them —
+  // do not populate this from an assumed ladder.
+  "1-10": "1-49",
+};
+
+/**
+ * SPOT industry vocabulary -> the Notion Companies `Industry` option.
+ *
+ * Only exact, observed pairs. `matchOption` already handles the case where the
+ * two vocabularies agree; this map is for the ones that mean the same thing
+ * and spell it differently. "Retail & Wholesale" (request 02700000000002800hE)
+ * is Notion's "Retail" — near enough that dropping it loses real information,
+ * and far enough that the exact-match guard rejects it.
+ */
+const COMPANY_INDUSTRY_FROM_NAME: Record<string, string> = {
+  "retail & wholesale": "Retail",
+  "retail and wholesale": "Retail",
+};
+
+/**
+ * **SPOT sends a REGION, not a country.** The first real request carried
+ * `location: "Oceania (Australia & New Zealand)"` — and note the key is
+ * `location`, not any of the `country` spellings this file used to guess at.
+ *
+ * A region that names two countries cannot become one, so it maps to nothing
+ * and the country is recovered from the website's ccTLD instead
+ * (`www.doeckeelectrical.com.au` -> Australia). Regions naming exactly one
+ * country are listed here; the rest resolve through the TLD or not at all.
+ */
+const COUNTRY_FROM_REGION: Record<string, string> = {
+  "northern america": "United States",
+};
+
+/**
+ * ccTLD -> the Contacts `Country` full name. Restricted to countries one of
+ * the two selects can actually store, so a match always lands somewhere real.
+ * A country-coded domain is strong evidence — `.com.au` requires an Australian
+ * presence to register — but it is still evidence, not a declaration, so it is
+ * only consulted after the payload's own fields have failed.
+ */
+const COUNTRY_FROM_CCTLD: Record<string, string> = {
+  ae: "United Arab Emirates",
+  au: "Australia",
+  de: "Germany",
+  fr: "France",
+  id: "Indonesia",
+  ie: "Ireland",
+  in: "India",
+  jp: "Japan",
+  my: "Malaysia",
+  nl: "Netherlands",
+  nz: "New Zealand",
+  ph: "Philippines",
+  sg: "Singapore",
+  th: "Thailand",
+  uk: "United Kingdom",
+  vn: "Vietnam",
+  za: "South Africa",
 };
 
 /**
@@ -199,11 +261,43 @@ function joinList(v: unknown): string {
   return firstString(v) ?? "";
 }
 
+/**
+ * **SPOT withholds client identity until the request is accepted, and it does
+ * so with prose, not with an empty field.** The first real request
+ * (`02700000000002800hE`, 2026-08-06) arrived at stage `Pending` carrying:
+ *
+ *     email:      "Please accept or secure the lead to see the email."
+ *     first_name: "Please accept or secure the lead to see the first name."
+ *     last_name:  "Please accept or secure the lead to see the last name."
+ *
+ * That run skipped only because the email sentence fails `EMAIL_RE` — it has
+ * no `@`. The name sentences carry no such accident: they are non-empty
+ * strings, so `firstString` accepts them, and a Contact and Deal would have
+ * been titled "Please accept or secure the lead to see the first name. Please
+ * accept or secure the lead to see the last name." if the address had ever
+ * been parseable.
+ *
+ * So the sentinel is matched explicitly rather than left to a regex that
+ * happens to reject it. Matched loosely — on the stable "accept or secure"
+ * phrase — because the surrounding wording is Zapier's to change.
+ */
+const SENTINEL_RE = /\baccept or secure the lead\b/i;
+
+function isSentinel(v: unknown): boolean {
+  return typeof v === "string" && SENTINEL_RE.test(v);
+}
+
+/** `firstString`, but placeholder prose counts as absent. */
+function firstRealString(...vals: unknown[]): string | null {
+  return firstString(...vals.filter((v) => !isSentinel(v)));
+}
+
 const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 
 /** Lowercased, validated email — or "". Every row in the email Table is
  *  lowercase, so a raw-case address would never match. */
 function cleanEmail(v: unknown): string {
+  if (isSentinel(v)) return "";
   const s = firstString(v)?.toLowerCase() ?? "";
   return EMAIL_RE.test(s) ? s : "";
 }
@@ -291,6 +385,52 @@ function companyCountry(raw: unknown): string {
   return matchOption(s, COMPANY_COUNTRY_OPTIONS);
 }
 
+/** The Companies `Industry` option, by exact match first and then through the
+ *  SPOT synonym map. "" when neither knows the value. */
+function mapIndustry(raw: unknown): string {
+  const exact = matchOption(raw, COMPANY_INDUSTRY_OPTIONS);
+  if (exact !== "") return exact;
+  const s = firstString(raw)?.trim().toLowerCase() ?? "";
+  return COMPANY_INDUSTRY_FROM_NAME[s] ?? "";
+}
+
+/** The final segment of a host, or "" — `doeckeelectrical.com.au` -> `au`. */
+function tld(domain: string): string {
+  const parts = domain.split(".");
+  return parts.length > 1 ? (parts[parts.length - 1] ?? "") : "";
+}
+
+/**
+ * A country full name from whatever the payload managed to say, in descending
+ * order of authority: an actual country, then a region that names exactly one
+ * country, then the website's ccTLD.
+ *
+ * Returns a **full name** (the Contacts vocabulary) in every case, because
+ * `companyCountry` maps names down to the Companies alpha-2 codes but not the
+ * other way. "" when nothing resolves — which still writes nothing, rather
+ * than minting a select option out of a region.
+ */
+function resolveCountryName(raw: string, website: string): string {
+  const s = raw.trim().toLowerCase();
+  if (s !== "") {
+    // Already a country the Contacts select knows, or a name Companies knows.
+    const known = matchOption(s, CONTACT_COUNTRY_OPTIONS);
+    if (known !== "") return known;
+    if (COMPANY_COUNTRY_FROM_NAME[s]) {
+      const code = COMPANY_COUNTRY_FROM_NAME[s];
+      const name = Object.keys(COMPANY_COUNTRY_FROM_NAME).find(
+        (k) => COMPANY_COUNTRY_FROM_NAME[k] === code && k.length > 2,
+      );
+      const canonical = matchOption(name ?? s, CONTACT_COUNTRY_OPTIONS);
+      if (canonical !== "") return canonical;
+    }
+    const fromRegion = COUNTRY_FROM_REGION[s];
+    if (fromRegion) return fromRegion;
+  }
+  const fromTld = COUNTRY_FROM_CCTLD[tld(normalizeDomain(website))];
+  return fromTld ?? "";
+}
+
 /** Notion rich_text has a 2000-character ceiling per block. A brief that runs
  *  longer is truncated in the property and carried in full in the page body. */
 function clip(s: string, max = 1900): string {
@@ -300,34 +440,40 @@ function clip(s: string, max = 1900): string {
 // --- The project request ---------------------------------------------------
 
 /**
- * **The field SET is now known; the exact key SPELLINGS are still inferred.**
+ * **The key spellings are now KNOWN.** The first real project request
+ * (`02700000000002800hE`, stage `Pending`, 2026-08-06T16:26:47) delivered:
  *
- * Zapier is moving directory lead delivery onto SPOT around 2026-08-03. Until
- * then `new_project_request` polls empty (verified repeatedly on 2026-07-31),
- * so there is still no payload to read key names off.
+ *   id · project_request_id · type · source · lead_stage · created_on ·
+ *   modified_on · modified_by_id · partner_account · partner_contact ·
+ *   client_id · email · first_name · last_name · company · website ·
+ *   company_size · industry · language · location · timezone · budget ·
+ *   service_requested · tool_requested · project_description
  *
- * What we *do* have is the same request object rendered by the delivery path
- * being replaced: PartnerPage's "New contact request from Zapier" email. The
- * fields the directory form actually collects are therefore known, because that
- * email lists them:
+ * Four of this function's candidate lists had missed, and each miss silently
+ * emptied a field the payload was carrying:
  *
- *   First name · Last name · Email · Company name · Website · Phone number ·
- *   Comments  — then a "Request Details" table:
- *   Tools you are trying to connect · Your Country · Your Time Zone ·
- *   Services needed · Project Budget · Zapier account email
+ *   country        <- `location`            (and it holds a REGION, not a country)
+ *   apps           <- `tool_requested`      (singular)
+ *   servicesNeeded <- `service_requested`   (singular)
+ *   stage          <- `lead_stage`
  *
- * That is a much better grounding than guesswork, and it changed the mapping in
- * three ways worth knowing about: a **phone number** exists (Contacts has
- * `Primary Phone`), the brief is called **Comments** rather than a description,
- * and the **Zapier account email is a separate field from the contact email** —
- * which matters, because it is exactly what `register-zapier-partner-lead`
- * needs to submit the company as a referral lead.
+ * Two more resolved only on a later candidate, which is fine but worth knowing:
+ * `company` (2nd) and `project_description` (3rd).
  *
- * Each field is still read from a list of candidate snake_case spellings, in the
- * style this same app uses for `referral_lead_status_change`. A miss leaves a
- * field empty; it never writes the wrong value somewhere. And the raw payload is
- * still preserved verbatim on the Deal page, in the request Table row and in the
- * run output, so the first real request reveals the true spellings at once.
+ * The candidate lists are kept rather than collapsed to the known spellings.
+ * They cost nothing, the payload predates the app's 1.5.0 stabilisation, and
+ * the PartnerPage vocabulary they were built from (`comments`, `your_country`,
+ * `tools_to_connect`) is still what a directory-sourced request may carry —
+ * this one came from `source: "Zapier Sales"`, not the directory.
+ *
+ * Still absent from a real payload, so still unproven: `phone_number`,
+ * `job_title`, `project_name`, `timeline`, `zapier_account_email`. The last
+ * one matters — `register-zapier-partner-lead` needs it — and SPOT may simply
+ * not carry it.
+ *
+ * A miss leaves a field empty; it never writes the wrong value somewhere. The
+ * raw payload is preserved verbatim on the Deal page, in the request Table row
+ * and in the run output.
  *
  * Deliberately NOT guessed at: a bare `title` key, which could plausibly be the
  * person's job title or the project's name. Writing it to the wrong one is a
@@ -371,27 +517,46 @@ function extractRequest(raw: unknown): RequestData {
   // batched shape.
   const r: Record<string, any> = Array.isArray(o) ? o[0] ?? {} : (o.data ?? o);
 
-  const firstName = firstString(r.first_name, r.contact_first_name) ?? "";
-  const lastName = firstString(r.last_name, r.contact_last_name) ?? "";
+  // `firstRealString` throughout: SPOT fills withheld identity fields with
+  // prose ("Please accept or secure the lead to see the first name."), which is
+  // a non-empty string and would otherwise sail straight into a page title.
+  const firstName = firstRealString(r.first_name, r.contact_first_name) ?? "";
+  const lastName = firstRealString(r.last_name, r.contact_last_name) ?? "";
   const name =
-    firstString(r.name, r.contact_name, r.full_name) ??
+    firstRealString(r.name, r.contact_name, r.full_name) ??
     [firstName, lastName].filter((s) => s !== "").join(" ");
+
+  const website =
+    firstRealString(r.website, r.company_website, r.domain, r.url) ?? "";
 
   return {
     requestId:
       firstString(r.id, r.project_request_id, r.request_id, r.project_id) ?? "",
-    email: cleanEmail(firstString(r.email, r.contact_email, r.requester_email)),
+    email: cleanEmail(
+      firstRealString(r.email, r.contact_email, r.requester_email),
+    ),
     firstName,
     lastName,
     name,
-    jobTitle: firstString(r.job_title, r.contact_title, r.role) ?? "",
-    phone: firstString(r.phone_number, r.phone, r.contact_phone) ?? "",
+    jobTitle: firstRealString(r.job_title, r.contact_title, r.role) ?? "",
+    phone: firstRealString(r.phone_number, r.phone, r.contact_phone) ?? "",
     companyName:
-      firstString(r.company_name, r.company, r.account_name, r.organization) ??
-      "",
-    website: firstString(r.website, r.company_website, r.domain, r.url) ?? "",
+      firstRealString(
+        r.company_name,
+        r.company,
+        r.account_name,
+        r.organization,
+      ) ?? "",
+    website,
     companySize: firstString(r.company_size, r.size, r.employees) ?? "",
-    country: firstString(r.country, r.your_country, r.company_country) ?? "",
+    // `location` is SPOT's spelling, and it holds a REGION — resolved to a
+    // country here (via the ccTLD when the region names more than one) so the
+    // write path keeps taking a plain country name.
+    country: resolveCountryName(
+      firstString(r.country, r.your_country, r.company_country, r.location) ??
+        "",
+      website,
+    ),
     industry: firstString(r.industry, r.vertical) ?? "",
     projectName: firstString(r.project_name, r.project_title, r.subject) ?? "",
     // "Comments" is what the directory form calls the brief.
@@ -414,19 +579,27 @@ function extractRequest(raw: unknown): RequestData {
       ) ?? "",
     timeline: firstString(r.timeline, r.timeframe, r.start_timeline) ?? "",
     // "Tools you are trying to connect" — may be a list or a single string.
+    // SPOT spells it `tool_requested` (singular), and sent it empty on the
+    // first real request.
     apps: joinList(
-      r.tools_to_connect ??
+      r.tool_requested ??
+        r.tools_to_connect ??
         r.tools ??
         r.apps ??
         r.apps_used ??
         r.integrations,
     ),
-    servicesNeeded: joinList(r.services_needed ?? r.services),
+    // SPOT: `service_requested`, singular again.
+    servicesNeeded: joinList(
+      r.service_requested ?? r.services_needed ?? r.services,
+    ),
     timezone: firstString(r.time_zone, r.timezone, r.your_time_zone) ?? "",
     zapierAccountEmail: cleanEmail(
-      firstString(r.zapier_account_email, r.account_email),
+      firstRealString(r.zapier_account_email, r.account_email),
     ),
-    stage: firstString(r.stage, r.status) ?? "",
+    // SPOT: `lead_stage` — Pending / Accepted / Declined / Expired /
+    // Secured / Lost / Abandoned.
+    stage: firstString(r.lead_stage, r.stage, r.status) ?? "",
     createdOn: dateOnly(
       firstString(r.created_on, r.created_date, r.submitted_on),
     ),
@@ -731,7 +904,7 @@ async function resolveCompany(
   if (size) props["properties|||Size|||select"] = size;
   const country = companyCountry(req.country);
   if (country) props["properties|||Country|||select"] = country;
-  const industry = matchOption(req.industry, COMPANY_INDUSTRY_OPTIONS);
+  const industry = mapIndustry(req.industry);
   if (industry) props["properties|||Industry|||select"] = industry;
   // The Zapier account the requester wants worked on. Written only on a company
   // this workflow is CREATING — there is nothing to clobber and no curation to
