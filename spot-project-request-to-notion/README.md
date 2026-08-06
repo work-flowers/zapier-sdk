@@ -4,7 +4,11 @@ A **new project request** in the Zapier **Solution Partner Operations Tool** (SP
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ✅ **Published and enabled, trigger `active` — but with ZERO runs, because nothing has ever fired it.** Published deliberately *ahead* of a change on Zapier's side: **from around 2026-08-03, directory lead requests arrive via SPOT** rather than as PartnerPage emails. Claiming the trigger early is the whole point — a polling trigger banks its first poll after being claimed as already-seen rather than firing it, so claiming *after* the cutover risked swallowing the first real request as backlog. Nothing before the cutover can fire it, so claiming early cost nothing.
+**Status:** ✅ **Published and enabled, trigger `active`. It has now fired — once.** The first real project request arrived **2026-08-06T16:26:47** and the trigger picked it up **57 seconds later**, vindicating the decision to claim it early (a polling trigger banks its first poll as already-seen, so claiming after the cutover risked swallowing the first real request as backlog). The cutover itself landed on **2026-08-05**, not the ~08-03 originally assumed.
+
+That run **skipped without writing anything**, and reading why is the most useful thing in this README — see [The first run](#the-first-run). The short version: SPOT withholds client identity until a request is accepted, and it does so with *prose in the field* rather than an empty field, which is a sharper trap than it sounds.
+
+> ⚠️ **This directory is AHEAD of what is deployed.** `workflow.ts` here carries the fixes the first run exposed; deployed version `019fb620-…` does not. See [`zap.json`](zap.json) → `repo_vs_deployed`.
 
 | | |
 | --- | --- |
@@ -14,13 +18,43 @@ Third workflow against the same private partner app. Its siblings are [`register
 | Trigger | `App227952CLIAPI@1.5.0` / `new_project_request`, `status: active`, `error: null` |
 | Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, created with this publish |
 
-**Nothing in this workflow has executed.** `tsc --strict` is clean, and the deployed source round-trips byte-identical to this directory (47,549 bytes), but that is all static. See [What is still unproven](#what-is-still-unproven) before trusting the first run.
+## The first run
+
+Request `02700000000002800hE`, stage `Pending`, run `019fd7e6-f307-…`:
+
+```json
+{
+  "id": "02700000000002800hE", "type": "match", "source": "Zapier Sales",
+  "lead_stage": "Pending",
+  "email":      "Please accept or secure the lead to see the email.",
+  "first_name": "Please accept or secure the lead to see the first name.",
+  "last_name":  "Please accept or secure the lead to see the last name.",
+  "company": "Doecke Electrical", "website": "www.doeckeelectrical.com.au",
+  "company_size": "1-10", "industry": "Retail & Wholesale",
+  "location": "Oceania (Australia & New Zealand)",
+  "timezone": "UTC+10:00 (Sydney/Melbourne)", "budget": "$0 - $250",
+  "service_requested": "", "tool_requested": "",
+  "project_description": "Hi I would love some help creating a zap from email to aroflow to monday.com please, it is not working as required"
+}
+```
+
+Result: `{"skipped": true, "reason": "payload carried no usable email address"}`, `operations: []` — **no Notion write, no dedupe row**, so the request stays unfiled and a later stage-change run can still pick it up.
+
+Three things it taught us, all now fixed in `workflow.ts`:
+
+1. **Identity is withheld with prose, not empty fields.** The run skipped only because that email sentence has no `@` and fails `EMAIL_RE`. The two *name* sentences are ordinary non-empty strings — `firstString` took them — so had the address ever parsed, the Contact and Deal would have been titled *"Please accept or secure the lead to see the first name. Please accept or secure the lead to see the last name."* Now matched explicitly by `SENTINEL_RE` / `firstRealString`.
+2. **Four candidate lists missed**, each silently emptying a field the payload was carrying: `country` ← **`location`**, `apps` ← **`tool_requested`**, `servicesNeeded` ← **`service_requested`**, `stage` ← **`lead_stage`**.
+3. **Three value vocabularies disagree with Notion's.** `company_size: "1-10"` → `1-49`; `industry: "Retail & Wholesale"` → `Retail`; `location` is a *region* naming two countries, so the country now falls back to the website ccTLD (`.com.au` → Australia). All three were dropped by the guards — correct, no select option was minted, but three fields would have landed empty.
+
+Note `source: "Zapier Sales"` / `type: "match"`: an internal sales referral competing against other partners, **not** a directory lead. Both sources feed this one trigger, which is why the PartnerPage-derived candidate spellings are kept rather than collapsed to the observed ones.
+
+The design consequence — that a Pending request has nothing to build a Contact from, and needs a second workflow on `updated_project_request` — is worked up in [`two-trigger-design.md`](two-trigger-design.md).
 
 ## What is verified, and what is not
 
-**Verified:** the trigger exists, takes no configuration, and is reachable on the work.flowers partner connection (`02a5085e-…`).
+**Verified:** the trigger exists, takes no configuration, is reachable on the work.flowers partner connection (`02a5085e-…`), and now demonstrably fires within a minute of a request being created.
 
-**Not verified, and not verifiable before the cutover:** the payload. Every project-request endpoint polls empty, checked repeatedly on 2026-07-31 — including after a real directory request had already arrived:
+**Historic — why it sat empty until 2026-08-06.** Every project-request endpoint polled empty, checked repeatedly on 2026-07-31 — including after a real directory request had already arrived:
 
 | Probe | Result |
 | --- | --- |
@@ -200,7 +234,7 @@ When the first request lands, three things are worth two minutes:
 2. **Compare the Deal page's "Raw request payload" block against the mapped properties.** An empty property next to a populated payload key means a candidate spelling missed — fix `extractRequest` and republish.
 3. **Confirm no new select option appeared** on Companies `Country` / `Industry` / `Size`, or Contacts `Country`. Nothing should have been minted; that is what the exact-match rules are for.
 
-If you would rather not wait, a smoke test costs one run and writes real records — see [`zap.json`](zap.json) → `unexercised`. Use a payload that reaches the main path (a request id *and* an email); a skip-path test proves nothing about the code after the guard, which is how `drive-invoice-to-xero` shipped a bug that killed 100% of its runs. Then delete the Deal and its Table row.
+If you would rather not wait, a smoke test costs one run and writes real records — see [`zap.json`](zap.json) → `first_run` and `still_unproven`. Use a payload that reaches the main path (a request id *and* a real email); a skip-path test proves nothing about the code after the guard, which is how `drive-invoice-to-xero` shipped a bug that killed 100% of its runs. **The one real run so far was a skip-path run**, so everything past the email guard — company resolution, contact resolution, deal creation, the `properties|||…` key forms — is still entirely unexercised. Then delete the Deal and its Table row.
 
 ## How it was published
 
