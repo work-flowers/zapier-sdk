@@ -3,24 +3,24 @@
   "workflow_id": "019fca31-a66e-770f-8286-2f40df685a80",
   "current_version_id": "019fca32-25bc-7752-844c-38eaca7ca765",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQCVhld4SSnVUHHl72Hofg",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "trigger": {
     "selected_api": "XeroCLIAPI@2.21.0",
     "action": "sales_invoice_v2",
     "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
-    "authentication_note": "Xero work.flowers. Only bound on the trigger — the workflow body never re-reads Xero, it just formats whatever the trigger delivered.",
+    "authentication_note": "Xero work.flowers. Only bound on the trigger \u2014 the workflow body never re-reads Xero, it just formats whatever the trigger delivered.",
     "params": {
       "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
       "status": "draft"
     },
-    "status": "active",
-    "trigger_note": "New Sales Invoice trigger, filtered to status=draft, identical params to the classic Zap. Unlike the sibling `bill` trigger (xero-draft-bill-to-slack-alert), this one DOES carry a `details.webhook_url` (https://hooks.zapier.com/hooks/standard/…) — Zapier's own internal subscription mechanism for this trigger, not an external catch URL; nothing external should be pointed at it."
+    "status": "released",
+    "trigger_note": "New Sales Invoice trigger, filtered to status=draft, identical params to the classic Zap. Unlike the sibling `bill` trigger (xero-draft-bill-to-slack-alert), this one DOES carry a `details.webhook_url` (https://hooks.zapier.com/hooks/standard/\u2026) \u2014 Zapier's own internal subscription mechanism for this trigger, not an external catch URL; nothing external should be pointed at it."
   },
   "connections": {
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74"
   },
-  "connections_note": "Slack @dennis (Work.Flowers), SlackCLIAPI@1.39.3 — same connection and app version as the classic Zap's Slack step, and the same one xero-draft-bill-to-slack-alert uses.",
+  "connections_note": "Slack @dennis (Work.Flowers), SlackCLIAPI@1.39.3 \u2014 same connection and app version as the classic Zap's Slack step, and the same one xero-draft-bill-to-slack-alert uses.",
   "zapier_durable_version": "0.12.3",
   "dependencies": {
     "zod": "4.4.3",
@@ -29,14 +29,14 @@
   "version_pinning_note": "Newest versions of each direct dependency published at least 24h before build time, per the Vercel sandbox's pnpm minimumReleaseAge=1440 requirement.",
   "tasks_per_run": {
     "every_draft_invoice": "1 (Slack private_channel_message)",
-    "note": "Same cost as the classic Zap — no Xero re-read, since the trigger already delivers the full invoice including LineItems."
+    "note": "Same cost as the classic Zap \u2014 no Xero re-read, since the trigger already delivers the full invoice including LineItems."
   },
   "message": {
     "channel": "C08GRA41E1J (#finance)",
     "action": "SlackCLIAPI write private_channel_message",
-    "text_format": "Same wording/emoji/section layout as the classic Zap: '📋 *Invoice Details*' plus Invoice #/Customer/Date/Due Date/Status/Amount Due/Total Tax/Line Items.",
+    "text_format": "Same wording/emoji/section layout as the classic Zap: '\ud83d\udccb *Invoice Details*' plus Invoice #/Customer/Date/Due Date/Status/Amount Due/Total Tax/Line Items.",
     "formatting_fixes": [
-      "Line items are the substantive fix. The classic Zap's template used Zapier's array-flattening ({{LineItems[]Description}} etc.), which renders one list per FIELD (all descriptions, then all quantities, then all amounts) rather than one line per ITEM — a two-line invoice reads as three disjoint lists. This durable keeps each item's description/quantity/amount together on one line.",
+      "Line items are the substantive fix. The classic Zap's template used Zapier's array-flattening ({{LineItems[]Description}} etc.), which renders one list per FIELD (all descriptions, then all quantities, then all amounts) rather than one line per ITEM \u2014 a two-line invoice reads as three disjoint lists. This durable keeps each item's description/quantity/amount together on one line.",
       "Amount Due and Total Tax are now two-decimal, thousands-separated.",
       "Date and Due Date are normalized to YYYY-MM-DD regardless of which of Xero's two date shapes the trigger delivers.",
       "A bill with no invoice number (an absent key, not null) renders '(not numbered)' instead of a blank line."
@@ -59,17 +59,24 @@
   "replaces_classic_zap": {
     "title": "Draft Sales Invoice Alert",
     "old_shape": "XeroCLIAPI@2.21.0 sales_invoice_v2 (status: draft) -> SlackCLIAPI@1.39.3 write private_channel_message. Two nodes, no lookup, no conditions.",
-    "status": "The trigger node was NOT paused (still polling), but the Slack write node WAS paused: true in the export — so the classic Zap has never actually posted an alert. Turn the classic Zap off in the Zapier UI rather than unpausing it, since both would otherwise post the same alert once a draft sales invoice is created.",
+    "status": "The trigger node was NOT paused (still polling), but the Slack write node WAS paused: true in the export \u2014 so the classic Zap has never actually posted an alert. Turn the classic Zap off in the Zapier UI rather than unpausing it, since both would otherwise post the same alert once a draft sales invoice is created.",
     "known_issues_fixed": [
-      "Line-item array-flattening bug (see formatting_fixes above) — the classic template would have rendered any invoice with more than one line item as three disjoint lists instead of a legible per-item breakdown.",
+      "Line-item array-flattening bug (see formatting_fixes above) \u2014 the classic template would have rendered any invoice with more than one line item as three disjoint lists instead of a legible per-item breakdown.",
       "Raw AmountDue/TotalTax/date interpolation is now formatted.",
-      "No guard against an empty/test delivery of the trigger — now skips cleanly instead of posting a malformed message."
+      "No guard against an empty/test delivery of the trigger \u2014 now skips cleanly instead of posting a malformed message."
     ],
     "deliberately_preserved": [
-      "Message wording, emoji (📋), section headers and layout, verbatim.",
+      "Message wording, emoji (\ud83d\udccb), section headers and layout, verbatim.",
       "Same channel (#finance / C08GRA41E1J), same Slack connection, same private_channel_message action with the same flags (add_app_to_channel, as_bot, add_edit_link, unfurl, link_names all yes; reply_broadcast no)."
     ]
   },
   "created_at": "2026-08-04T00:34:39.343Z",
-  "version_created_at": "2026-08-04T00:34:39.343Z"
+  "version_created_at": "2026-08-04T00:34:39.343Z",
+  "retired": {
+    "disabled_at": "2026-08-06T02:01:00Z",
+    "superseded_by": "xero-invoice-alerts (019fd4cc-6d23-7aa4-964a-ddc6cf489a1b)",
+    "channel_in_successor": "slack-sales-draft",
+    "reason": "Its Xero POLLING trigger cost ~1,440 Xero API calls/day. Five such pollers on tenant 62699a8c exhausted Xero's 5,000-calls/day-per-tenant limit on 2026-08-06 (x-rate-limit-problem: day, x-daylimit-remaining: 0, x-minlimit-remaining: 60 \u2014 a daily quota exhaustion, not a burst), taking every Xero Zap in the workspace down for ~10 hours. A durable polling trigger cannot be throttled: the --trigger payload has no interval field, verified across all 43 live triggers in the account. This Zap's behaviour now runs as the `slack-sales-draft` channel of the schedule-driven xero-invoice-alerts, which does the work of all three former pollers for ~24 calls/day.",
+    "do_not_re_enable": "Re-enabling would BOTH double-alert (xero-invoice-alerts already covers this) and put ~1,440 Xero calls/day back on the tenant. Change xero-invoice-alerts instead. Disabled, not deleted \u2014 the published version is intact and the trigger is `released`."
+  }
 }

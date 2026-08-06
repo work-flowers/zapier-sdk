@@ -1,25 +1,37 @@
 {
   "name": "xero-bank-transactions-to-zapier-table",
   "workflow_id": "019fa885-7d5e-73a8-b601-4ec31290bf4a",
-  "current_version_id": "019fa885-b4c5-764e-9cc8-7cb86ecb284e",
+  "current_version_id": "019fd4b2-925a-75a7-9461-484908b10f5a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaVB57afDcrtlFL0dbihDA",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "XeroCLIAPI@2.20.5",
-    "action": "bank_transaction",
-    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
-    "authentication_note": "Xero work.flowers. The Xero credential lives HERE only — the workflow body never calls Xero, it only writes the Zapier Table.",
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyHour",
+    "authentication_id": null,
+    "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. The Xero credential moved OFF the trigger and into the workflow body as the `xero_wf` connection alias, because the body now reads Xero itself.",
     "params": {
-      "organization": "62699a8c-3351-40e8-9265-bdca5e037b03"
+      "moh": "00",
+      "weekends": "yes"
     },
+    "params_note": "`moh` (Time Offset) MUST be the STRING \"00\", not the integer 0, even though `list-trigger-input-fields` declares it `value_type: INTEGER`. Its real choices are the zero-padded strings \"00\"/\"15\"/\"30\"/\"45\" (`list-trigger-input-field-choices ScheduleCLIAPI everyHour moh`). Publishing with the integer 0 was REJECTED — `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'` — which is worth knowing: a bad trigger param is documented elsewhere in this repo as failing SILENTLY at publish, but a value outside a SELECT's choice set is caught loudly. Do not rely on either behaviour; verify `triggers[0].status == \"active\"` after every publish.",
     "status": "active",
-    "trigger_note": "Polling trigger (New Bank Transaction), one run per transaction. Fires on transaction CREATION, not reconciliation — despite the classic Zap's title 'Process New Reconciled Transactions'. Proof: 26 of 93 rows sampled have a Reference in Xero but '' in the Table, because Xero fills Reference in at reconciliation, after this trigger has already fired. The classic Zap also carried polling_interval_override: 5, which the durable --trigger payload has no field for; the default interval applies."
+    "trigger_note": "SCHEDULE trigger — fires hourly at the top of the hour, weekends included. It replaced the Xero `bank_transaction` POLLING trigger on 2026-08-06 to stop this Zap consuming Xero API quota; see xero_api_usage. The Zapier-internal subscription URL is https://hooks.zapier.com/hooks/standard/20495893/ff5fac39f8f34e13b5aa34e69a4866ad/ — that is Zapier's own plumbing for the schedule subscription, NOT a catch URL for any external service to call.",
+    "why_not_polling": "A durable trigger has no polling-interval field: the `--trigger` payload accepts only selected_api / action / authentication_id / params, verified across all 43 live triggers in the account. So the classic Zap's `polling_interval_override: 5` had nowhere to go at migration and this Zap silently began polling at the account default (~1 min). A schedule trigger costs Xero nothing and puts the interval back under our control — the Xero read moved into the body where WE decide the cadence."
   },
-  "connections": {},
-  "connections_note": "None. The workflow uses no connection aliases — Zapier Tables need no connection, and the Xero credential is on the trigger. --connections was omitted at publish.",
+  "connections": {
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "connections_note": "NEW as of 019fd4b2. The body now calls Xero (`_zap_raw_request` GET /BankTransactions), so the credential is bound as an alias rather than living on the trigger. Note the shape mismatch: reads return {\"xero_wf\":{\"connection_id\":…}} (snake_case) while the publish/update flags take {\"xero_wf\":{\"connectionId\":…}} (camelCase). `app_versions` is deliberately omitted — drive-invoice-to-xero also calls XeroCLIAPI via runAction with `app_versions: null`.",
   "connectionless_apps": {
-    "ZapierTables": "read/write via sdk.listTableRecords / createTableRecords / updateTableRecords / deleteTableRecords — no connection, no task cost"
+    "ZapierTables": "read/write via sdk.listTableRecords / createTableRecords / updateTableRecords / deleteTableRecords — no connection, no task cost",
+    "ScheduleCLIAPI": "the trigger — auth_type \"\", no connection, and it never touches Xero"
+  },
+  "xero_api_usage": {
+    "before": "~1,440 calls/day. The `bank_transaction` polling trigger polled Xero at the account default interval, every day, whether or not anything had changed.",
+    "after": "~24-48 calls/day. One hourly fire reads 1 page of /BankTransactions (2-3 only if the window spans more than 100 transactions).",
+    "why_it_mattered": "Xero rate-limits per TENANT: 60 calls/min and 5,000 calls/day. Five Xero polling triggers on tenant 62699a8c exhausted the daily limit on 2026-08-06 — confirmed from Xero's own response headers, `x-rate-limit-problem: day` with `x-daylimit-remaining: 0` and `x-minlimit-remaining: 60`, i.e. the per-minute budget was completely untouched, so it was NOT a burst, a concurrency problem or a retry storm. Every Xero Zap in the workspace was down for ~10 hours (retry-after 33519s) and drive-invoice-to-xero dropped two invoices.",
+    "pattern": "A schedule trigger is the interval knob durable pollers do not have. Cost moves from 'polls per day' to 'fires per day', and the fire rate is ours to set."
   },
   "zapier_durable_version": "0.10.1",
   "dependencies": {
@@ -50,12 +62,18 @@
     }
   },
   "date_coercion_note": "The `date` column is written as YYYY-MM-DDT00:00:00Z. A bare YYYY-MM-DD is interpreted in the account's local timezone (Asia/Singapore) and lands 8 hours off, which shifts every date-window query run against this Table by a day at the boundaries.",
-  "description": "New Xero bank transaction -> find-or-create its row in the 'Xero Bank Transactions' Zapier Table, keyed on bank_transaction_id. Migration of the classic Zap 'Process New Reconciled Transactions', which created unconditionally. Adds: find-or-create, race-safe dedupe of concurrent creates (converge on the earliest ULID), refresh of an existing row when a mirrored field has actually changed, and the previously-unmapped currency_rate column.",
+  "description": "Hourly schedule -> read Xero bank transactions dated in the [newest mirrored row - 7d, today] window -> find-or-create/refresh each row in the 'Xero Bank Transactions' Zapier Table, keyed on bank_transaction_id. Migration of the classic Zap 'Process New Reconciled Transactions', which created unconditionally. Adds: find-or-create, race-safe dedupe of concurrent creates (converge on the earliest ULID), refresh of an existing row when a mirrored field has actually changed, and the previously-unmapped currency_rate column. Since 019fd4b2 it is schedule-driven rather than Xero-poll-driven, which cut its Xero API cost ~97% and made it self-healing.",
+  "dedupe_note": "NO separate state table is needed, and none was created. The mirror Table IS the dedupe state: each transaction is looked up by its own key (`bank_transaction_id`) to decide create-vs-update, and stray rows are deleted so the key stays unique. This is why bank_transaction was the cheapest poller to convert — an ALERTING Zap (xero-draft-bill-to-slack-alert, xero-draft-sales-invoice-to-slack-alert) writes nothing, so it depends entirely on Zapier's built-in polling dedupe and needs new state of its own before it can move to a schedule.",
   "version_history": [
     {
       "id": "019fa885-b4c5-764e-9cc8-7cb86ecb284e",
       "created_at": "2026-07-28T11:36:00.000Z",
       "note": "Initial migration."
+    },
+    {
+      "id": "019fd4b2-925a-75a7-9461-484908b10f5a",
+      "created_at": "2026-08-06T01:31:40.732Z",
+      "note": "Xero POLLING trigger -> SCHEDULE trigger. Replaces XeroCLIAPI@2.20.5/bank_transaction with ScheduleCLIAPI@1.7.0/everyHour and moves the Xero read into the body: a bounded GET /BankTransactions over [newest mirrored row - OVERLAP_DAYS(7), today], hard-capped at MAX_PAGES(3) and MAX_TRANSACTIONS(200), warning loudly rather than truncating silently. Cuts Xero API cost from ~1,440 calls/day to ~24-48 — the reason for the change; see xero_api_usage. Binds the `xero_wf` connection for the first time (the body never called Xero before). The upsert, dedupe, snapshot and change-detection logic is unchanged. ALSO FIXES THREE KNOWN GAPS, all as a side effect of re-reading a window instead of consuming a dedupe store: (1) no_backfill_by_design — a failed run, or an hour the Zap spent disabled, is simply re-read next fire; (2) stale_columns — recent rows are re-read hourly, so the update path finally corrects the `reference` / `currency_rate` / `has_attachments` values Xero fills in AFTER creation; (3) it removes the staleness that made drive-invoice-to-xero raise duplicate draft bills. Validated before publish: tsc clean; determinism grep clean (the only Date.now() is inside ctx.step(\"today\")); every sdk.* call reachable only from inside a ctx.step; run-durable in the real 0.10.1 runtime got through `today` (2026-08-06), `latest-mirrored-row` (newest row 2026-08-04) and built the correct window `Date>=DateTime(2026,7,28)` with NO DeterminismViolation, then failed at `fetch-bank-transactions` on the Xero daily-quota 429 that prompted this whole change. Verified after publish: triggers[0].status active, enabled true, 0 open drafts, deployed source byte-identical to the repo. NOT YET EXERCISED BY A SUCCESSFUL XERO READ — the daily quota does not reset until ~10:11 UTC 2026-08-06, so every fire before then fails harmlessly at the fetch step and self-heals on the next one."
     }
   ],
   "replaces_classic_zap": {
@@ -69,10 +87,11 @@
     "status": "Its create step was PAUSED, which is why the Table fell ~5 days behind and drive-invoice-to-xero began raising duplicate draft bills. Turn the classic Zap off entirely — do not simply unpause it, or both it and this workflow will write the same rows."
   },
   "known_gaps": {
-    "no_backfill_by_design": "Enabling this workflow does NOT recover the gap the pause created — a Zapier polling trigger primes its dedupe on first poll, so only transactions created from now on are delivered. The ~7 SPEND transactions missing from 2026-07-21..2026-07-26 (including Anthropic 2026-07-25 SGD 104.58) stay missing, and that is accepted: they were reconciled against their receipts in Xero by hand, and their invoices have already passed through the Drive Invoices folder, which that trigger will not re-deliver. No backfill is planned.",
-    "stale_columns": "Existing rows carry stale values Xero fills in after the trigger fires: sampled over 93 transactions, 32 had a stale currency_rate, 26 a stale reference, 14 a stale has_attachments, 1 a renamed contact. The update path only corrects a row when the trigger re-delivers that transaction, which for a polling trigger is rare, so these persist. Accepted — no consumer reads those columns today (drive-invoice-to-xero matches on contact_name, type, currency_code, total and date, none of which drift).",
-    "next_incident": "The mechanic worth remembering: a pause here is silent, and re-enabling restores the flow but never the gap. If a future gap does need recovering, scripts/backfill-zapier-partner-leads.mjs is the house pattern (plan-only unless --commit)."
+    "no_backfill_by_design": "RESOLVED in 019fd4b2 for anything going forward. This was true of the POLLING trigger: it primed its dedupe on first poll, so a gap stayed a gap and re-enabling never recovered it. The schedule trigger has no dedupe store — it re-reads [newest row - 7d, today] every fire — so a failed run or an hour spent disabled self-heals on the next fire, up to OVERLAP_DAYS(7) deep. HISTORICAL GAP STILL UNFILLED: the ~7 SPEND transactions missing from 2026-07-21..2026-07-26 (including Anthropic 2026-07-25 SGD 104.58) predate this change and sit outside any current window. Still accepted — they were reconciled against their receipts in Xero by hand and their invoices have already passed through the Drive Invoices folder. To recover them deliberately, temporarily raise OVERLAP_DAYS or run a one-off with a wider window.",
+    "stale_columns": "LARGELY RESOLVED in 019fd4b2 for recent rows. Xero fills some values in AFTER a transaction is created — sampled over 93 transactions, 32 had a stale currency_rate, 26 a stale reference, 14 a stale has_attachments, 1 a renamed contact — and the update path only fires when a transaction is re-read. The polling trigger almost never re-delivered, so these persisted; the schedule window now re-reads everything within OVERLAP_DAYS(7) every hour, so a value Xero backfills within a week of creation is now picked up. Rows OLDER than the current window keep their stale values, which remains accepted: no consumer reads those columns (drive-invoice-to-xero matches on contact_name, type, currency_code, total and date, none of which drift).",
+    "restatement_of_old_transactions": "NEW, and the one thing the schedule window is worse at in principle: a transaction restated MORE than OVERLAP_DAYS after its date falls outside every window and is never re-read. The polling trigger was no better — 'New Bank Transaction' fires on creation, not restatement — so this is not a regression, just a bound worth knowing. If it ever matters, switch the fetch to Xero's `If-Modified-Since` header, which selects on modification time rather than transaction date.",
+    "next_incident": "The mechanic worth remembering has changed. It is no longer 'a pause is silent and the gap is permanent' — the window self-heals. It is now: this Zap makes ~24-48 Xero calls/day, and the tenant shares a 5,000/day ceiling with every other Xero Zap. If Xero throttling returns, check the whole tenant's poller inventory before blaming this Zap, and read Xero's `x-rate-limit-problem` / `x-daylimit-remaining` headers rather than guessing from the error text."
   },
   "created_at": "2026-07-28T11:35:00.000Z",
-  "version_created_at": "2026-07-28T11:36:00.000Z"
+  "version_created_at": "2026-08-06T01:31:40.732Z"
 }

@@ -1,5 +1,22 @@
 # Xero new draft bill → Slack alert
 
+> ## 🛑 Retired 2026-08-06 — superseded by [`xero-invoice-alerts`](../xero-invoice-alerts/)
+>
+> This Zap is **disabled, not deleted**, and its trigger is `released`. Its behaviour now runs as the
+> **`slack-bill-draft`** channel of [`xero-invoice-alerts`](../xero-invoice-alerts/) — the Slack alert on a new draft bill is
+> unchanged, message text and filters ported verbatim.
+>
+> **Why.** Its Xero *polling* trigger cost ~1,440 Xero API calls/day. Five such pollers on tenant
+> `62699a8c` exhausted Xero's **5,000-calls/day-per-tenant** limit, taking every Xero Zap in the
+> workspace down for ~10 hours (`x-rate-limit-problem: day`, `x-daylimit-remaining: 0`, with
+> `x-minlimit-remaining: 60` proving a daily-quota exhaustion rather than a burst). A durable polling
+> trigger **cannot be throttled** — the `--trigger` payload has no interval field — so the only lever
+> was removing pollers. One hourly schedule now does the work of all three for ~24 calls/day.
+>
+> **⚠️ Do not re-enable.** It would both double-alert and put ~1,440 Xero calls/day back on the
+> tenant. Change [`xero-invoice-alerts`](../xero-invoice-alerts/) instead.
+
+
 Posts an alert to the **#finance** Slack channel whenever a new **draft** bill (Accounts
 Payable invoice) is created in Xero — vendor, amount, due date, invoice number, and a link
 straight to the bill in Xero.
