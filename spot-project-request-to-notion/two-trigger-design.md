@@ -115,12 +115,18 @@ in **both** places.
 |---|---|---|
 | Pending | *nothing* | stub row, alert |
 | Accepted | Company + Contact + Deal at Lead (today's logic) | fill page ids |
-| Declined, Expired | *nothing* | close row, reason |
+| Declined, Expired | *nothing* — **settled policy**, see below | close row, reason |
 | Secured | **comment** on the Deal | update |
 | Lost, Abandoned | **comment** on the Deal | update |
 
 Deliberately no status write on an existing Deal at Secured/Lost — that preserves the
 existing invariant ("a human's Declined cannot be undone") recorded in `zap.json`.
+
+**Declined and Expired create nothing in the CRM.** Confirmed as a deliberate call by
+Dennis on 2026-08-07, not just a consequence of the payload being empty: the records
+would be largely useless — no identity, no contact, an opportunity nobody pursued.
+The Table row is still written, because that is the only thing that makes "how many
+did we decline, and why" answerable later.
 
 ## Why no Notion write at Pending
 
@@ -200,24 +206,105 @@ referral competing against other partners, not a directory lead. Both sources
 feed the same trigger, which is why the PartnerPage-derived candidate spellings
 are kept rather than collapsed.
 
+## The decline experiment (2026-08-07)
+
+Request `02700000000002800hE` was declined in the portal at **00:49:43**, deliberately
+as a test. Both project-request endpoints were polled either side of it. This is the
+experiment that turns most of this design from inference into observation.
+
+| | Before | After |
+|---|---|---|
+| `lead_stage` | `Pending` | **`Declined`** |
+| `modified_on` | `2026-08-06T16:26:47.423` | `2026-08-07T00:49:43.843` |
+| `modified_by_id` | `7NT00000000001F00hE` | `7NT00000000005q00hE` (the human who declined) |
+| `updated_project_request` → `id` | `…800hE_2026-08-06T16:26:47` | **`…800hE_2026-08-07T00:49:43`** |
+| `lead_stage_modified_on` | `2026-08-06T16:26:47` | `2026-08-07T00:49:43` |
+| workflow runs | 1 | **1** (unchanged) |
+
+### `updated_project_request` tracks transitions
+
+Its `id` is a **composite** — `<project_request_id>_<lead_stage_modified_on>` — and it
+advanced with the stage change. A polling trigger dedupes on exactly that field, so a
+new id is a new item is a run.
+
+Strictly this observed the trigger's *payload* changing, not a claimed trigger firing:
+the trigger is unclaimed, and it was polled as a read action. But the sibling
+`referral_lead_status_change` uses the identical `<id>_<modified_on>` composite and
+demonstrably fires once per transition (ten such runs in its history). Treat it as
+established, and confirm on B's first real run.
+
+### It delivers the FULL record
+
+Every field `new_project_request` sends is present, plus `lead_stage_modified_on`. So
+B's `find_project_request` re-fetch is a safety net rather than load-bearing — keep it
+for the case where a future payload *is* a delta, but do not design around needing it.
+
+### ⚠️ The composite id breaks `extractRequest`
+
+`extractRequest` reads:
+
+```ts
+requestId: firstString(r.id, r.project_request_id, r.request_id, r.project_id) ?? ""
+```
+
+On `new_project_request`, `r.id` is the plain request id and this is correct. On
+**`updated_project_request`, `r.id` is the composite** — so B would take
+`02700000000002800hE_2026-08-07T00:49:43` as the request id, never match the
+`Request Id` column in the requests Table (which stores the plain id), and mint a
+duplicate Deal on every stage change.
+
+**B must read `project_request_id` first**, and use `id` (or
+`lead_stage_modified_on`) as the *transition* key. That is a change to B's copy of
+`extractRequest` only — **do not "fix" it in A**, where the current order is right and
+where an edit would re-diverge the repo from the deployed version for no benefit.
+
+The upside: the per-transition dedupe key this design proposed inventing
+(`<request_id>_<stage>`) already exists, supplied by the API, in the shape the sibling
+Zap has already proven.
+
+### Declining reveals nothing, and destroys nothing
+
+`email`, `first_name` and `last_name` were still the sentinel sentences after the
+decline — consistent with "accept **or secure** the lead". So a `Declined` transition
+carries nothing to build a Contact from.
+
+The record also **survives**: `find_project_request` still returns it. Declined
+requests stay queryable, so win-rate data is available from the API rather than only
+from email.
+
+**Decision (Dennis, 2026-08-07): a declined request creates nothing in the CRM.** The
+records would be largely useless — no contact, no identity, an opportunity nobody
+pursued. This was previously an inference from "there is nothing to write"; it is now
+policy, and the stage → behaviour table above reflects it. The Table row is still
+worth writing, because that is what makes the win-rate question answerable later.
+
+### `new_project_request` correctly did not re-fire
+
+Still one run. The record changed but was not created, which is precisely the gap
+that makes the second workflow necessary rather than merely tidy.
+
 ## Open questions
 
-Narrowed by the first run, but not closed.
+Two of the four are now closed. What remains:
 
-1. **Does `updated_project_request` fire on Pending → Accepted?** Still the
-   question the whole design rests on. Nothing in the first run speaks to it. If
-   it only fires on later stages, B never creates anything and A's trigger_url
-   handoff becomes the primary path rather than the fallback.
-2. **Does the payload carry the full record or a delta?** Still open. The sibling
-   `referral_lead_status_change` delivers the *whole* record (id, name, email,
-   status, dates, commission) — good precedent, not proof. The
-   `find_project_request` fetch makes B correct either way.
-3. ~~**Real key spellings.**~~ **Answered** — see above.
-4. **Does an Accepted payload actually carry the contact email?** Still open, and
-   now sharper: the field is *present* at Pending but filled with a sentinel, so
-   the question is whether acceptance replaces that sentence with an address or
-   leaves it standing. If it never resolves, the Contact must be resolved from the
-   client introduction email to `leads@work.flowers` instead — a different design.
+1. ~~**Does `updated_project_request` fire on a stage change?**~~ **Answered** by the
+   decline experiment — its composite `id` advances per transition. One residual:
+   the observed transition was Pending → **Declined**. Pending → **Accepted** is
+   assumed to behave identically (same field, same mechanism) but has not been seen.
+2. ~~**Full record or delta?**~~ **Answered** — full record, plus
+   `lead_stage_modified_on`.
+3. ~~**Real key spellings.**~~ **Answered** — see the first real request.
+4. **Does an Accepted payload actually carry the contact email?** **Still open, and
+   now the only thing blocking B.** The field is *present* at every stage but filled
+   with a sentinel, and declining did not resolve it — consistent with "accept **or
+   secure**", so acceptance remains the untested door. If it never resolves, the
+   Contact must come from the client-introduction email to `leads@work.flowers`
+   instead, which is a materially different design: B would stop being a CRM writer
+   and become a state-tracker, with contact resolution moving to an email-triggered
+   workflow.
+
+Everything else in this design is now observation rather than inference. Question 4
+decides whether B is worth building as specified.
 
 Question 4 is answerable the moment any request is accepted: re-read
 `find_project_request` and look at `email`.

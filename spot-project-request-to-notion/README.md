@@ -50,6 +50,19 @@ Note `source: "Zapier Sales"` / `type: "match"`: an internal sales referral comp
 
 The design consequence — that a Pending request has nothing to build a Contact from, and needs a second workflow on `updated_project_request` — is worked up in [`two-trigger-design.md`](two-trigger-design.md).
 
+## The decline experiment
+
+The same request was **declined in the portal on 2026-08-07T00:49:43**, deliberately, to find out what a stage change looks like. It turned most of the design from inference into observation:
+
+- **`updated_project_request` tracks transitions.** Its `id` is a composite, `<project_request_id>_<lead_stage_modified_on>`, and it advanced from `…_2026-08-06T16:26:47` to `…_2026-08-07T00:49:43`. A polling trigger dedupes on `id`, so a new id is a new run.
+- **It delivers the full record**, not a delta — plus `lead_stage_modified_on`.
+- **⚠️ That composite breaks `extractRequest`.** It reads `firstString(r.id, r.project_request_id, …)`; on *this* trigger `r.id` is the composite, so a workflow reusing it unchanged would never match the `Request Id` column and would mint a duplicate Deal per stage change. The second workflow must read `project_request_id` first. **Not a bug in this Zap** — on `new_project_request` the order is correct, and changing it here would re-diverge the repo from deployed.
+- **Declining reveals nothing.** The identity fields were still sentinels afterwards, consistent with "accept **or secure**".
+- **The record survives.** `find_project_request` still returns it, so declined requests stay countable.
+- **`new_project_request` correctly did not re-fire** — runs stayed at 1. The record changed but was not created, which is exactly the gap the second workflow closes.
+
+**Policy:** a declined or expired request creates nothing in the CRM (Dennis, 2026-08-07) — those records would be largely useless. The Table row is still written so the decline is countable.
+
 ## What is verified, and what is not
 
 **Verified:** the trigger exists, takes no configuration, is reachable on the work.flowers partner connection (`02a5085e-…`), and now demonstrably fires within a minute of a request being created.
