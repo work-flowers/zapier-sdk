@@ -4,7 +4,7 @@ Clicking **Register Lead** on a Notion **Companies** record submits that company
 
 Migration of the classic Zap **Register Zapier Lead**. Its sibling, [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/), tracks what Zapier then does with the lead.
 
-**Status:** ✅ Published and enabled, trigger claimed. **Cutover pending** — the Notion button still posts to the classic Zap. See [Cutover](#cutover).
+**Status:** ✅ Published and enabled, trigger claimed. The Notion button now posts here — a real click on **Maintain It Australia** arrived on 2026-08-07. One step of the cutover is still unconfirmed: whether the classic Zap has been switched off. See [Cutover](#cutover).
 
 ## What it does
 
@@ -43,10 +43,10 @@ The payload is the standard Notion automation shape — `{ data: { id, url, prop
 
 ## Cutover
 
-The Notion **Register Lead** button automation still points at the classic Zap. To complete the migration:
+1. ✅ **Repoint the automation's *Send to webhook* step at the catch URL above.** Done — run `019fda07-17e1-7c57-b0b2-dbb0f305eba7` (2026-08-07T02:22Z) is a genuine button click delivered here, which is the only proof that exists from this side.
+2. ⬜ **Turn off the classic Zap *Register Zapier Lead*** — otherwise a single click submits the lead twice, and the partner tool will open a second service agreement against the same client. Not verifiable from the SDK (it lists durables only, not classic Zaps), so confirm it in the Zapier UI.
 
-1. Repoint the automation's *Send to webhook* step at the catch URL above.
-2. Turn **off** the classic Zap **Register Zapier Lead** — otherwise a single click submits the lead twice, and the partner tool will open a second service agreement against the same client.
+If the classic Zap was still live for the 2026-08-07 click, client `0280000000005zR00hE` may carry a duplicate service agreement. The partner tool exposes no agreement search — `find_client_portfolio` returns the client and its end date only — so that has to be checked partner-side too.
 
 ## What changed from the classic Zap
 
@@ -71,6 +71,7 @@ The Notion **Register Lead** button automation still points at the classic Zap. 
 - **The partner-contact fallback is inferred, not read.** The classic Zap defaulted `partner_contact_id` to a `Components.variables[…]` value that isn't readable through the SDK. `DEFAULT_PARTNER_CONTACT_ID` is Dennis (`00500000000005d00hE`), who owns 245 of the 247 leads on the account. It only applies when the Deal Owner has no partner contact id of their own; the seven valid ids are enumerable via `list-action-input-field-choices App227952CLIAPI write submit_client partner_contact_id`.
 - **The `Zapier Partner Contact ID is not null` filter is load-bearing.** Without it the User IDs lookup can return a row whose partner contact id is blank, shadowing the fallback with an empty string — and `submit_client` requires that field. Verified: Dennis's Notion user id returns his row; Jade's (no partner contact id) returns zero rows, so the fallback applies.
 - **Timezone is load-bearing for the start date.** "Today" is the Singapore day; the UTC day rolls over at 08:00 SGT, so a UTC date would back-date every agreement registered before 8am. Singapore has had no DST since 1982, so the code uses a fixed +8 offset rather than depending on the durable runtime carrying a full ICU timezone database.
+- **A Zapier Table `labeled_string` column rejects an empty string.** `""` fails the whole `createTableRecords` call with a 400 `Labeled string must have a value key`; a non-empty plain string is coerced into `{value, label}` fine, and plain `string` columns take `""` happily. So an optional value bound to a labeled column must be *omitted*, never blanked — and because the failure is permanent, the durable's retries can only exhaust themselves. This cost the first live click (see below).
 - **`@zapier/zapier-durable` is pinned to 0.10.1, not the latest.** A publish on 0.11.0 failed at run time with `Dependency installation failed` — the runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old. Check the publish date before bumping.
 
 ## Verified
@@ -84,11 +85,32 @@ The Notion **Register Lead** button automation still points at the classic Zap. 
 | Agreement window arithmetic | Offline, incl. leap years | `2026-07-28 → 2027-07-27`; `2028-02-29 → 2029-02-28`; `2027-03-01 → 2028-02-29` |
 | SGT day boundary | Offline | `15:59Z → 2026-07-28`, `16:00Z → 2026-07-29` |
 | Error classification | Offline | HTTP 400/validation → permanent; 503, `socket hang up`, unrecognised → transient |
-| Types | `tsc --strict` against durable 0.10.1 + sdk 0.91.0 | Clean |
+| Types | `tsc --strict` against durable 0.10.1 + sdk 0.91.0 | Clean (re-run after the 2026-08-07 fix) |
+| **`submit_client` happy path** | First real button click, Maintain It Australia | Client `0280000000005zR00hE` created, window `2026-08-07 → 2027-08-06` accepted, `source: "Notion CRM"` recorded. The run then failed on the Table write — see [First live click](#first-live-click--maintain-it-australia-2026-08-07) |
+| Blank `Size` → Table write | The same run, then the fix | `""` into the `labeled_string` `Client Company Size` = 400 `Labeled string must have a value key`; omitting the key writes the row with that column null |
 
-## Remaining work
+## First live click — Maintain It Australia, 2026-08-07
 
-**The `submit_client` call itself has not been exercised.** Every other path is verified, but running the happy path would create a real lead and service agreement in the partner program, so it was left for the first genuine click. Two things to check on that run:
+The happy path was exercised for real for the first time, and **it failed after registering the lead**. Worth reading before touching the Table write.
 
-1. **The response shape.** `extractSubmitResult` reads `client.*` and `service_agreement.*`, inferred from the classic Zap's `{{6__client__id}}` / `gives[…]["service_agreement"]["id"]` references. If the shape differs, the run throws with the payload (`submit_client returned no client id: …`) *after* the lead has been created — so the lead would exist in the partner tool while Notion and the Table stayed empty. Recover by reading the client id off the run error and re-running, or by letting the sibling status-change workflow pick it up via the lead's email.
-2. **Whether the tool accepts `start + 1 year − 1 day`.** Its own field docs say the end date "must be less than 12 months after the start date", which this satisfies by a day. If its validation is stricter, the run posts the tool's rejection as a comment and stops — change `agreementEndDate` back to an 11-month offset and republish.
+Run `019fda07-17e1-7c57-b0b2-dbb0f305eba7` (02:22:05Z → 02:26:20Z, `failed`):
+
+```
+StepExhaustedError: Step "index-lead-in-table" exhausted all retry attempts.
+  cause: ZapierValidationError 400 — "Labeled string must have a value key."  (meta.value: "")
+```
+
+Maintain It Australia had no `Size`, so `companySize` was `""`. The lead Table's **`Client Company Size` is a `labeled_string` column, and Tables rejects `""` for that type** — a 400, i.e. permanent, so the step burned every retry and the run died at step 7. `submit_client` had already succeeded at step 6, leaving the lead registered in the partner program with nothing in the Table and nothing on the Notion page — precisely the split state the step ordering was meant to avoid.
+
+Fixed in version `019fda12-a071-7ecd-9222-c0bc94c1766e`: `Client Company Size` is spread into the record only when non-empty, so a company with no `Size` leaves the column unset. `Status` is the only other `labeled_string` in that table and always gets `"Submitted"`. **Any future optional value mapped into a labeled column needs the same treatment** — check types with `zapier-sdk list-table-fields 01KPZFHX4RP6SER3AEK4YJ62BF` (`get-table` returns metadata only, no fields).
+
+The failed run's state was repaired by hand: Table row `01KZD197ATZRSZG6TKXH38M4R5` written for client `0280000000005zR00hE`, and the page stamped with that client id + `Submitted` plus an explanatory comment. Two things could not be recovered — the **service agreement id**, `client`, and `created_on`, which only existed in the lost `submit_client` response (the partner tool has no agreement search), and `Client Owner Id`. Those four columns are null on that row.
+
+Also learned from the same run: `brett@maintainitaustralia.com.au` returns `zapier_account_status: "No Account Found"`, so **this lead cannot progress past `Submitted`** until the real Zapier account-owner email is supplied. That is a data question for the account, not a Zap bug — but it means the sibling status-change workflow will stay quiet for this company.
+
+### What the run did settle
+
+Both open questions from the pre-launch "Remaining work" are now answered:
+
+1. **The response shape is as inferred.** `extractSubmitResult` produced a client id, so `client.*` is right. `service_agreement.*` is unproven — the run died before anything read those fields back, and they are exactly the columns that came out null.
+2. **The tool accepts `start + 1 year − 1 day`.** `find_client_portfolio` reports `service_agreement_end_date: 2027-08-06T00:00:00` against a `2026-08-07` start — no rejection, so the 11-month offset stays retired.
