@@ -17,7 +17,9 @@ Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Path
    PDF attachments. Carried over from the classic Zap's "A bunch of filters" step.
 3. **Extract text** — one Files by Zapier `text_from_file_new` call per PDF. A PDF that won't
    convert yields empty text rather than failing the run; the classifier still gets its
-   filename and the surrounding email.
+   filename and the surrounding email. See
+   [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap) — "won't convert" does
+   **not** always mean "raises an error".
 4. **Classify — a single AI call for the whole email.** Sender, subject, date and body, plus
    every attachment's filename and extracted text, go to AI by Zapier
    (`standard/auto`, built-in credentials) which returns one structured result per attachment.
@@ -157,6 +159,49 @@ Blocked subject phrases, carried over from the classic Zap:
 - `from company flow` — **our own outgoing invoices**, which Xero copies to us. Accounts
   receivable, not bills to pay.
 - `your trade statement for assets`
+- `your monthly statement for assets` — the other Wise Assets statement. Password-protected
+  (the password is our UEN), so nothing can be extracted from it, and as a vendor account
+  statement it has no destination folder. Added alongside the fix in
+  [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap); it saves the AI task, it
+  is **not** what stops the failure.
+
+## Unconvertible PDFs and the checkpoint trap
+
+**Files by Zapier does not always raise on a PDF it cannot convert.** With
+`failOnConversionError: false` — which this workflow passes, so one bad attachment can't kill an
+email — an encrypted PDF comes back **as its own raw bytes decoded as text**, with a `200`.
+
+Wise's *"Your monthly statement for Assets"* is password-protected, and its "extracted text" was
+128 KB starting `%PDF-1.6`, ~38% U+FFFD replacement characters and ~10% control characters,
+including **101 NULs**.
+
+That is what broke the workflow on 2026-08-07 (`ZAP-26`), and the failure mode is worth knowing
+because nothing in the workflow's own error handling can catch it:
+
+> Every value a `ctx.step` returns is checkpointed to PostgreSQL as JSON, and Postgres rejects a
+> JSON string containing **U+0000** with SQLSTATE **`22P05`** — *unsupported Unicode escape
+> sequence*. The checkpoint happens **after** the step function returns, so the step's own
+> `try`/`catch` never sees it. The step is retried 5 times, the return value is byte-identical
+> every time, so all 5 checkpoints fail identically and the run dies as
+> `StepExhaustedError: Step "extract-text-0" exhausted all retry attempts`.
+
+The error names text extraction, but text extraction succeeded. Two guards in `workflow.ts` fix
+it, both applied **before the step returns**:
+
+| Guard | What it does |
+| --- | --- |
+| `looksLikeRawFileBytes()` | Recognises undecoded file bytes — a `%PDF-`/`PK`/`PNG` magic-number header, >2% control characters, or >5% U+FFFD in the first 4 KB — and takes the existing empty-text path with `ok: false`. Genuine extracted text carries essentially none of either marker. |
+| `stripUncheckpointableChars()` | Belt and braces: removes NUL and the other C0 controls (tab, newline and carriage return kept) plus lone surrogates from whatever does leave the step, error messages included. No PDF can hit `22P05` again. |
+
+Verified against the real payload: `extract-text-0` now **completes** instead of exhausting,
+`textExtracted: false`, and the statement classifies as `Vendor Account Statement` → skipped.
+
+> **This is not specific to this Zap.** Any durable that returns extracted document text, scraped
+> HTML or upstream API text from a `ctx.step` can hit `22P05` the same way. The triage ticket read
+> the failure as a platform bug in `@zapier/zapier-durable@0.10.1` and blamed zero-width
+> non-joiners (U+200C) in the email body — neither holds up. U+200C is perfectly legal in Postgres
+> JSON, and the email body travels in the workflow *input*, which had already checkpointed fine
+> before the step ran. The framework arguably should scrub NULs, but the workflow put them there.
 
 ## Model tier
 
@@ -228,6 +273,7 @@ Run against real mail before publishing:
 | Anthropic `#2215-5909-1740` | invoice + receipt pair | invoice **skipped**, receipt **filed** |
 | Xero `INV-0081 from Company Flow` | `Invoice INV-0081.pdf` | **email skipped** — blocked subject |
 | SimplePay, July + March | `Invoice …pdf` + `Statement …pdf` | invoice **skipped** (recurring auto-charge, 16 / 12 priors), statement skipped |
+| Wise `Your monthly statement for Assets` | `Monthly_Statement.pdf` — password-protected | **email skipped** — blocked subject. With the subject unblocked, `extract-text-0` completes, `textExtracted: false`, classified `Vendor Account Statement` → skipped. Both paths re-run against the real 2026-08-07 payload after the `22P05` fix. |
 
 Regression-checked after adding signal 3: Vanta still files (no statement, `Auto-Paid = No`) and
 Anthropic still skips via signal 1.
@@ -248,6 +294,9 @@ Anthropic still skips via signal 1.
   and listed in the run output as `attachmentsSkippedOverCap`.
 - **No dedupe store.** Gmail's polling trigger dedupes on message ID, so an email is processed
   once. Re-running the same payload manually *will* upload duplicates to Drive.
+- **Never return unscrubbed upstream text from a `ctx.step`.** A single NUL in a checkpointed
+  value fails the run with `StepExhaustedError` naming a step that worked fine — see
+  [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap).
 - **AI by Zapier can't read the attachments directly.** Gmail serves attachment URLs from S3 as
   `application/octet-stream`; passing one as a file URL fails with
   `'media type: application/octet-stream' functionality not supported`, and `extract_content`

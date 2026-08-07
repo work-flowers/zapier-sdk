@@ -70,6 +70,7 @@ const BLOCKED_SUBJECTS = [
   "your monthly aspire account statement",
   "from company flow",
   "your trade statement for assets",
+  "your monthly statement for assets",
 ];
 
 /** Gmail labels that mean we sent it, not received it. */
@@ -133,6 +134,58 @@ function normalizeInvoiceNumber(v: unknown): string {
 /** Short strings match by accident ("1", "INV"), so a number is only usable as
  *  a cross-document join key once it's long enough to be distinctive. */
 const MIN_INVOICE_NUMBER_LENGTH = 4;
+
+// --- Extracted-text hygiene -------------------------------------------------
+// Everything a `ctx.step` returns is checkpointed to PostgreSQL as JSON. Postgres
+// rejects a JSON string containing U+0000 outright with SQLSTATE 22P05
+// ("unsupported Unicode escape sequence"), and the durable framework surfaces
+// that only as `checkpoint failed`. Because the step's input is identical on
+// every retry, the checkpoint fails identically all 5 times and the run dies with
+// StepExhaustedError — a failure the step's own try/catch cannot see, because it
+// happens after the function returns. So nothing that could carry a control
+// character may leave the extract step unscrubbed.
+
+/**
+ * Files by Zapier hands back the file's RAW BYTES decoded as text when it can't
+ * convert a PDF and `failOnConversionError: false` stops it from throwing. That
+ * is what a password-protected PDF produces: 128 KB beginning `%PDF-1.6`, ~38%
+ * U+FFFD replacement characters and ~10% control characters, NULs included.
+ *
+ * It is not text, and it must not be treated as text: fed to the classifier it
+ * would burn MAX_TEXT_CHARS of binary noise for nothing, and checkpointed it
+ * kills the run. Genuine extracted text carries essentially none of either
+ * marker, so the thresholds sit far below what was measured on the real file.
+ */
+function looksLikeRawFileBytes(text: string): boolean {
+  if (/^\s*(%PDF-|PK\x03\x04|\x89PNG)/.test(text)) return true;
+  const sample = text.slice(0, 4000);
+  if (sample.length === 0) return false;
+  let control = 0;
+  let replacement = 0;
+  for (const ch of sample) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0xfffd) replacement++;
+    else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) control++;
+  }
+  return control / sample.length > 0.02 || replacement / sample.length > 0.05;
+}
+
+/**
+ * Drop the characters PostgreSQL's JSON parser refuses — NUL and the rest of the
+ * C0 controls (tab/newline/carriage return kept, they are legitimate in extracted
+ * text) plus lone surrogates, which are unrepresentable in UTF-8.
+ *
+ * Applied to every string leaving the step, including error messages: an upstream
+ * error that quotes the offending bytes back at us would checkpoint just as badly
+ * as the text itself.
+ */
+const C0_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function stripUncheckpointableChars(text: string): string {
+  return text.replace(C0_EXCEPT_WHITESPACE, "").replace(LONE_SURROGATE, "");
+}
 
 interface Attachment {
   filename: string;
@@ -680,12 +733,23 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
               actionKey: "text_from_file_new",
               inputs: { file: att.url, fileType: "pdf", failOnConversionError: false },
             });
-            return { text: firstString(firstResult(res)?.text) ?? "", ok: true as const };
+            const raw = firstString(firstResult(res)?.text) ?? "";
+            // `failOnConversionError: false` means an unconvertible PDF comes
+            // back as its own raw bytes rather than as an error. Recognise that
+            // and take the empty-text path the caller already handles.
+            if (looksLikeRawFileBytes(raw)) {
+              return {
+                text: "",
+                ok: false as const,
+                error: "file did not convert to text (encrypted, scanned or malformed PDF)",
+              };
+            }
+            return { text: stripUncheckpointableChars(raw), ok: true as const };
           } catch (err) {
             return {
               text: "",
               ok: false as const,
-              error: String((err as Error)?.message ?? err),
+              error: stripUncheckpointableChars(String((err as Error)?.message ?? err)),
             };
           }
         }),

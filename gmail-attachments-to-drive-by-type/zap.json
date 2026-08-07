@@ -1,7 +1,7 @@
 {
   "name": "gmail-attachments-to-drive-by-type",
   "workflow_id": "019fa1a7-56b8-7a92-bcef-e276ccf409d3",
-  "current_version_id": "019fa1c9-5b0e-7d17-91c8-90ee3afc6048",
+  "current_version_id": "019fdb60-94e7-7b78-a699-897505861405",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac3NgVbpd6LybyXHk36LAg",
   "enabled": true,
   "is_private": false,
@@ -35,7 +35,7 @@
     "Financial Reporting": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo"
   },
   "created_at": "2026-07-27T03:38:46.329Z",
-  "version_created_at": "2026-07-27T04:03:00.000Z",
+  "version_created_at": "2026-08-07T08:39:27.919Z",
   "ai_model": {
     "model_id": "standard/auto",
     "authentication_id": "0",
@@ -57,6 +57,11 @@
       "id": "019fa1c9-5b0e-7d17-91c8-90ee3afc6048",
       "created_at": "2026-07-27T04:03:00.000Z",
       "note": "Model tier advanced/auto -> standard/auto (3x -> 1x tasks per run) after verifying identical routing verdicts on every test case. Also gated the superseded-by-receipt signal on a Receipt actually being present: on SimplePay the model reported it with only a statement attached, reaching the right verdict but recording evidence that did not exist."
+    },
+    {
+      "id": "019fdb60-94e7-7b78-a699-897505861405",
+      "created_at": "2026-08-07T08:39:27.919Z",
+      "note": "Fixed ZAP-26 (StepExhaustedError in extract-text-0). Files by Zapier returns a PDF's RAW BYTES as 'text' when it cannot convert it and failOnConversionError:false stops it throwing; Wise's password-protected Monthly_Statement.pdf produced 128KB of binary containing 101 NULs, and checkpointing that step return to PostgreSQL failed with SQLSTATE 22P05 on all 5 retries. The checkpoint happens after the step returns, so the step's own try/catch could not see it. Added looksLikeRawFileBytes() to route undecoded file bytes onto the existing empty-text path, and stripUncheckpointableChars() to scrub NUL/C0/lone surrogates from anything leaving the step. Also blocked the subject 'your monthly statement for assets' to save the AI task on a statement that is never filed."
     }
   ],
   "replaces_classic_zap": {
