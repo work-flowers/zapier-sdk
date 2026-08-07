@@ -577,8 +577,20 @@ type Decision =
  * also carries the receipt that settles it. Four independent signals establish
  * that, checked strongest first so the recorded reason names the real evidence.
  */
-function decide(classifications: Array<Classification | null>): Decision[] {
-  const present = classifications.filter((c): c is Classification => c !== null);
+function decide(
+  classifications: Array<Classification | null>,
+  readable: boolean[],
+): Decision[] {
+  // `readable[i]` is false when nothing could be extracted from the PDF —
+  // encrypted, scanned, malformed, or converted to genuinely empty text. Such an
+  // attachment is classified from its filename and the surrounding email alone,
+  // which is a guess, so it is never filed and never counted as evidence about
+  // its siblings. An unreadable "Receipt" inferred from a filename must not be
+  // able to suppress a real outstanding invoice — that is the expensive mistake
+  // this whole function exists to avoid.
+  const present = classifications.filter(
+    (c, i): c is Classification => c !== null && readable[i],
+  );
 
   // Invoice numbers quoted by RECEIPTS on this email. Collected from receipts
   // only, so an invoice can never mark itself settled.
@@ -610,7 +622,14 @@ function decide(classifications: Array<Classification | null>): Decision[] {
     (c) => c.category === "Vendor Account Statement",
   );
 
-  return classifications.map((c) => {
+  return classifications.map((c, i) => {
+    if (!readable[i]) {
+      return {
+        action: "skip",
+        reason:
+          "no text could be extracted — not filed on filename and email evidence alone",
+      };
+    }
     if (!c) {
       return { action: "skip", reason: "no classification returned for this attachment" };
     }
@@ -791,7 +810,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     const rows: any[] = firstResult(completion)?.result?.items ?? [];
     const classifications = alignClassifications(attachments, rows);
-    const decisions = decide(classifications);
+    // An attachment is only filed on evidence we could actually read out of it.
+    const readable = extracted.map((e) => e.ok && e.text.length > 0);
+    const decisions = decide(classifications, readable);
 
     // 3. File each attachment the routing kept.
     const results = await Promise.all(
@@ -810,7 +831,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           dueDate: classification?.dueDate ?? null,
           paymentEvidence: classification?.paymentEvidence || null,
           justification: classification?.justification || null,
-          textExtracted: extracted[index].ok && extracted[index].text.length > 0,
+          textExtracted: readable[index],
+          // Why the text is missing — an encrypted PDF and a Files by Zapier
+          // failure both land on textExtracted:false but need different fixes.
+          textExtractionError: readable[index]
+            ? null
+            : ("error" in extracted[index] ? extracted[index].error : null) ??
+              "converted to empty text",
         };
 
         if (decision.action === "skip") {

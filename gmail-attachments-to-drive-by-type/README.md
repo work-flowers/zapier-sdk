@@ -17,8 +17,9 @@ Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Path
    PDF attachments. Carried over from the classic Zap's "A bunch of filters" step.
 3. **Extract text** — one Files by Zapier `text_from_file_new` call per PDF. A PDF that won't
    convert yields empty text rather than failing the run; the classifier still gets its
-   filename and the surrounding email. See
-   [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap) — "won't convert" does
+   filename and the surrounding email, but the attachment is **never filed** — see
+   [Nothing is filed on evidence we couldn't read](#nothing-is-filed-on-evidence-we-couldnt-read).
+   Also [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap): "won't convert" does
    **not** always mean "raises an error".
 4. **Classify — a single AI call for the whole email.** Sender, subject, date and body, plus
    every attachment's filename and extracted text, go to AI by Zapier
@@ -34,7 +35,9 @@ flowchart TD
     G -- blocked --> X["⏹ skip email"]
     G -- ok --> E["Files by Zapier<br/>text_from_file_new<br/><i>one per PDF</i>"]
     E --> AI["🤖 AI by Zapier · get_completion<br/><b>ONE call, all attachments + email context</b><br/>→ category · payment status · superseded-by-receipt<br/>· invoice number · dates · amount"]
-    AI --> R{"Route per attachment"}
+    AI --> RD{"Text extracted?"}
+    RD -- "no — encrypted,<br/>scanned, malformed" --> S0["⏹ skip — never filed on<br/>filename evidence alone<br/><i>and ignored as sibling evidence</i>"]
+    RD -- yes --> R{"Route per attachment"}
 
     R -- "Invoice<br/><b>still outstanding</b>" --> INV["📁 Invoices"]
     R -- "Invoice<br/><b>already paid</b>" --> S1["⏹ skip — see Payment detection"]
@@ -74,6 +77,9 @@ It is also cheaper: **one AI call per email** instead of one per attachment.
 
 For every attachment classified `Invoice`, five independent signals are checked, strongest
 first, so the reason recorded in the run output names the actual evidence:
+
+Only attachments whose text was actually extracted take part — see
+[Nothing is filed on evidence we couldn't read](#nothing-is-filed-on-evidence-we-couldnt-read).
 
 | # | Signal | Recorded reason |
 | --- | --- | --- |
@@ -141,6 +147,34 @@ an unpaid one is a missed bill — so when the model can't tell, it errs toward 
 `Vendor Account Statement` has no destination. That matches the classic Zap, which offered it as
 a category but had no Path for it. It is still classified so the run output shows what was seen
 and skipped — change `CATEGORY_FOLDERS` in `workflow.ts` to start filing it.
+
+### Nothing is filed on evidence we couldn't read
+
+**An attachment whose text could not be extracted is never uploaded**, whatever it classifies as.
+Encrypted, scanned, malformed, or converted to genuinely empty text — all of them stop at
+`textExtracted: false`, and the run output records
+`no text could be extracted — not filed on filename and email evidence alone`, with the
+underlying cause in `textExtractionError`.
+
+Such an attachment is still classified, so run history shows what the document probably was, and
+there is no extra cost in doing so: the AI call is one per **email**, so a readable sibling pays
+for it anyway.
+
+The reason is that classifying a document you cannot read is a guess off its filename and the
+email around it. A wrong guess puts a file in a folder somebody then has to notice and undo — and
+in the Invoices folder specifically, a guessed invoice is indistinguishable from a real bill.
+
+**Unreadable attachments are also excluded from the sibling-evidence signals** in
+[Payment detection](#payment-detection). An unreadable attachment guessed to be a `Receipt` from
+its filename must not be able to suppress a genuine outstanding invoice — that is the expensive
+direction of the bias this workflow is built around. Signals 1–3 and 5 therefore only consider
+siblings that were actually read.
+
+> **The trade-off, stated plainly.** A real unpaid bill that happens to arrive as a scan or an
+> encrypted PDF will **not** reach the Invoices folder — it stays in Gmail only. That is the
+> deliberate choice: its classification would have been guesswork either way, and a folder that
+> silently accumulates guesses is worse than one with a known gap. If this starts biting, the
+> place to fix it is OCR on the extraction step, not by relaxing this rule.
 
 ## Trigger query
 
@@ -273,7 +307,11 @@ Run against real mail before publishing:
 | Anthropic `#2215-5909-1740` | invoice + receipt pair | invoice **skipped**, receipt **filed** |
 | Xero `INV-0081 from Company Flow` | `Invoice INV-0081.pdf` | **email skipped** — blocked subject |
 | SimplePay, July + March | `Invoice …pdf` + `Statement …pdf` | invoice **skipped** (recurring auto-charge, 16 / 12 priors), statement skipped |
-| Wise `Your monthly statement for Assets` | `Monthly_Statement.pdf` — password-protected | **email skipped** — blocked subject. With the subject unblocked, `extract-text-0` completes, `textExtracted: false`, classified `Vendor Account Statement` → skipped. Both paths re-run against the real 2026-08-07 payload after the `22P05` fix. |
+| Wise `Your monthly statement for Assets` | `Monthly_Statement.pdf` — password-protected | **email skipped** — blocked subject. With the subject unblocked, `extract-text-0` completes, `textExtracted: false`, `textExtractionError` names the conversion failure, and the attachment is **skipped as unreadable** rather than filed. Both paths re-run against the real 2026-08-07 payload. |
+
+The routing rules are also covered by 19 offline assertions over the real `decide()` — every case
+above, plus the unreadable-attachment rule and the guarantee that an unreadable sibling cannot
+suppress a readable outstanding invoice.
 
 Regression-checked after adding signal 3: Vanta still files (no statement, `Auto-Paid = No`) and
 Anthropic still skips via signal 1.

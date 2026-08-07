@@ -1,7 +1,7 @@
 {
   "name": "gmail-attachments-to-drive-by-type",
   "workflow_id": "019fa1a7-56b8-7a92-bcef-e276ccf409d3",
-  "current_version_id": "019fdb60-94e7-7b78-a699-897505861405",
+  "current_version_id": "019fdb72-9792-7d2e-94b8-b8e8c1cba7b5",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac3NgVbpd6LybyXHk36LAg",
   "enabled": true,
   "is_private": false,
@@ -35,7 +35,7 @@
     "Financial Reporting": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo"
   },
   "created_at": "2026-07-27T03:38:46.329Z",
-  "version_created_at": "2026-08-07T08:39:27.919Z",
+  "version_created_at": "2026-08-07T08:59:08.252Z",
   "ai_model": {
     "model_id": "standard/auto",
     "authentication_id": "0",
@@ -61,7 +61,12 @@
     {
       "id": "019fdb60-94e7-7b78-a699-897505861405",
       "created_at": "2026-08-07T08:39:27.919Z",
-      "note": "Fixed ZAP-26 (StepExhaustedError in extract-text-0). Files by Zapier returns a PDF's RAW BYTES as 'text' when it cannot convert it and failOnConversionError:false stops it throwing; Wise's password-protected Monthly_Statement.pdf produced 128KB of binary containing 101 NULs, and checkpointing that step return to PostgreSQL failed with SQLSTATE 22P05 on all 5 retries. The checkpoint happens after the step returns, so the step's own try/catch could not see it. Added looksLikeRawFileBytes() to route undecoded file bytes onto the existing empty-text path, and stripUncheckpointableChars() to scrub NUL/C0/lone surrogates from anything leaving the step. Also blocked the subject 'your monthly statement for assets' to save the AI task on a statement that is never filed."
+      "note": "SUPERSEDED same day by 019fdb72. Fixed ZAP-26 (StepExhaustedError in extract-text-0). Files by Zapier returns a PDF's RAW BYTES as 'text' when it cannot convert it and failOnConversionError:false stops it throwing; Wise's password-protected Monthly_Statement.pdf produced 128KB of binary containing 101 NULs, and checkpointing that step return to PostgreSQL failed with SQLSTATE 22P05 on all 5 retries. The checkpoint happens after the step returns, so the step's own try/catch could not see it. Added looksLikeRawFileBytes() to route undecoded file bytes onto the existing empty-text path, and stripUncheckpointableChars() to scrub NUL/C0/lone surrogates from anything leaving the step. Also blocked the subject 'your monthly statement for assets' to save the AI task on a statement that is never filed."
+    },
+    {
+      "id": "019fdb72-9792-7d2e-94b8-b8e8c1cba7b5",
+      "created_at": "2026-08-07T08:59:08.252Z",
+      "note": "An attachment whose text could not be extracted is now NEVER filed, whatever it classifies as - encrypted, scanned, malformed or converted to empty text all stop at textExtracted:false with the reason 'no text could be extracted - not filed on filename and email evidence alone' and the underlying cause in the new textExtractionError output field. Dennis's call: classifying a document you cannot read is a guess off its filename and the surrounding email, and a guessed invoice in the Invoices folder is indistinguishable from a real bill. Unreadable attachments are also excluded from the sibling-evidence signals in decide(), so a filename-guessed 'Receipt' can no longer suppress a genuine outstanding invoice. They are still classified (the AI call is one per email, so a readable sibling pays for it anyway) and the verdict is recorded in run history. Accepted trade-off: a real unpaid bill arriving as a scan or encrypted PDF stays in Gmail only - fix that with OCR on extraction, not by relaxing this rule. Covered by 19 offline assertions over the real decide(), including every case in the README's verified table."
     }
   ],
   "replaces_classic_zap": {
