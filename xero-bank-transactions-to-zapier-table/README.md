@@ -57,6 +57,42 @@ flowchart TD
     U --> OK4["✅ updated"]
 ```
 
+> ### ⚠️ 2026-08-07 — the first schedule version silently wiped the `date` column
+>
+> `019fd4b2` ran for ~17 hours and destroyed the `date` value on **214 of 685 rows**. Fixed in
+> `019fdb43`; all 214 have been repaired and the mirror is verified converged. Worth reading, because
+> the shape of this bug is more instructive than the typo at its centre.
+>
+> **The typo.** `date: toTableDate(p.Date ?? p.DateString)` against a `toIsoDate` that accepted only
+> `YYYY-MM-DD`. Xero's raw JSON API returns `Date` in .NET epoch form
+> (`/Date(1784937600000+0000)/`) and only `DateString` as ISO — and since `p.Date` is *always*
+> present, `??` never fell through. Every snapshot got `date: null`. The old **polling trigger**
+> delivered a plain date string, so a parser that only understood ISO worked fine for a year and then
+> returned null for every row the instant the read moved to the raw API.
+>
+> **Why a typo became data loss.** `changedFields` compared the good stored date against `null`, saw
+> a difference, and the update path wrote the null over it. Nothing stopped a mirror from *deleting*
+> information it had merely failed to read.
+>
+> **Why it accelerated.** This workflow derives its own read window from the newest mirrored row. As
+> dates were wiped the apparent newest row receded — `2026-02-24 → 02-17 → 02-05` — so the window
+> ballooned to ~6 months, burned 3 Xero pages an hour instead of 1, and churned 13–17 rows every
+> fire. It was eating its own tail.
+>
+> **It also broke coverage silently.** With `MAX_TRANSACTIONS` at 200 against 3 pages, a run fetched
+> 215 and processed only the first 200 *sorted by transaction id* — an arbitrary subset — while still
+> reporting success.
+>
+> **Why testing missed it.** The pre-publish `run-durable` died at the Xero fetch on the rate limit
+> that prompted the whole migration, so the extraction and upsert code below it never executed once
+> before reaching production. A skip-path test proves nothing about the code after it. There was also
+> no way to exercise the main path without writing to the production Table — hence the `dryRun` input
+> added in the same version. **Use it before every publish here.**
+>
+> The load-bearing fix is not the parser. It is
+> [`wouldBlankAPopulatedField`](#never-blank-a-populated-field), which would have prevented this
+> outright.
+
 ## Why a schedule and not a poller
 
 Xero rate-limits **per tenant**: 60 calls/minute and **5,000 calls/day**. On 2026-08-06 five Xero
@@ -91,6 +127,39 @@ The window starts **7 days before the newest mirrored row**, not at it. So a fai
 the Zap spent disabled, is simply re-read on the next fire — up to `OVERLAP_DAYS` deep. The polling
 trigger could never do that: it primed its dedupe on first poll, so a gap stayed a gap permanently.
 That single property retires two of this Zap's three documented gaps.
+
+## Never blank a populated field
+
+`wouldBlankAPopulatedField` is the invariant that matters most in this file:
+
+> **A blank extracted value never overwrites a populated stored one.** If we could not read a value,
+> we have learned nothing about it, so the stored value stands.
+
+It is enforced in **two** places, and both are necessary:
+
+1. `changedFields` does not report such a field as a difference, and
+2. the update payload **omits the key entirely** — excluding it from the diff alone is not enough,
+   because the write sends the whole snapshot, so a `null` still lands unless it is dropped.
+
+Missing half two is exactly how 214 dates were wiped. A mirror should only ever *add* or *correct*
+information, never delete it: keeping something stale is recoverable, whereas a blanked column is
+indistinguishable from a real absence. When the guard fires it logs a `WARNING` naming the preserved
+fields — if that warning is widespread, the extraction for that field is broken.
+
+`has_attachments` is deliberately exempt, because `false` there is a real value rather than an
+absence. The same fill-don't-blank discipline governs Xero contact writes in
+[`drive-invoice-to-xero`](../drive-invoice-to-xero/) ("fill a gap or fix drift, never blank").
+
+## Testing without writing
+
+```bash
+zapier-sdk --experimental trigger-workflow 019fa885-7d5e-73a8-b601-4ec31290bf4a --input '{"dryRun":true}'
+```
+
+Computes the whole pass against real Xero data and reports what it *would* write, writing nothing —
+including, per row, the stored date versus the newly parsed one. An empty input `{}` is a real
+re-sync. **Run the dry version before every publish**, and check the run actually reached
+`update-row`/`create-row` rather than stopping at the fetch.
 
 ### No new state table was needed
 
