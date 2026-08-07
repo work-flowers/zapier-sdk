@@ -8,12 +8,12 @@ Third workflow against the same private partner app. Its siblings are [`register
 
 That run **skipped without writing anything**, and reading why is the most useful thing in this README — see [The first run](#the-first-run). The short version: SPOT withholds client identity until a request is accepted, and it does so with *prose in the field* rather than an empty field, which is a sharper trap than it sounds.
 
-> ⚠️ **This directory is AHEAD of what is deployed.** `workflow.ts` here carries the fixes the first run exposed; deployed version `019fb620-…` does not. See [`zap.json`](zap.json) → `repo_vs_deployed`.
+The fixes that run exposed were published **2026-08-07** as version `019fd9ab-…`, which round-trips byte-identical to this directory (54,643 bytes, `md5 85df2c45…`).
 
 | | |
 | --- | --- |
 | Workflow | `019fb61c-c04e-7783-90ba-37a70bc3415c` ([editor](https://zapier.com/durables-editor/019fb61c-c04e-7783-90ba-37a70bc3415c)) |
-| Version | `019fb620-080f-7626-b093-4b85554b5a4a` |
+| Version | `019fd9ab-4fa4-7ca2-a306-55f26e9f72b0` (published 2026-08-07; supersedes `019fb620-…`) |
 | Visibility | **account-visible** (`is_private: false`, repo rule 8) |
 | Trigger | `App227952CLIAPI@1.5.0` / `new_project_request`, `status: active`, `error: null` |
 | Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, created with this publish |
@@ -50,6 +50,19 @@ Note `source: "Zapier Sales"` / `type: "match"`: an internal sales referral comp
 
 The design consequence — that a Pending request has nothing to build a Contact from, and needs a second workflow on `updated_project_request` — is worked up in [`two-trigger-design.md`](two-trigger-design.md).
 
+## The decline experiment
+
+The same request was **declined in the portal on 2026-08-07T00:49:43**, deliberately, to find out what a stage change looks like. It turned most of the design from inference into observation:
+
+- **`updated_project_request` tracks transitions.** Its `id` is a composite, `<project_request_id>_<lead_stage_modified_on>`, and it advanced from `…_2026-08-06T16:26:47` to `…_2026-08-07T00:49:43`. A polling trigger dedupes on `id`, so a new id is a new run.
+- **It delivers the full record**, not a delta — plus `lead_stage_modified_on`.
+- **⚠️ That composite breaks `extractRequest`.** It reads `firstString(r.id, r.project_request_id, …)`; on *this* trigger `r.id` is the composite, so a workflow reusing it unchanged would never match the `Request Id` column and would mint a duplicate Deal per stage change. The second workflow must read `project_request_id` first. **Not a bug in this Zap** — on `new_project_request` the order is correct, and changing it here would re-diverge the repo from deployed.
+- **Declining reveals nothing.** The identity fields were still sentinels afterwards, consistent with "accept **or secure**".
+- **The record survives.** `find_project_request` still returns it, so declined requests stay countable.
+- **`new_project_request` correctly did not re-fire** — runs stayed at 1. The record changed but was not created, which is exactly the gap the second workflow closes.
+
+**Policy:** a declined or expired request creates nothing in the CRM (Dennis, 2026-08-07) — those records would be largely useless. The Table row is still written so the decline is countable.
+
 ## What is verified, and what is not
 
 **Verified:** the trigger exists, takes no configuration, is reachable on the work.flowers partner connection (`02a5085e-…`), and now demonstrably fires within a minute of a request being created.
@@ -66,7 +79,9 @@ The design consequence — that a Pending request has nothing to build a Contact
 
 The control matters: empty is the account's real state, not a broken credential.
 
-### The field set is known even though the key names are not
+### Historic: how the field set was derived before any payload existed
+
+*(Superseded by [The first run](#the-first-run) — the real key spellings are now known. Kept because it explains why the candidate lists look the way they do, and because a **directory**-sourced request may still arrive in this vocabulary: the one real request so far came from `source: "Zapier Sales"`.)*
 
 The delivery path being replaced tells us what the directory form collects. PartnerPage's "New contact request from Zapier" email (see below) lists it in full:
 
@@ -286,7 +301,7 @@ Everything below was checked live on 2026-07-31 through the Zapier MCP connector
 | Types | `tsc --strict` against durable `0.10.1` + sdk `0.91.0` | Clean |
 | **Published account-visible** | `create_workflow` with `private: false`, read back via `get_workflow` | `is_private: false`. Repo rule 8 — and unchangeable after creation |
 | **Trigger actually claimed** | `get_workflow` after publishing | `status: "active"`, `error: null`, `enabled: true`, `disabled_reason: null`. The version-pinned `selected_api` is what makes this work |
-| **Deployed source matches this repo** | Diffed `get_workflow` → `current_version.source_files["workflow.ts"]` against the local file | **Byte-identical**, 47,549 bytes |
+| **Deployed source matches this repo** | Diffed `get_workflow_version` → `source_files["workflow.ts"]` against the local file | **Byte-identical**, 54,643 bytes, `md5 85df2c45…` (re-verified after the 2026-08-07 publish) |
 | No runs after claiming | `list_workflow_runs` | Empty — as expected, nothing can fire it before the cutover |
 | Dedupe Table shape | `create_table` response | All nine fields created as specified; `Created On` is Text, `Payload` is Long Text, `Email` is Email |
 

@@ -4,9 +4,9 @@ description: Create a durable Zapier workflow from natural language using @zapie
 license: MIT
 metadata:
   author: zapier
-  version: "1.3.4"
-  sdk_cli_min: "0.54.3"
-  sdk_cli_validated: "0.59.3"
+  version: "1.4.0"
+  sdk_cli_min: "0.67.4"
+  sdk_cli_validated: "0.67.5"
   refresh_source: "zapier/agent-skills"
 ---
 
@@ -107,6 +107,37 @@ zapier-sdk --experimental list-trigger-input-field-choices <appKey> <triggerKey>
 
 If several apps, connections, actions, triggers, or field choices are plausible, show the candidates and ask the user to choose.
 
+### Use "AI by Zapier" For AI Steps
+
+For any AI / "call an LLM" step — summarize, extract, classify, generate, or analyze text — **always use "AI by Zapier"** (app key `AICLIAPI`) as the step and select the model *inside* it: if the user names a provider or model, set that as the `model_id` (see below); otherwise use its default model. It runs on Zapier's built-in AI credentials (no third-party account required) and bills as normal Zapier tasks, so an agent-built workflow does not silently route to a separate raw-provider app the user must connect and pay for. Discover it with `list-apps --search "AI by Zapier"`; its generic completion action is `get_completion` ("Analyze and Return Data"), alongside `extract_content` (from a URL) and `search_content` (confirm the current set with `list-actions AICLIAPI --action-type write --json`).
+
+**Configuring the `get_completion` step.** Inspect its fields with `list-action-input-fields AICLIAPI write get_completion --json`. The ones that matter for a generated step:
+
+- `instructions` (**required**) — the prompt describing what the AI should do.
+- `provider_id` (optional) — the AI provider, needed only when the user names one. Choices are `openai`, `anthropic`, `google`, `azure-openai`, `amazon-bedrock` (`list-action-input-field-choices AICLIAPI write get_completion provider_id --json`). Setting it is what makes `model_id`'s choices resolve.
+- `model_id` (**required**, default `"advanced/auto"`) — the model. **For a generic step, pass the default `"advanced/auto"`** — auto-pick a model in the Advanced tier (tiers: `standard`/`advanced`/`premium`) on built-in credentials. **When the user names a provider or model,** set `provider_id` first, then resolve the valid model for it with `list-action-input-field-choices AICLIAPI write get_completion model_id --inputs '{"provider_id":"<provider>"}' --json` (the list is empty until `provider_id` is set) and pass the matching `<provider>/<model>` value (for example `anthropic/claude-sonnet-5`, `openai/gpt-4o`). Do not hardcode a model list — resolve it at build time.
+- `authentication_id` (**required**, default `"0"`) — `"0"` is Zapier's built-in AI credentials (the models shown with a Zap icon). Keep `"0"` for the default and any built-in model. A model the user names may not be available on built-in credentials — those require the user's own AI provider account (a custom `authentication_id`); if so, tell the user and use their authentication. `model_id` depends on this field.
+- `inputFields` (optional, OBJECT) — extra context fields mapped from earlier steps, merged into the prompt.
+
+So a default AI step needs only a prompt. `model_id` and `authentication_id` are required but have working defaults; pass them explicitly with those defaults (`"advanced/auto"` and `"0"`) so the `runAction` inputs are complete, and no connection alias is needed for the built-in path:
+
+```typescript
+const summary = await ctx.step("summarize-with-ai", async () =>
+  sdk.runAction({
+    appKey: "AICLIAPI",
+    actionType: "write",
+    actionKey: "get_completion",
+    inputs: {
+      instructions: `Summarize this in one sentence: ${input.text}`,
+      model_id: "advanced/auto",
+      authentication_id: "0",
+    },
+  }),
+);
+```
+
+Naming a provider or model is **not** a reason to leave "AI by Zapier" — set it as the `model_id` above. Reach for a raw-provider AI app (Anthropic, OpenAI, Google AI, and so on) only when the user explicitly asks for that standalone app, or needs a capability "AI by Zapier" does not offer. When you do, tell the user the step uses their own provider connection and billing, not "AI by Zapier."
+
 Assign a short snake_case connection alias for each chosen connection, such as `slack_work` or `gmail_primary`. Track alias to connection ID. The alias goes in workflow code; the connection ID is passed to test/deploy commands through the `--connections` JSON.
 
 For output mapping between steps, run a safe action test only after user confirmation. Use the current SDK command shape:
@@ -135,7 +166,9 @@ For `selected_api`, use the **version-pinned implementation identifier** — the
 
 For `params`, match each field's `value_type` from `list-trigger-input-fields <app> <action>`. ARRAY fields must be JSON arrays (for example `"dow": ["1"]`); STRING fields must be plain strings (for example `"hod": "9:00 AM"`). Passing a scalar where an array is expected (or vice versa) fails the trigger claim the same silent way.
 
-Capture app implementation/version information from SDK discovery output when available, such as `list-apps`, `get-app`, `list-actions`, or trigger/action result metadata. Do not invent app versions. If no implementation/version binding is exposed, omit `--app_versions` rather than guessing.
+Capture app implementation/version information from SDK discovery output when available, such as `list-apps`, `get-app`, `list-actions`, or trigger/action result metadata. Do not invent app versions. If no implementation/version binding is exposed, omit `--app-versions` rather than guessing.
+
+"Webhooks by Zapier" and other apps with a catch-hook trigger (PayPal, Salesforce, Twilio, WordPress, Wufoo, Zillow, and others) are discovered and configured exactly like any other trigger app — nothing about them is special-cased. Search `list-apps --search "webhook"` (or the specific app name) for its `implementation_id` (for example `WebHookCLIAPI@1.1.0` — an illustrative example, not a version to hardcode; confirm the current version via discovery), then `list-triggers <appKey>` for its catch-hook trigger action. "Webhooks by Zapier" itself is no-auth (`authentication_id: null`) with empty `params`, but confirm its action key via `list-triggers WebHookCLIAPI` rather than hardcoding one — as of this writing it exposes both `hook_v2` (parsed payload; the common default) and `hook_raw` (unparsed body and headers, max 2MB), and that pair of action keys is specific to `WebHookCLIAPI`, not a pattern the other apps share. Other catch-hook apps (PayPal, Salesforce, Twilio, ...) commonly require a connection, because claiming their trigger means calling the provider's API to register a subscription. Do not assume no-auth or empty `params` for those — confirm each app's actual action key, auth, and param requirements via `list-triggers`/`list-trigger-input-fields` (see above) rather than generalizing from "Webhooks by Zapier." Configure them through `--trigger` at publish time (Phase 6) like any other trigger — do not treat them as "no trigger" / manual-only workflows.
 
 ## Phase 3: Confirm The Build Plan
 
@@ -147,7 +180,7 @@ Input: { field1, field2 }
 Connections:
   alias = connectionId (connection title)
 Trigger:
-  selected_api.action with params, or none for webhook/manual-only workflow
+  selected_api.action with params (including "Webhooks by Zapier" or other catch-hook apps), or none for a workflow fired only manually via `trigger-workflow`
 Steps:
   1. <step-name> - <AppName>.<actionType>.<actionKey>
   2. <step-name> - <AppName>.<actionType>.<actionKey>
@@ -338,7 +371,21 @@ zapier-sdk --experimental create-workflow "<workflow-name>" \
 
 Omit `--private` only if the user explicitly wants the workflow visible to the broader account.
 
-Capture the returned workflow ID. Then publish the version. The current SDK CLI expects `source_files` as a JSON object, not a path to `workflow.ts`.
+Capture the returned workflow ID. Then decide how to ship the code:
+
+- **Direct publish (the default below):** publish the first version straight away with `publish-workflow-version`. This is the legitimate no-open-draft case — the container was just created, so no draft exists to publish past.
+- **Stage as a draft for review:** if the user wants to look the workflow over in the Zapier editor before it goes live, put the generated code in a server draft instead of publishing:
+
+  ```bash
+  zapier-sdk --experimental create-workflow-draft <workflow-id> --json
+  zapier-sdk --experimental update-workflow-draft <workflow-id> <draft-id> "$SOURCE_FILES" \
+    --draft-revision <draft_revision from the create response> \
+    --json
+  ```
+
+  Pass the same `--dependencies`, `--zapier-durable-version`, `--connections`, `--app-versions`, and `--trigger` values Phase 6 would have passed to the publish. Then hand the user the draft's editor link — `https://zapier.com/durables-editor/<workflow-id>/draft/<draft-slug>/workflow.ts`, using the `slug` from the draft response; the final segment is one of the draft's `source_files` keys (`workflow.ts` in this skill's flow) — to review and publish, or publish on their go-ahead with `publish-workflow-draft <workflow-id> <draft-id> --enabled --json`. Publishing consumes the draft. Skip Phase 7's version read-backs if nothing was published.
+
+For a direct publish, the current SDK CLI expects `source_files` as a JSON object, not a path to `workflow.ts`.
 
 For publish, use the same nested `connections` shape as `run-durable` — each alias maps to an object holding a `connectionId`:
 
@@ -349,7 +396,7 @@ For publish, use the same nested `connections` shape as `run-durable` — each a
 }
 ```
 
-If app implementation/version information is known, build `app_versions`:
+If app implementation/version information is known, build the `--app-versions` payload:
 
 ```json
 {
@@ -357,7 +404,7 @@ If app implementation/version information is known, build `app_versions`:
 }
 ```
 
-Omit the entire `--app_versions` flag when no app implementation/version binding is needed. Likewise, omit `--connections` when the workflow has no connection bindings. Do not pass placeholder text like "if needed" to the CLI.
+Omit the entire `--app-versions` flag when no app implementation/version binding is needed. Likewise, omit `--connections` when the workflow has no connection bindings. Do not pass placeholder text like "if needed" to the CLI.
 
 For trigger-backed workflows, build the `trigger` JSON from Phase 2. Keep `selected_api` version-pinned to the `implementation_id` (for example `GoogleSheetsAPI@2.3.0`) and keep each `params` field shaped to its `value_type` (see Phase 2) — a bare app key or a wrong param shape makes the trigger claim fail silently at publish:
 
@@ -370,7 +417,9 @@ For trigger-backed workflows, build the `trigger` JSON from Phase 2. Keep `selec
 }
 ```
 
-Publish a webhook/manual-only workflow by omitting `--trigger`:
+A "Webhooks by Zapier" or other catch-hook trigger is a real trigger — publish it with `--trigger` using the config captured in Phase 2, the same as any other app trigger.
+
+Publish a workflow with no trigger at all — invoked only manually via `trigger-workflow` — by omitting `--trigger`:
 
 ```bash
 SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}')"
@@ -379,7 +428,7 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
   --dependencies '{"@zapier/zapier-sdk":"<pinned SDK version>","zod":"<pinned zod version>"}' \
   --zapier-durable-version '<pinned durable version>' \
   --connections '<publish connection bindings JSON>' \
-  --app_versions '<app versions JSON if needed>' \
+  --app-versions '<app versions JSON if needed>' \
   --enabled \
   --json
 ```
@@ -391,13 +440,15 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
   --dependencies '{"@zapier/zapier-sdk":"<pinned SDK version>","zod":"<pinned zod version>"}' \
   --zapier-durable-version '<pinned durable version>' \
   --connections '<publish connection bindings JSON>' \
-  --app_versions '<app versions JSON if needed>' \
+  --app-versions '<app versions JSON if needed>' \
   --trigger '<trigger config JSON>' \
   --enabled \
   --json
 ```
 
 Do not use the old `--trigger-app`, `--trigger-action`, `--trigger-auth`, or `--trigger-params` flags. The current trigger publish path is the single JSON `--trigger` object.
+
+**If the publish is rejected with a conflict about open drafts**, someone (likely the user, in the Zapier editor) forked a draft on this workflow mid-flow. An open draft always holds unpublished work, so never publish past it silently. Tell the user and offer the same choices as `workflows-modify`: fold your changes into that draft and publish it (`update-workflow-draft` + `publish-workflow-draft`), or — with their explicit confirmation, since it drops the draft's unpublished work — discard the draft (`discard-workflow-draft`) and retry the direct publish.
 
 ## Phase 7: Verify Deployment
 
@@ -416,6 +467,10 @@ zapier-sdk --experimental get-workflow <workflow-id> --json
 ```
 
 If `enabled` is `false` even though you published with `--enabled`, the trigger claim failed. The most common cause is a `selected_api` that is not version-pinned to the `implementation_id`, or a `params` field with the wrong shape (see Phase 2). Re-publish with a corrected `--trigger` and re-check. Do not report the workflow as deployed until `get-workflow` shows `enabled: true`.
+
+Regardless of trigger type, check the matching entry in `triggers[]` from the `get-workflow --json` read-back above for `details.webhook_url` (re-run the same command if enough time has passed since that read that the claim state could have changed). If present, it is the catch URL external services call — show it to the user plainly; unlike the workflow-level `trigger_url`, it is meant to be shared. Most triggers have no `webhook_url`, and that is normal — do not flag its absence.
+
+If you configured a catch-hook trigger in Phase 2 (a "Webhooks by Zapier" or similar catch-hook app/action) and `details.webhook_url` is still absent once the trigger is active, the installed `@zapier/zapier-sdk` may predate this field — run `workflows-doctor` to check for an update, and in the meantime tell the user to copy the URL from the trigger step in the Zapier editor (`https://zapier.com/durables-editor/<workflow-id>`).
 
 If manual triggering is supported for the workflow, test it only after confirming side effects with the user:
 
@@ -443,7 +498,7 @@ Finish by reporting:
 - Whether testing passed.
 - Whether the deployed workflow is enabled.
 - Whether the workflow is private or account-visible.
-- Whether the workflow uses a Zapier app trigger or webhook/manual triggering.
+- Whether the workflow uses a Zapier app trigger, a catch-hook trigger (report its `webhook_url` if available), or no trigger (manual-only via `trigger-workflow`).
 - The Zapier editor link: `https://zapier.com/durables-editor/<workflow-id>`.
 
 ## Durable Patterns
