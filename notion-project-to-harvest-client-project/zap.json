@@ -1,0 +1,64 @@
+{
+  "name": "notion-project-to-harvest-client-project",
+  "workflow_id": "019fda46-500a-7ccb-b553-14ed9b95e438",
+  "current_version_id": "019fda46-c44e-77ef-aa32-3fc601d8c0d5",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVIFfaXwwvCRrFhuH4RzBA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/1TpRZoVI55HiS2yZ/",
+    "trigger_note": "The catch URL is what the Notion Projects 'Create Harvest Project' button must POST to — NOT trigger_url above, which is Zapier-internal. Cutover is still pending: the button has not been repointed yet, so nothing reaches this Zap in production."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "harvest_wf": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+  },
+  "connections_note": "notion_wf is the work.flowers workspace connection (NOT 'Knoxx | Dennis #2'). harvest_wf is 'Harvest dennis@work.flowers : Company Flow Pte. Ltd. (dba Work.Flowers'.",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / create_record / update_record — Zapier Tables auth is automatic, no connection and no task cost"
+  },
+  "zapier_durable_version": "0.12.4",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.95.0"
+  },
+  "notion": {
+    "projects_data_source": "407ac9c1-7045-4529-acde-6d71f3b288d5",
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "projects_props": "Project name (title), Project ID (unique_id, prefix WF), Companies (relation)",
+    "companies_props": "Company Name (title), Harvest Client ID (rich_text)",
+    "property_note": "The Projects relation is 'Companies' (plural). The classic Zap tested 'Company' (singular), a leftover from the Deals Zap it was copied from — the property does not exist on Projects, so the 'Company Linked' path never matched."
+  },
+  "tables": {
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. Also read by start-a-timer-from-notion-task on (f5, f3=true)."
+  },
+  "migration": {
+    "from": "classic Zap \"Create Harvest Client / Project\"",
+    "disabled_on": "2026-08-07",
+    "export": "exported-zap-2026-08-07T03_18_19.968Z.json",
+    "note": "Not a faithful port — the classic Zap was non-functional. Confirmed with Dennis on 2026-08-07 to fix the logic rather than reproduce it. Also confirmed: NO find-client/find-project dedupe guard before creating, matching the classic Zap's behaviour."
+  },
+  "verification": {
+    "typecheck": "tsc --strict --noEmit passes",
+    "verified_paths": [
+      "empty-payload ping ({\"querystring\":{}}) -> { skipped: 'empty-payload' }, run 019fda44-77d2-7115-9e8b-1d955196cb36",
+      "no-company-linked, previewOnly, WF-26 -> commented:false, run 019fda44-8316-742e-8350-3d6369e58e69",
+      "full resolution chain, previewOnly, WF-25 -> resolved company 'Noah Health Pte Ltd', existing Harvest client 15890649, existing Table row 01KVJKA04T13AJDB8XH693JTT9 / project 48549718, code WF-25. Run 019fda43-e021-7d66-a45e-faf4d6c96d84"
+    ],
+    "unverified": "The four write steps have NEVER run: create-harvest-client, write-client-id-to-notion, create-harvest-project, create-project-row/update-project-row. Also unrun: comment-no-company. No Notion project currently needs a Harvest project (only WF-1 and WF-2 lack a mapping, both completed 2026 workshops), so a live test would have created a throwaway Harvest client + project. Use `--input '{\"pageId\":\"...\",\"previewOnly\":true}'` to re-check resolution without writing; the first real button click is the write path's first test."
+  },
+  "created_at": "2026-08-07T03:31:08.939Z",
+  "version_created_at": "2026-08-07T03:31:38.832Z",
+  "version_history": [
+    {
+      "id": "019fda46-c44e-77ef-aa32-3fc601d8c0d5",
+      "created_at": "2026-08-07T03:31:38.832Z",
+      "note": "First version. Hand-written migration of the classic Zap (no Durables-UI migration involved). Trigger claimed at publish; webhook_url live."
+    }
+  ]
+}
