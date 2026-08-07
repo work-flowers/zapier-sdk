@@ -62,6 +62,7 @@
       "why_this_shape": "Writing to Notion instead of the Table fixes both faults at once with no new plumbing: Notion stays the single source of truth, the mirror carries the value into f15 for free, and this durable's guard finally has something to read. Also SELF-LIMITING \u2014 once the mirror populates f15, step 3's f15-isnull gate goes false and the Zap stops firing for that contact."
     },
     "not_machine_verifiable": "Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so none of this can be checked from this repo and the change must be made in the Zapier UI. Recorded here because this durable is the only tracked artifact adjacent to it.",
-    "table_field_map": "01JM8PH8YM93A482M8BFZ6WKW6 [Table] Company IDs \u2014 f11 Notion Company ID, f14 Notion Page ID, f15 Xero Contact ID."
+    "table_field_map": "01JM8PH8YM93A482M8BFZ6WKW6 [Table] Company IDs \u2014 f11 Notion Company ID, f14 Notion Page ID, f15 Xero Contact ID.",
+    "migrated_to_durable": "2026-08-07 \u2014 now xero-contact-to-notion-company (019fdb77-594e-7426-a1f2-9c0b153d986c), schedule-driven at ~24 Xero calls/day and writing to NOTION rather than the Table, which fixes both faults recorded here. BOTH classic Zaps should now be turned off in the Zapier UI; while enabled they keep writing f15 directly and keep costing ~192 Xero calls/day. Kept below as the record of what was wrong and why."
   }
 }

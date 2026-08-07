@@ -1,0 +1,68 @@
+{
+  "name": "xero-contact-to-notion-company",
+  "workflow_id": "019fdb77-594e-7426-a1f2-9c0b153d986c",
+  "current_version_id": "019fdb77-9560-7e68-ad83-c1199510cc61",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AWryRiRo4s6EcMp_GOp6bA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyHour",
+    "authentication_id": null,
+    "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. Xero and Notion are bound as connection ALIASES because both are called from the workflow body.",
+    "params": { "moh": "00", "weekends": "yes" },
+    "params_note": "`moh` MUST be the STRING \"00\", not the integer 0, even though list-trigger-input-fields declares it value_type: INTEGER. Real choices are \"00\"/\"15\"/\"30\"/\"45\" (list-trigger-input-field-choices ScheduleCLIAPI everyHour moh). The integer is rejected with ZAPIER_VALIDATION_ERROR.",
+    "status": "active",
+    "manual_run_note": "`trigger-workflow 019fdb77-594e-7426-a1f2-9c0b153d986c --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD write, writing nothing. Run it before every publish, and confirm the run reached the decision logic rather than stopping at the fetch."
+  },
+  "connections": {
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connections_note": "notion_wf is the work.flowers workspace connection. NEVER bind the Knoxx connection (02b95b31-c152-8800-9036-1107e08f70da) — it points at a client workspace and cannot see work.flowers databases.",
+  "zapier_durable_version": "0.12.3",
+  "dependencies": { "zod": "4.4.3", "@zapier/zapier-sdk": "0.93.0" },
+  "purpose": {
+    "direction": "XERO -> NOTION. The complement of xero-contact-from-notion-deal, which covers Notion -> Xero.",
+    "the_case": "A contact is created in Xero by other means — typically a transaction arrives from a new vendor and the contact is made by hand. If a Company record already exists in Notion, its Notion Company ID (the `ID` property, e.g. COM-766) is pasted into that Xero contact's ACCOUNT NUMBER, and this workflow completes the link. Nothing changes on the Notion side, so no Notion webhook fires and the other durable never runs — which is why this cannot be folded into it."
+  },
+  "replaces_classic_zaps": {
+    "titles": ["Add Xero Contact ID to Company IDs Table", "Associate Xero Contact with Notion Company"],
+    "they_were_duplicates": "Functionally identical: same trigger (XeroCLIAPI@2.21.0 / updated_contact), connection, organization, filter, table, lookup and write fields. Differences were cosmetic only — titles, the per-Zap step ids inside their gives[...] references, a stepTitle on one filter, and _zap_search_success_on_miss being the string \"False\" in one vs boolean false in the other.",
+    "cost": "~2,880 Xero API calls/day between them at 1-minute polling — the largest single contributor to the 2026-08-06 quota exhaustion, and the part the durable pollers alone never explained. Moved to 15-minute polling (~192/day) on 2026-08-07, then superseded by this workflow (~24/day).",
+    "the_bug_they_had": "They wrote the ContactID into [Table] Company IDs (f15) and left the Notion property empty. (1) THE LINK WAS TEMPORARY: notion-companies-to-zapier-table is a true mirror — its source comment reads 'empty in Notion clears the table value' — and `Xero Contact ID` is in its mirrored set, so the next edit of that company wiped f15 back out. (2) THE OTHER DURABLE'S DEDUPE GUARD STAYED BLIND: it reads `Xero Contact ID` off the Notion page, so a later Companies-button or Deals-stage trigger would re-run the upsert, and Xero matches contacts on NAME — silently overwriting the hand-made vendor contact's people.",
+    "action_required": "TURN BOTH OFF in the Zapier UI. While enabled they keep writing f15 directly (reintroducing the temporary-link bug) and keep costing ~192 Xero calls/day. Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so this is not machine-verifiable from here."
+  },
+  "why_schedule_not_polling": "Migrating `updated_contact` as a POLLING durable would have been WORSE than the classic Zap: a durable trigger has no polling-interval field (the --trigger payload accepts only selected_api / action / authentication_id / params, verified across all 43 live triggers in the account), so it would run at the account default — ~1,440 Xero calls/day versus the 96/day the classic Zap cost at its 15-minute override. A schedule trigger costs Xero nothing and puts the rate under our control: ~24/day.",
+  "tables": {
+    "company_ids": {
+      "id": "01JM8PH8YM93A482M8BFZ6WKW6",
+      "name": "[Table] Company IDs",
+      "owned_by": "notion-companies-to-zapier-table (mirrors Notion Companies)",
+      "role": "Read here as the company lookup, and NOT merely as a gate: it is the ONLY source of the Notion page UUID. The Xero contact carries Notion's `ID` property (COM-766), not a UUID, so a Notion write is impossible without resolving it. Reads are free.",
+      "fields_used": {
+        "Notion Company ID (f11)": "matched against Xero's AccountNumber",
+        "Notion Page ID (f14)": "the page UUID written to — unobtainable from the Xero side",
+        "Xero Contact ID (f15)": "the already-linked / conflict check, and the cache warmed after the Notion write"
+      },
+      "why_it_is_also_written": "After the authoritative Notion write, f15 is set in the same run. NOT a second source of truth — the mirror would set it anyway from the value just written to Notion. It exists only so the already-linked gate closes on THIS run instead of waiting on a webhook we do not control; without it a fire inside the mirror's latency window would re-issue an identical, harmless but pointless Notion PATCH. Writing ONLY here is what the classic Zaps did, and is the bug above."
+    }
+  },
+  "safety": {
+    "changed_link_never_applied": "If the Notion company already carries a DIFFERENT Xero contact id, the workflow changes nothing and reports a conflict with a WARNING naming both ids. Either two Xero contacts claim the same company or an Account Number is wrong; both need a human, and silently repointing the link would hide it. The classic Zap's `f15 isnull` filter declined this case too, but silently.",
+    "blast_radius": "MAX_LINKS_PER_RUN (25) caps Notion writes per fire. Nothing is lost when it trips — the next fire re-reads the same window.",
+    "self_healing": "The 7-day UpdatedDateUTC overlap means a failed run, or an hour spent disabled, is simply re-read next fire."
+  },
+  "determinism_note": "The body runs in GUARDED mode, where `Date` is a Proxy whose construct trap throws DeterminismViolation BEFORE inspecting its arguments — so even a deterministic `new Date(Date.UTC(y,m,d))` is rejected as hard as a clock read. All date arithmetic is integer maths; the ONLY clock read is inside ctx.step(\"today\"). Verified by grep before publish.",
+  "description": "Hourly schedule -> GET /Contacts where UpdatedDateUTC >= today-7d (summaryOnly) -> for each contact carrying an Account Number, resolve it against [Table] Company IDs on Notion Company ID -> if the company has no Xero Contact ID yet, PATCH it onto the Notion Company page and warm the Table's copy. Declines a changed link rather than applying it. Replaces two functionally identical classic Zaps that wrote to the Table instead of Notion.",
+  "version_history": [
+    {
+      "id": "019fdb77-9560-7e68-ad83-c1199510cc61",
+      "created_at": "2026-08-07T08:44:00.000Z",
+      "note": "Initial version. Migrates two classic Zaps into one schedule-driven durable and fixes their write target (Notion, not the Table) — see replaces_classic_zaps. Validated before publish: tsc clean on first pass; determinism grep clean (single Date.now() inside ctx.step(\"today\")); every write reachable only past the dryRun guard; per-item step names index-based off a batch sorted by ContactID, with the batch memoized by the fetch step so a retry cannot re-map an index. DRY RUN against live Xero and the real Table: window UpdatedDateUTC>=2026-07-31, 11 contacts read, 1 page, coverageIncomplete false, 5 candidates (COM-15, COM-318, COM-689, COM-766, COM-803), all 5 correctly `already linked` with their stored f15 matching the Xero ContactID exactly, 0 conflicts — which also confirms the classic Zap had been doing its job. Verified after publish: triggers[0].status active, enabled true, is_private FALSE (repo rule 8), both connections bound, deployed source byte-identical to the repo. THE WRITE PATH IS NOT YET EXERCISED — nothing currently needs linking. It is byte-identical to the proven implementation in xero-contact-from-notion-deal (same API version, connection, property name, payload shape) and notion-companies-to-zapier-table independently confirms `Xero Contact ID` is a rich_text property, but watch the first real link."
+    }
+  ],
+  "pending_verification": "No contact has yet been linked by this workflow, because all 5 current candidates were already linked. To exercise the write path deliberately: create or pick a Xero contact whose Account Number is a Notion Company ID whose company has an EMPTY `Xero Contact ID`, then run with `{\"dryRun\":true}` first and confirm it reports `would link`. Watch for: `linked` non-empty with outcome `linked`; the Notion Company page's `Xero Contact ID` populated; f15 populated in the Table; and on the NEXT fire the same contact reported as `already linked`.",
+  "created_at": "2026-08-07T08:43:00.000Z",
+  "version_created_at": "2026-08-07T08:44:00.000Z"
+}

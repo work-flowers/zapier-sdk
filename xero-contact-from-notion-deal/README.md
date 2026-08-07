@@ -85,7 +85,7 @@ Three deliberate differences; everything else is a straight port.
 
 Two smaller ones: the empty `address__type_of: "Postal Address"` is dropped (no address data was ever sent with it), and the `contact_person__first_name: "na"` placeholder is gone — when there is no second person the contact-person fields are simply omitted.
 
-## The reverse direction: a classic Zap still owns it
+## The reverse direction: [`xero-contact-to-notion-company`](../xero-contact-to-notion-company/)
 
 This durable covers **Notion → Xero**. There is a genuine **Xero → Notion** case it structurally
 cannot cover, and a *classic* Zap owns it:
@@ -96,7 +96,17 @@ cannot cover, and a *classic* Zap owns it:
 > links the two.
 
 Nothing on the Notion side changes in that flow, so no webhook fires and this durable never runs.
-The classic Zap is therefore **not redundant** — keep it.
+That case is real and needed — it is **not** redundant with this workflow.
+
+> ### ✅ Migrated to a durable on 2026-08-07
+>
+> It now lives in [`xero-contact-to-notion-company`](../xero-contact-to-notion-company/), which is
+> schedule-driven (~24 Xero calls/day) and writes to **Notion** rather than the Table, fixing both
+> faults described below. **Both classic Zaps should now be turned off in the Zapier UI** — while
+> enabled they keep writing `f15` directly and keep costing ~192 Xero calls/day.
+>
+> The rest of this section is kept as the record of what was wrong and why, since the reasoning is
+> what makes the durable's shape make sense.
 
 ### ⚠️ There were TWO of them, and both wrote to the wrong place
 
