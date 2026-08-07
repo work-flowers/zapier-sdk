@@ -1,7 +1,7 @@
 {
   "name": "spot-project-request-to-notion",
   "workflow_id": "019fb61c-c04e-7783-90ba-37a70bc3415c",
-  "current_version_id": "019fb620-080f-7626-b093-4b85554b5a4a",
+  "current_version_id": "019fd9ab-4fa4-7ca2-a306-55f26e9f72b0",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVQztSWpPmcqN6-IJU8wfQ",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "params": {},
     "status": "active",
     "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger — the workflow code never calls the partner tool, so it is not in --connections.",
-    "trigger_note": "Polling trigger, one run per new project request. Claimed 2026-07-31 with status 'active' and zero runs — DELIBERATELY claimed BEFORE Zapier's ~2026-08-03 cutover of directory lead delivery onto SPOT. A polling trigger banks its first poll after being claimed as already-seen rather than firing it, so claiming after the cutover risked swallowing the first real request as backlog. Nothing before the cutover can fire it, so claiming early cost nothing."
+    "trigger_note": "Polling trigger, one run per new project request. Claimed 2026-07-31, DELIBERATELY ahead of Zapier's cutover of lead delivery onto SPOT — a polling trigger banks its first poll after being claimed as already-seen rather than firing it, so claiming after the cutover risked swallowing the first real request as backlog. VINDICATED: the cutover actually landed 2026-08-05 (not the ~08-03 assumed here), the first real request arrived 2026-08-06T16:26:47, and the trigger caught it 57 seconds later. Between claim and that request it sat at zero runs because SPOT genuinely held no project requests — verified repeatedly via find_project_request, which returned an empty list every time until 2026-08-06."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
@@ -39,9 +39,9 @@
     "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and updated_project_request (unused — the natural phase-2 sibling that would move the Deal's Status along the pipeline)."
   },
   "created_at": "2026-07-31T02:59:25.394Z",
-  "version_created_at": "2026-07-31T03:03:00.510Z",
+  "version_created_at": "2026-08-07T00:41:50.890Z",
   "description": "New Zapier Solution Partner project request -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
-  "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three.",
+  "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three. NOTE (2026-08-07, CLI 0.71.1): publishing now emits 'DEPRECATION WARNING - `zapier_durable_version` is deprecated and may be removed in a future release'. The pin still applies and the flag still works; watch for the replacement before the next bump.",
   "first_run": {
     "run_id": "019fd7e6-f307-7c32-bd2d-0f55396f11ef",
     "durable_run_id": "019fd7e6-f502-71a9-bbf6-4ab653b89e59",
@@ -51,11 +51,31 @@
     "outcome": "skipped — 'payload carried no usable email address'. operations: [] — NO steps ran, so nothing was written to Notion and no dedupe row exists. The request therefore remains unfiled and available to a later stage-change run.",
     "latency": "Request created 16:26:47.423, run created 16:27:44.773 — the polling trigger picked it up inside a minute. The claim was correct all along; there had simply been nothing to deliver.",
     "payload_keys": [
-      "id", "project_request_id", "type", "source", "lead_stage", "created_on",
-      "modified_on", "modified_by_id", "partner_account", "partner_contact",
-      "client_id", "email", "first_name", "last_name", "company", "website",
-      "company_size", "industry", "language", "location", "timezone", "budget",
-      "service_requested", "tool_requested", "project_description"
+      "id",
+      "project_request_id",
+      "type",
+      "source",
+      "lead_stage",
+      "created_on",
+      "modified_on",
+      "modified_by_id",
+      "partner_account",
+      "partner_contact",
+      "client_id",
+      "email",
+      "first_name",
+      "last_name",
+      "company",
+      "website",
+      "company_size",
+      "industry",
+      "language",
+      "location",
+      "timezone",
+      "budget",
+      "service_requested",
+      "tool_requested",
+      "project_description"
     ],
     "what_it_proved": [
       "SPOT withholds identity with PROSE, not empty fields: email/first_name/last_name each carried 'Please accept or secure the lead to see the ...'. The run skipped only because that email sentence fails EMAIL_RE. The name sentences are non-empty strings that firstString accepted — they would have become the Contact and Deal titles had the address ever parsed. Fixed by SENTINEL_RE / firstRealString.",
@@ -69,6 +89,5 @@
       "Keys absent from this payload and so still guessed: phone_number, job_title, project_name, timeline, zapier_account_email. The last matters — register-zapier-partner-lead needs it — and SPOT may simply not carry it.",
       "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). This run wrote nothing, so they remain unexercised."
     ]
-  },
-  "repo_vs_deployed": "DIVERGED. workflow.ts in this repo carries the sentinel/key-spelling/vocabulary fixes from the first run; the deployed version 019fb620-080f-7626-b093-4b85554b5a4a does NOT. Publish before relying on the deployed behaviour, then update current_version_id and delete this key."
+  }
 }

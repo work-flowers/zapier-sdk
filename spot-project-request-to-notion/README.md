@@ -8,12 +8,12 @@ Third workflow against the same private partner app. Its siblings are [`register
 
 That run **skipped without writing anything**, and reading why is the most useful thing in this README — see [The first run](#the-first-run). The short version: SPOT withholds client identity until a request is accepted, and it does so with *prose in the field* rather than an empty field, which is a sharper trap than it sounds.
 
-> ⚠️ **This directory is AHEAD of what is deployed.** `workflow.ts` here carries the fixes the first run exposed; deployed version `019fb620-…` does not. See [`zap.json`](zap.json) → `repo_vs_deployed`.
+The fixes that run exposed were published **2026-08-07** as version `019fd9ab-…`, which round-trips byte-identical to this directory (54,643 bytes, `md5 85df2c45…`).
 
 | | |
 | --- | --- |
 | Workflow | `019fb61c-c04e-7783-90ba-37a70bc3415c` ([editor](https://zapier.com/durables-editor/019fb61c-c04e-7783-90ba-37a70bc3415c)) |
-| Version | `019fb620-080f-7626-b093-4b85554b5a4a` |
+| Version | `019fd9ab-4fa4-7ca2-a306-55f26e9f72b0` (published 2026-08-07; supersedes `019fb620-…`) |
 | Visibility | **account-visible** (`is_private: false`, repo rule 8) |
 | Trigger | `App227952CLIAPI@1.5.0` / `new_project_request`, `status: active`, `error: null` |
 | Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, created with this publish |
@@ -66,7 +66,9 @@ The design consequence — that a Pending request has nothing to build a Contact
 
 The control matters: empty is the account's real state, not a broken credential.
 
-### The field set is known even though the key names are not
+### Historic: how the field set was derived before any payload existed
+
+*(Superseded by [The first run](#the-first-run) — the real key spellings are now known. Kept because it explains why the candidate lists look the way they do, and because a **directory**-sourced request may still arrive in this vocabulary: the one real request so far came from `source: "Zapier Sales"`.)*
 
 The delivery path being replaced tells us what the directory form collects. PartnerPage's "New contact request from Zapier" email (see below) lists it in full:
 
@@ -286,7 +288,7 @@ Everything below was checked live on 2026-07-31 through the Zapier MCP connector
 | Types | `tsc --strict` against durable `0.10.1` + sdk `0.91.0` | Clean |
 | **Published account-visible** | `create_workflow` with `private: false`, read back via `get_workflow` | `is_private: false`. Repo rule 8 — and unchangeable after creation |
 | **Trigger actually claimed** | `get_workflow` after publishing | `status: "active"`, `error: null`, `enabled: true`, `disabled_reason: null`. The version-pinned `selected_api` is what makes this work |
-| **Deployed source matches this repo** | Diffed `get_workflow` → `current_version.source_files["workflow.ts"]` against the local file | **Byte-identical**, 47,549 bytes |
+| **Deployed source matches this repo** | Diffed `get_workflow_version` → `source_files["workflow.ts"]` against the local file | **Byte-identical**, 54,643 bytes, `md5 85df2c45…` (re-verified after the 2026-08-07 publish) |
 | No runs after claiming | `list_workflow_runs` | Empty — as expected, nothing can fire it before the cutover |
 | Dedupe Table shape | `create_table` response | All nine fields created as specified; `Created On` is Text, `Payload` is Long Text, `Email` is Email |
 
