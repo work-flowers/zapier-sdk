@@ -1,0 +1,76 @@
+{
+  "name": "update-notion-when-rescheduled-in-buttondown",
+  "workflow_id": "019fdb92-378d-71b7-878e-f0791bf29515",
+  "current_version_id": "019fdb92-6cf3-71eb-8971-61c306ca7493",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcLUKiGWPT9WrAQ4NQXQxQ",
+  "enabled": true,
+  "is_private": false,
+  "replaces": {
+    "workflow_id": "019fdb7e-70ed-7c6c-be85-71c6f09794d4",
+    "version_id": "019fdb7e-75e8-7189-ad51-910e60b47acc",
+    "state": "disabled 2026-08-07, trigger claim released, zero runs",
+    "why": "The Durables UI migration tool created that container with is_private: true, violating repo rule 7, and visibility cannot be changed after creation — `update-workflow` takes only --name/--description and no publish command exposes a visibility flag. Recreating was the only fix, and cheap here because the trigger is a poll: no external catch URL to rewire and nothing to reconfigure on the Buttondown side. Safe to delete once this container has caught a real reschedule."
+  },
+  "trigger": {
+    "selected_api": "App240106CLIAPI@1.0.4",
+    "action": "new_email_reschedule",
+    "authentication_id": "63956850",
+    "params": {},
+    "webhook_url": null,
+    "notes": "Polling trigger on the private `Buttondown Unofficial #2` app (source: ~/Repos/zapier-buttondown). Polls GET /v1/emails?status=scheduled&ordering=-creation_date&page=1, keeps rows with a publish_date, and dedupes on `${id}:${publish_date}` so each reschedule is a fresh event. Emits email_id, publish_date, subject, body, status, creation_date, description, slug. Durable triggers cannot set a polling interval, so this runs at the account default — any interval the classic Zap had was silently dropped at migration."
+  },
+  "connections": {
+    "notioncliapi_connection": {
+      "connection_id": 50656433
+    }
+  },
+  "connection_notes": {
+    "notioncliapi_connection": "Legacy numeric id carried over from the migrated version; it is the work.flowers Notion connection (UUID 02b73654-15c8-85c3-b16a-07304d2beb17), the same one `new-buttondown-subscriber-update-in-notion` uses. Confirmed by the pinned NotionCLIAPI 2.39.1 (the Knoxx connection is on 2.32.0) and by Newsletter Issues resolving from it. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da). `run-durable` wants the nested UUID form `{\"notioncliapi_connection\":{\"connectionId\":\"02b73654-…\"}}`; publish takes this numeric form.",
+    "TableCLIAPI": "search/find_record against Zapier Table 01KNJN2MSBAJVXRME6M1Y65F5B — Zapier Tables need no connection and cost no tasks."
+  },
+  "app_versions": {
+    "TableCLIAPI": {
+      "implementation_name": "TableCLIAPI",
+      "version": "1.26.0"
+    },
+    "NotionCLIAPI": {
+      "implementation_name": "NotionCLIAPI",
+      "version": "2.39.1"
+    }
+  },
+  "zapier_durable_version": "0.8.0",
+  "dependencies": {
+    "zod": "4.3.6",
+    "@zapier/zapier-sdk": "0.70.2"
+  },
+  "notion": {
+    "data_source_id": "0c691b07-11ac-82fa-bc1b-07d0186a095d",
+    "data_source_name": "Newsletter Issues",
+    "property_written": "Send Date (date) via `properties|||Send Date|||date__start`, which requires use_zapier_datetime_fields: true alongside it",
+    "template_mode": "N/A — this updates an existing page and never creates one, so repo rule 5 does not apply"
+  },
+  "zapier_table": {
+    "id": "01KNJN2MSBAJVXRME6M1Y65F5B",
+    "name": "Email Newsletter ID Mapping",
+    "fields": {
+      "f1": "Page ID (Notion Newsletter Issues page id)",
+      "f2": "Buttondown Email ID",
+      "f3": "Created at"
+    },
+    "writer": "notion-newsletter-to-buttondown (best-effort, keyed on Page ID)",
+    "result_shape": "find_record wraps each hit as {new, old, record_id, table_id} — values at data[0].old.data.<fieldId> — and returns {data: []} on a miss."
+  },
+  "fixes_applied_vs_migrated_version": [
+    "Empty-lookup guard. The migrated code read `data[0].old.data.f1` unguarded, so an email with no mapping row threw `TypeError: Cannot read properties of undefined (reading 'old')` and burned all 5 step retries (reproduced: run 019fdb87-d810-7abb-9e91-d95c4b2b1c4d). Since the trigger polls EVERY scheduled Buttondown email, not just ones sent from Notion, a miss is a routine non-event — it now logs and returns `{skipped: \"no-notion-page-for-email\"}`.",
+    "Added the repo rule 2 source-of-truth header comment.",
+    "Tightened the cast to a `TableHit` type, so the file typechecks under --strict (the migrated version failed TS2571 on line 46).",
+    "InputSchema is now actually used: a payload missing email_id/publish_date throws naming the keys received, instead of writing `undefined` into Notion. Verified it tolerates the trigger's full nine-field payload (zod strips unknown keys)."
+  ],
+  "known_limitations": [
+    "Unscheduling is invisible. Moving an email back to draft removes it from the status=scheduled list, which produces no event, so the Notion Send Date is never cleared. Only sets and changes propagate.",
+    "use_zapier_datetime_fields passes the Buttondown UTC string through rather than converting to the account timezone, so Send Date is rewritten from Notion's +08:00 form to the equivalent +00:00 form. Same instant, renders identically in Notion, and the outbound Zap reads date.start where both forms are unambiguous."
+  ],
+  "created_at": "2026-08-07T09:33:40.621Z",
+  "version_created_at": "2026-08-07T09:33:54.506Z",
+  "description": "Buttondown send date set or changed -> write it back onto the Notion Newsletter Issues page, resolved via the Email Newsletter ID Mapping Zapier Table. Reverse leg of notion-newsletter-to-buttondown."
+}
