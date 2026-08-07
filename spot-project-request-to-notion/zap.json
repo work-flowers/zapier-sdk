@@ -101,5 +101,10 @@
     "record_survives_decline": "find_project_request still returns the declined record, so declined requests stay queryable and win-rate data is available from the API rather than only from email.",
     "policy": "DECIDED (Dennis, 2026-08-07): a declined or expired request creates NOTHING in the CRM — the records would be largely useless. A Table row is still written so the decline is countable.",
     "new_project_request_did_not_refire": "Workflow runs stayed at 1 across the decline. Correct: the record changed but was not created. This is the gap the second workflow exists to close."
+  },
+  "publish_caveats": {
+    "open_draft_409": "Verified against CLI 0.73.0: publish-workflow-version is rejected with a 409 while ANY draft is open on that workflow, because publishing the draft later would ship its stale content over the new version. `--ignore-open-drafts` overrides it, but that ships past work someone staged — prefer `list-workflow-drafts` to find the draft and `discard-workflow-draft` to clear it. Relevant here because two-trigger-design.md parks workflow B as a long-lived draft; the hazard is a forgotten draft on THIS workflow, whose next publish would then fail with a 409 unrelated to the change being made.",
+    "flag_spelling": "Kebab-case: --zapier-durable-version, --app-versions. The snake_case forms still work but emit a deprecation warning; the deprecation is on the ALIAS only. Verified against CLI 0.73.0 --help: --zapier-durable-version is live, fully documented, no replacement. Keep passing it — it 'defaults to server-configured version if omitted', and letting Zapier pick is what the 0.10.1 pin exists to prevent.",
+    "newer_flags_unused": "CLI 0.73.0 also exposes --disabled (cleaner than --enabled false) and --manual (triggerless on-demand workflow versions). Neither is used by this Zap; noted so a future publish does not rediscover them."
   }
 }

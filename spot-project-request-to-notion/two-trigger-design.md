@@ -333,6 +333,38 @@ trigger banks its first poll as already-seen, so claiming early is free — but
 publishing CRM logic against an unproven identity path is not, and question 4 is
 exactly that path.
 
-Note for whoever builds B: pass the kebab-case flags (`--zapier-durable-version`,
-`--app-versions`). The snake_case spellings still work but emit a deprecation
-warning, and they are what the pre-2026-08-07 skill bundle documented.
+### ⚠️ An open draft blocks a direct publish with a 409
+
+Confirmed against CLI 0.73.0's `publish-workflow-version --help`:
+
+> `--ignore-open-drafts` — Publish even though the workflow has open draft(s).
+> Without this, the API rejects a direct publish with a **409** while any draft is
+> open, since publishing the draft later would ship its stale content over this
+> version.
+
+Two things follow, and step 3 above is where this bites.
+
+**Ordering.** Step 3 republishes **A** while B's draft is open. That is fine — the
+409 is scoped to the workflow that owns the draft, and A has none. But it stops being
+fine the moment anyone opens a draft on A to try something out: A's next
+`publish-workflow-version` then fails with a 409 that says nothing about the change
+being published. If that happens, `list-workflow-drafts` on A names the culprit;
+`discard-workflow-draft` clears it. Reach for `--ignore-open-drafts` only when you
+have decided the draft is genuinely stale, because it ships past work someone staged.
+
+**Don't leave B's draft open indefinitely.** The rollout deliberately parks B as a
+draft while question 4 is unanswered, which could be weeks. That draft is inert, but
+it is also a live 409 waiting for whoever next publishes B without expecting it.
+Either publish it or discard it once question 4 resolves — do not let it become
+scenery.
+
+### Flag spelling
+
+Pass the kebab-case flags (`--zapier-durable-version`, `--app-versions`). The
+snake_case spellings still work but emit a deprecation warning, and they are what the
+pre-2026-08-07 skill bundle documented — which is exactly how the 019fd9ab publish
+went out carrying one. The deprecation is on the **alias only**: verified against CLI
+0.73.0, `--zapier-durable-version` is live, fully documented, with no replacement.
+Keep passing it: its own help says it "defaults to server-configured version if
+omitted", and letting Zapier pick is what this repo avoids after 0.11.0 failed at run
+time with `Dependency installation failed`.
