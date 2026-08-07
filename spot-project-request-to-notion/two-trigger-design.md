@@ -311,12 +311,28 @@ Question 4 is answerable the moment any request is accepted: re-read
 
 ## Rollout
 
-1. Build B; publish **disabled**, trigger unclaimed.
-2. Reduce A to record + alert. Republish. Sync `zap.json`.
-3. Wait for a genuine project request. Read A's run output — it echoes the raw
-   payload, which answers questions 3 and 4 without opening Notion.
-4. Only then claim B's trigger and enable.
+Revised 2026-08-07: the refreshed workflow skills exposed a **drafts** command surface
+that did not exist when this was written — `create-workflow-draft`,
+`update-workflow-draft`, `get-workflow-draft`, `list-workflow-drafts`,
+`publish-workflow-draft`, `discard-workflow-draft`. A draft is strictly better than
+"publish disabled" for staging B: nothing is published at all, the draft has its own
+editor link for review, and `publish-workflow-draft` promotes it on a go-ahead.
 
-Do not claim B's trigger before a payload has been seen. A polling trigger banks its
-first poll as already-seen, so claiming early is free — but publishing CRM logic
-against a guessed payload shape is not.
+1. Build B as a **draft** (`create-workflow-draft`), passing the same
+   `--dependencies`, `--zapier-durable-version`, `--connections` and `--trigger` a
+   publish would take. Hand over the draft editor link rather than a disabled
+   workflow.
+2. Answer **question 4** first — it decides whether B is worth publishing as
+   specified. The next accepted request settles it; `find_project_request` on that
+   request's id shows whether `email` resolves to an address or stays a sentinel.
+3. Reduce A to record + alert. Republish. Sync `zap.json`.
+4. Only then `publish-workflow-draft` B, and claim its trigger.
+
+Do not claim B's trigger before an **accepted** payload has been seen. A polling
+trigger banks its first poll as already-seen, so claiming early is free — but
+publishing CRM logic against an unproven identity path is not, and question 4 is
+exactly that path.
+
+Note for whoever builds B: pass the kebab-case flags (`--zapier-durable-version`,
+`--app-versions`). The snake_case spellings still work but emit a deprecation
+warning, and they are what the pre-2026-08-07 skill bundle documented.

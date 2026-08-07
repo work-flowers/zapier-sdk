@@ -4,9 +4,9 @@ description: Diagnose Zapier Workflows skill and SDK CLI compatibility. Use when
 license: MIT
 metadata:
   author: zapier
-  version: "1.1.0"
-  sdk_cli_min: "0.54.3"
-  sdk_cli_validated: "0.54.3"
+  version: "1.3.0"
+  sdk_cli_min: "0.67.4"
+  sdk_cli_validated: "0.67.5"
   refresh_source: "zapier/agent-skills"
 ---
 
@@ -24,11 +24,28 @@ Workflow skills use these metadata fields:
 
 Command-surface checks verify required bundle capabilities only. They do not prove full workflow correctness or that JSON payload semantics are unchanged.
 
+## Step 0: Daily Skill-Freshness Check
+
+Run this before the SDK compatibility steps below. It keeps the workflow skills current with `zapier/agent-skills` even when the SDK CLI has not changed, by occasionally running `npx skills update` for the bundle. It is **soft and non-blocking**: it self-throttles to roughly once per day per project, never stops the calling skill, and prints nothing unless it actually applied an update.
+
+Run it exactly once, then continue to Step 1 regardless of its output. Do **not** parse or branch on the result:
+
+```bash
+bash scripts/skill-freshness-check.sh
+```
+
+Resolve `scripts/skill-freshness-check.sh` relative to this skill's own directory. The script locates the installed skill bundle from its own path and runs the bundle update from the scope root that contains it (the directory holding `.agents`/`.claude`), so it does not matter which directory you invoke it from.
+
+- If it prints a note that skills were refreshed, pass that note along to the user and keep going; the update takes full effect on the next workspace reload.
+- If it prints nothing, say nothing and continue.
+
+This freshness check is independent of the SDK command-surface compatibility check in Steps 1–4 below, which is unchanged and remains a hard gate. For troubleshooting, set `ZAPIER_WORKFLOWS_DEBUG=1` to see the freshness check's decision on stderr.
+
 ## Step 1: Check Bundle Compatibility
 
 Check the workflow skill bundle as one unit. Do not maintain separate compatibility checks for `workflows-install`, `workflows-create`, `workflows-list`, `workflows-history`, and `workflows-modify`; users will normally use these skills together, and drift in any core workflow SDK surface should refresh the whole bundle.
 
-Current workflow skills use `sdk_cli_min: "0.54.3"` and `sdk_cli_validated: "0.54.3"` unless the installed skills' metadata says otherwise.
+Current workflow skills use `sdk_cli_min: "0.67.4"` and `sdk_cli_validated: "0.67.5"` unless the installed skills' metadata says otherwise.
 
 ## Step 2: Check SDK CLI Versions
 
@@ -73,6 +90,12 @@ Confirm that the SDK CLI exposes a clear way to perform these operations for the
 
 - Create a workflow container.
 - Publish a workflow version.
+- List a workflow's open drafts.
+- Create (fork) a workflow draft.
+- Read a workflow draft.
+- Update a workflow draft, with optimistic concurrency via a draft revision.
+- Publish a workflow draft, with optimistic concurrency and enabled-state control.
+- Discard a workflow draft.
 - Run a durable workflow locally or synthetically.
 - List workflows.
 - List workflow runs.
@@ -86,6 +109,8 @@ Confirm that the SDK CLI exposes a clear way to perform these operations for the
 - Pass workflow input when running or triggering workflows.
 - Control enabled state when publishing workflow versions.
 - Run synthetic durable tests privately or with the current equivalent behavior.
+
+Publishing has two paths. `publish-workflow-draft` is the preferred one — it publishes and consumes the draft, so nothing stale is left behind. Direct `publish-workflow-version` is for no-open-draft cases only, such as the first publish of a brand-new workflow or a headless deploy-from-source flow; the server rejects it with a conflict while any draft is open. The bundle invariant: **never publish past an open draft**.
 
 When the current SDK help output is clear, prefer it over the example commands below. If discovery is ambiguous or a required capability appears absent, treat compatibility as unconfirmed and refresh the workflow skill bundle.
 
@@ -103,12 +128,20 @@ zapier-sdk --experimental trigger-workflow --help
 zapier-sdk --experimental get-trigger-run --help
 zapier-sdk --experimental get-workflow --help
 zapier-sdk --experimental get-workflow-version --help
+zapier-sdk --experimental list-workflow-drafts --help
+zapier-sdk --experimental create-workflow-draft --help
+zapier-sdk --experimental get-workflow-draft --help
+zapier-sdk --experimental update-workflow-draft --help
+zapier-sdk --experimental publish-workflow-draft --help
+zapier-sdk --experimental discard-workflow-draft --help
 ```
 
 Example flags from the validated SDK CLI surface:
 
 - `create-workflow`: `--private`
-- `publish-workflow-version`: `--connections`, `--app_versions`, `--trigger`, `--enabled`
+- `publish-workflow-version`: `--connections`, `--app-versions`, `--trigger`, `--enabled`
+- `update-workflow-draft`: `--draft-revision`, `--connections`, `--app-versions`, `--trigger`
+- `publish-workflow-draft`: `--draft-revision`, `--enabled`
 - `run-durable`: `--connections`, `--input`, `--private`
 - `trigger-workflow`: `--input`
 
