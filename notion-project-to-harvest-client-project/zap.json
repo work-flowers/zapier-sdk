@@ -35,7 +35,7 @@
     "property_note": "The Projects relation is 'Companies' (plural). The classic Zap tested 'Company' (singular), a leftover from the Deals Zap it was copied from — the property does not exist on Projects, so the 'Company Linked' path never matched."
   },
   "tables": {
-    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. Also read by start-a-timer-from-notion-task on (f5, f3=true)."
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. Also read by start-a-timer-from-notion-task on (f5, f3=true), and upserted by harvest-project-to-zapier-table (matches on f1, never writes f5). Reconciled 2026-08-07: 66 rows -> 50, 16 duplicate pairs removed, is_active re-synced against Harvest."
   },
   "migration": {
     "from": "classic Zap \"Create Harvest Client / Project\"",

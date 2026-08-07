@@ -1,0 +1,84 @@
+{
+  "name": "harvest-project-to-zapier-table",
+  "workflow_id": "019fda5c-972e-7f3c-81d0-5146bab1dd59",
+  "current_version_id": "019fda5c-cffa-7edc-9eae-3caaa6b3b5a6",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcDyeeYnExyaZ6PXEJ5Ezg",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "HarvestCLIAPI@1.0.14",
+    "action": "new_project",
+    "authentication_id": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362",
+    "params": {},
+    "status": "active",
+    "trigger_note": "Polling trigger — no webhook_url, and none expected. Polling triggers never backfill, so the Harvest projects that existed before this version was published will not be logged; the table was reconciled by hand at migration time instead (see backfill below). The classic Zap carried polling_interval_override: 0 (the default), so nothing was lost by durables not exposing an interval."
+  },
+  "connections": {
+    "harvest_wf": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+  },
+  "connections_note": "Harvest supplies the trigger only; the workflow body binds no connection. Title: \"Harvest dennis@work.flowers : Company Flow Pte. Ltd. (dba Work.Flowers\".",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / create_record / update_record — Zapier Tables auth is automatic, no connection and no task cost"
+  },
+  "zapier_durable_version": "0.12.4",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.95.0"
+  },
+  "tables": {
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. Shared with notion-project-to-harvest-client-project (writes f5) and read by start-a-timer-from-notion-task on (f5, f3=true)."
+  },
+  "migration": {
+    "from": "classic Zap \"Add Harvest Project to Zapier Table\"",
+    "disabled_on": "2026-08-07",
+    "export": "exported-zap-2026-08-07T03_28_03.968Z.json",
+    "changes": [
+      "Blind create -> UPSERT on f1 (project_id). Confirmed with Dennis 2026-08-07. The classic Zap always created a row, so every project created from a Notion Projects page got two: one from the Notion Zap (with f5) and one from this Harvest poll ~30s later. 16 such pairs existed.",
+      "is_active read defensively, defaulting to TRUE when absent. The classic Zap's {{=gives[...]['is_active']}} recorded false on all 16 duplicates, including projects whose Notion-side twin (written 30s earlier) said true — an unresolved template coerces to false, and false is the dangerous direction because start-a-timer-from-notion-task gates on f3=true.",
+      "f5 is never written or cleared here. Verified 2026-08-07 on a scratch row that update_record leaves unlisted fields untouched: f1 and f5 both survived an update of f2/f3/f4 only."
+    ]
+  },
+  "backfill_2026_08_07": {
+    "note": "One-off reconciliation done at migration time, approved by Dennis after the time-tracking consequence was spelled out and reaffirmed.",
+    "deleted_duplicates": 16,
+    "deleted_ids": [
+      "01KVJKBC782CJA123EX3C0E003",
+      "01KVJKBBABA6M5G03F1TCP6846",
+      "01KVJKBA967RN6XYG9Q483E82Z",
+      "01KVJKB980BPEGWN22MPSJ4Z4H",
+      "01KVJKB89B58TX74EWHM0RM0TR",
+      "01KVJKB7F1VXZWF3HT543KYBS0",
+      "01KVJKB69GG27AGGDQ4HGD9AFR",
+      "01KVJKB58Y47HAJK5S9AQKTA90",
+      "01KVJKB4BVZ63X4W1QVY0WDEJ3",
+      "01KVJKB65W26X1ZQK1MBZTN9EN",
+      "01KVJKB2JDJCJAX36DFNFW8Z4Y",
+      "01KVJKB1D3612CM3JTPD81PA71",
+      "01KVJKB0FZ3AM2NEXCVK6EQ7GJ",
+      "01KVJKAZJ2SZ7TF3NC6WRVFQDG",
+      "01KVJKAYDFDSM5AE270YR67M25",
+      "01KVJKAXX39V8282S6QSVDAYN7"
+    ],
+    "is_active_flips": 15,
+    "result": "66 rows -> 50, no duplicate project_ids, 0 rows disagreeing with Harvest.",
+    "consequence": "All 15 flips were true -> false. Only 3 Harvest projects are active (48185265 DEAL-40 Knoxx, 47968437 DEAL-53 Terrascope, 46733152 DEAL-35 SCW) and none is mapped to a Notion Projects page. start-a-timer-from-notion-task previously matched 20 rows on (f5, f3=true); it now matches 6, and all 6 are junk — three carry a project CODE in f1 instead of an id (WF-10, WF-17, WF-20, written by the classic Notion Zap's step 8), two reference Harvest projects since deleted, one is a blank row. In practice the Notion Track Time button can no longer resolve a project. Flagged to Dennis before the re-sync; he reaffirmed. Open question worth its own look: Notion Projects are archived in Harvest while time is billed to the DEAL-* retainers, so the Projects -> Harvest mapping may be the wrong axis for time tracking."
+  },
+  "verification": {
+    "typecheck": "tsc --strict --noEmit passes",
+    "verified_paths": [
+      "empty payload -> { skipped: 'empty-payload' }, run 019fda54-e446-7870-9c16-08fcf0eab041",
+      "upsert onto an existing row (project 48549718) -> action 'updated', run 019fda54-ef95-7120-8663-79ea078acfd9. NOTE: it matched the DUPLICATE row (01KVJKAYDFDSM5AE270YR67M25) rather than the page-id-carrying one, because two rows then shared that project_id — which is exactly why the dedupe was a prerequisite, not cosmetics. That row has since been deleted.",
+      "update_record preserves unlisted fields (f1, f5) — scratch row 01KZD589DSFSND4TFH06F2Q7H8, created, updated on f2/f3/f4 only, read back, deleted"
+    ],
+    "unverified": "The create-project-row branch (a Harvest project with no existing row) has not run, and no real new_project trigger delivery has been observed — so the exact key the trigger uses for the project id is still inferred from the classic Zap's output (record_id, with id/project_id as fallbacks). The first genuinely new Harvest project is the first live test of both."
+  },
+  "created_at": "2026-08-07T03:37:00.000Z",
+  "version_created_at": "2026-08-07T03:37:30.000Z",
+  "version_history": [
+    {
+      "id": "019fda5c-cffa-7edc-9eae-3caaa6b3b5a6",
+      "created_at": "2026-08-07T03:37:30.000Z",
+      "note": "First version. Hand-written migration of the classic Zap. Polling trigger claimed at publish (status active)."
+    }
+  ]
+}
