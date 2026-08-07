@@ -11,7 +11,7 @@
     "authentication_id": null,
     "params": {},
     "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/Cpw1RVzven0oltapo/",
-    "trigger_note": "Notion DB automation on the Companies data source (21991b07-11ac-80b0-b787-000b3d3995f6, in Core CRM Objects): the 'Register Lead' button -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL, NOT the internal trigger_url). CUTOVER: the button IS repointed here — run 019fda07-17e1-7c57-b0b2-dbb0f305eba7 (2026-08-07T02:22Z) is a real click delivered to this durable. Still unconfirmed: whether the classic 'Register Zapier Lead' Zap has been switched off. The SDK lists durables only, so check that in the Zapier UI; while it is live, one click submits the lead twice and opens a second service agreement."
+    "trigger_note": "Notion DB automation on the Companies data source (21991b07-11ac-80b0-b787-000b3d3995f6, in Core CRM Objects): the 'Register Lead' button -> 'Send to webhook' -> the webhook_url above (the hooks.zapier.com catch URL, NOT the internal trigger_url). CUTOVER COMPLETE 2026-08-07: the button is repointed here (run 019fda07-17e1-7c57-b0b2-dbb0f305eba7 is a real click delivered to this durable) and the classic 'Register Zapier Lead' Zap is off. It was still enabled at the time of that click but nothing had been posting to its webhook URL, so no lead was ever double-submitted."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",

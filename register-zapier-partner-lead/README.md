@@ -4,7 +4,7 @@ Clicking **Register Lead** on a Notion **Companies** record submits that company
 
 Migration of the classic Zap **Register Zapier Lead**. Its sibling, [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/), tracks what Zapier then does with the lead.
 
-**Status:** ✅ Published and enabled, trigger claimed. The Notion button now posts here — a real click on **Maintain It Australia** arrived on 2026-08-07. One step of the cutover is still unconfirmed: whether the classic Zap has been switched off. See [Cutover](#cutover).
+**Status:** ✅ Published and enabled, trigger claimed, **cutover complete** as at 2026-08-07 — the Notion button posts here and the classic Zap is off. See [Cutover](#cutover).
 
 ## What it does
 
@@ -43,10 +43,10 @@ The payload is the standard Notion automation shape — `{ data: { id, url, prop
 
 ## Cutover
 
-1. ✅ **Repoint the automation's *Send to webhook* step at the catch URL above.** Done — run `019fda07-17e1-7c57-b0b2-dbb0f305eba7` (2026-08-07T02:22Z) is a genuine button click delivered here, which is the only proof that exists from this side.
-2. ⬜ **Turn off the classic Zap *Register Zapier Lead*** — otherwise a single click submits the lead twice, and the partner tool will open a second service agreement against the same client. Not verifiable from the SDK (it lists durables only, not classic Zaps), so confirm it in the Zapier UI.
+Complete as at 2026-08-07.
 
-If the classic Zap was still live for the 2026-08-07 click, client `0280000000005zR00hE` may carry a duplicate service agreement. The partner tool exposes no agreement search — `find_client_portfolio` returns the client and its end date only — so that has to be checked partner-side too.
+1. ✅ **The automation's *Send to webhook* step points at the catch URL above.** Run `019fda07-17e1-7c57-b0b2-dbb0f305eba7` (2026-08-07T02:22Z) is a genuine button click delivered here, which is the only proof that exists from this side.
+2. ✅ **The classic Zap *Register Zapier Lead* is off.** It was still enabled when the first live click came through, but nothing had been posting to its webhook URL since the repoint, so it never double-submitted. Client `0280000000005zR00hE` therefore carries a single service agreement — which is just as well, since the partner tool exposes no agreement search (`find_client_portfolio` returns the client and its end date only) and a duplicate would have been hard to spot.
 
 ## What changed from the classic Zap
 
