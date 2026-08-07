@@ -609,6 +609,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     //    carry, so all three rows it wrote say `false` despite having a service
     //    agreement id. `Status` is likewise set explicitly: the response has no
     //    status field either, which is why that column was null on every row.
+    //
+    //    `Client Company Size` is spread in only when non-empty. It is a
+    //    `labeled_string` column, and Tables rejects `""` for that type with a
+    //    400 `Labeled string must have a value key` — a permanent error, so the
+    //    step burns every retry and the run dies here having already submitted
+    //    the lead. A company with no `Size` in Notion is normal, so the column
+    //    is left unset rather than sent blank.
     await ctx.step("index-lead-in-table", async () => {
       await sdk.createTableRecords({
         table: LEAD_TABLE,
@@ -619,7 +626,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
               "Notion Company Page ID": company.pageId,
               "Client Id": lead.clientId,
               "Client Company Name": lead.clientCompanyName,
-              "Client Company Size": company.companySize,
+              ...(company.companySize
+                ? { "Client Company Size": company.companySize }
+                : {}),
               "Client Created On": lead.clientCreatedOn,
               "Client Email": lead.clientEmail,
               "Client First Name": lead.clientFirstName,
