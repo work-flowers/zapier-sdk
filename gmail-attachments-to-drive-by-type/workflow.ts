@@ -70,6 +70,7 @@ const BLOCKED_SUBJECTS = [
   "your monthly aspire account statement",
   "from company flow",
   "your trade statement for assets",
+  "your monthly statement for assets",
 ];
 
 /** Gmail labels that mean we sent it, not received it. */
@@ -133,6 +134,58 @@ function normalizeInvoiceNumber(v: unknown): string {
 /** Short strings match by accident ("1", "INV"), so a number is only usable as
  *  a cross-document join key once it's long enough to be distinctive. */
 const MIN_INVOICE_NUMBER_LENGTH = 4;
+
+// --- Extracted-text hygiene -------------------------------------------------
+// Everything a `ctx.step` returns is checkpointed to PostgreSQL as JSON. Postgres
+// rejects a JSON string containing U+0000 outright with SQLSTATE 22P05
+// ("unsupported Unicode escape sequence"), and the durable framework surfaces
+// that only as `checkpoint failed`. Because the step's input is identical on
+// every retry, the checkpoint fails identically all 5 times and the run dies with
+// StepExhaustedError — a failure the step's own try/catch cannot see, because it
+// happens after the function returns. So nothing that could carry a control
+// character may leave the extract step unscrubbed.
+
+/**
+ * Files by Zapier hands back the file's RAW BYTES decoded as text when it can't
+ * convert a PDF and `failOnConversionError: false` stops it from throwing. That
+ * is what a password-protected PDF produces: 128 KB beginning `%PDF-1.6`, ~38%
+ * U+FFFD replacement characters and ~10% control characters, NULs included.
+ *
+ * It is not text, and it must not be treated as text: fed to the classifier it
+ * would burn MAX_TEXT_CHARS of binary noise for nothing, and checkpointed it
+ * kills the run. Genuine extracted text carries essentially none of either
+ * marker, so the thresholds sit far below what was measured on the real file.
+ */
+function looksLikeRawFileBytes(text: string): boolean {
+  if (/^\s*(%PDF-|PK\x03\x04|\x89PNG)/.test(text)) return true;
+  const sample = text.slice(0, 4000);
+  if (sample.length === 0) return false;
+  let control = 0;
+  let replacement = 0;
+  for (const ch of sample) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0xfffd) replacement++;
+    else if (c < 0x20 && c !== 9 && c !== 10 && c !== 13) control++;
+  }
+  return control / sample.length > 0.02 || replacement / sample.length > 0.05;
+}
+
+/**
+ * Drop the characters PostgreSQL's JSON parser refuses — NUL and the rest of the
+ * C0 controls (tab/newline/carriage return kept, they are legitimate in extracted
+ * text) plus lone surrogates, which are unrepresentable in UTF-8.
+ *
+ * Applied to every string leaving the step, including error messages: an upstream
+ * error that quotes the offending bytes back at us would checkpoint just as badly
+ * as the text itself.
+ */
+const C0_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
+const LONE_SURROGATE =
+  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+function stripUncheckpointableChars(text: string): string {
+  return text.replace(C0_EXCEPT_WHITESPACE, "").replace(LONE_SURROGATE, "");
+}
 
 interface Attachment {
   filename: string;
@@ -524,8 +577,20 @@ type Decision =
  * also carries the receipt that settles it. Four independent signals establish
  * that, checked strongest first so the recorded reason names the real evidence.
  */
-function decide(classifications: Array<Classification | null>): Decision[] {
-  const present = classifications.filter((c): c is Classification => c !== null);
+function decide(
+  classifications: Array<Classification | null>,
+  readable: boolean[],
+): Decision[] {
+  // `readable[i]` is false when nothing could be extracted from the PDF —
+  // encrypted, scanned, malformed, or converted to genuinely empty text. Such an
+  // attachment is classified from its filename and the surrounding email alone,
+  // which is a guess, so it is never filed and never counted as evidence about
+  // its siblings. An unreadable "Receipt" inferred from a filename must not be
+  // able to suppress a real outstanding invoice — that is the expensive mistake
+  // this whole function exists to avoid.
+  const present = classifications.filter(
+    (c, i): c is Classification => c !== null && readable[i],
+  );
 
   // Invoice numbers quoted by RECEIPTS on this email. Collected from receipts
   // only, so an invoice can never mark itself settled.
@@ -557,7 +622,14 @@ function decide(classifications: Array<Classification | null>): Decision[] {
     (c) => c.category === "Vendor Account Statement",
   );
 
-  return classifications.map((c) => {
+  return classifications.map((c, i) => {
+    if (!readable[i]) {
+      return {
+        action: "skip",
+        reason:
+          "no text could be extracted — not filed on filename and email evidence alone",
+      };
+    }
     if (!c) {
       return { action: "skip", reason: "no classification returned for this attachment" };
     }
@@ -680,12 +752,23 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
               actionKey: "text_from_file_new",
               inputs: { file: att.url, fileType: "pdf", failOnConversionError: false },
             });
-            return { text: firstString(firstResult(res)?.text) ?? "", ok: true as const };
+            const raw = firstString(firstResult(res)?.text) ?? "";
+            // `failOnConversionError: false` means an unconvertible PDF comes
+            // back as its own raw bytes rather than as an error. Recognise that
+            // and take the empty-text path the caller already handles.
+            if (looksLikeRawFileBytes(raw)) {
+              return {
+                text: "",
+                ok: false as const,
+                error: "file did not convert to text (encrypted, scanned or malformed PDF)",
+              };
+            }
+            return { text: stripUncheckpointableChars(raw), ok: true as const };
           } catch (err) {
             return {
               text: "",
               ok: false as const,
-              error: String((err as Error)?.message ?? err),
+              error: stripUncheckpointableChars(String((err as Error)?.message ?? err)),
             };
           }
         }),
@@ -727,7 +810,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     const rows: any[] = firstResult(completion)?.result?.items ?? [];
     const classifications = alignClassifications(attachments, rows);
-    const decisions = decide(classifications);
+    // An attachment is only filed on evidence we could actually read out of it.
+    const readable = extracted.map((e) => e.ok && e.text.length > 0);
+    const decisions = decide(classifications, readable);
 
     // 3. File each attachment the routing kept.
     const results = await Promise.all(
@@ -746,7 +831,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           dueDate: classification?.dueDate ?? null,
           paymentEvidence: classification?.paymentEvidence || null,
           justification: classification?.justification || null,
-          textExtracted: extracted[index].ok && extracted[index].text.length > 0,
+          textExtracted: readable[index],
+          // Why the text is missing — an encrypted PDF and a Files by Zapier
+          // failure both land on textExtracted:false but need different fixes.
+          textExtractionError: readable[index]
+            ? null
+            : ("error" in extracted[index] ? extracted[index].error : null) ??
+              "converted to empty text",
         };
 
         if (decision.action === "skip") {
