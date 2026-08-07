@@ -1,0 +1,65 @@
+{
+  "name": "update-notion-when-rescheduled-in-buttondown",
+  "workflow_id": "019fdb7e-70ed-7c6c-be85-71c6f09794d4",
+  "current_version_id": "019fdb7e-75e8-7189-ad51-910e60b47acc",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASDc3gKUrbadsvl_j90Wjw",
+  "enabled": true,
+  "is_private": true,
+  "is_private_note": "VIOLATES repo rule 7 (new Zaps are account-visible, never private). The Durables UI migration tool created the container private, and visibility cannot be changed after creation — `update-workflow` takes only --name/--description and no publish command exposes a visibility flag. Fixing it means recreating the container with `create-workflow` (no --private) and republishing. Cheap here: the trigger is a poll, so there is no external catch URL to rewire. Not done yet — awaiting Dennis.",
+  "trigger": {
+    "selected_api": "App240106CLIAPI@1.0.4",
+    "action": "new_email_reschedule",
+    "authentication_id": "63956850",
+    "params": {},
+    "webhook_url": null,
+    "notes": "Polling trigger on the private `Buttondown Unofficial #2` app (source: ~/Repos/zapier-buttondown). Polls GET /v1/emails?status=scheduled&ordering=-creation_date&page=1, keeps rows with a publish_date, and dedupes on `${id}:${publish_date}` so each reschedule is a fresh event. Emits `email_id` and `publish_date` (plus subject/body/status/slug), which is exactly what InputSchema reads. Durable triggers cannot set a polling interval, so this runs at the account default."
+  },
+  "connections": {
+    "notioncliapi_connection": {
+      "connection_id": 50656433
+    }
+  },
+  "connection_notes": {
+    "notioncliapi_connection": "Legacy numeric id carried over by the migration tool; it is the work.flowers Notion connection (UUID 02b73654-15c8-85c3-b16a-07304d2beb17), the same one `new-buttondown-subscriber-update-in-notion` uses. Confirmed by the pinned NotionCLIAPI 2.39.1 (the Knoxx connection is on 2.32.0) and by that data source being visible from it. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da).",
+    "TableCLIAPI": "search/find_record against Zapier Table 01KNJN2MSBAJVXRME6M1Y65F5B — Zapier Tables need no connection and cost no tasks."
+  },
+  "app_versions": {
+    "TableCLIAPI": {
+      "implementation_name": "TableCLIAPI",
+      "version": "1.26.0"
+    },
+    "NotionCLIAPI": {
+      "implementation_name": "NotionCLIAPI",
+      "version": "2.39.1"
+    }
+  },
+  "zapier_durable_version": "0.8.0",
+  "dependencies": {
+    "zod": "4.3.6",
+    "@zapier/zapier-sdk": "0.70.2"
+  },
+  "notion": {
+    "data_source_id": "0c691b07-11ac-82fa-bc1b-07d0186a095d",
+    "data_source_name": "Newsletter Issues",
+    "property_written": "Send Date (date) via `properties|||Send Date|||date__start` with use_zapier_datetime_fields: true"
+  },
+  "zapier_table": {
+    "id": "01KNJN2MSBAJVXRME6M1Y65F5B",
+    "name": "Email Newsletter ID Mapping",
+    "fields": {
+      "f1": "Page ID (Notion Newsletter Issues page id)",
+      "f2": "Buttondown Email ID",
+      "f3": "Created at"
+    },
+    "writer": "notion-newsletter-to-buttondown (best-effort, keyed on Page ID)"
+  },
+  "known_issues": [
+    "Unguarded empty lookup: `tableFindRecord.data[0].old.data.f1` throws `TypeError: Cannot read properties of undefined (reading 'old')` when the Buttondown email has no mapping row. find_record returns `{data: []}` on no match. Reproduced 2026-08-07 with run-durable run 019fdb87-d810-7abb-9e91-d95c4b2b1c4d — the step retried and would have exhausted all 5 attempts. Fires for any email scheduled directly in Buttondown rather than via the Notion 'Send to Buttondown' button. Fix: return a skip when data is empty.",
+    "Missing the repo rule 2 source-of-truth header comment in the deployed source.",
+    "workflow.ts does not typecheck under --strict: line 46 indexes `Record<string, unknown>` and then reads `.old.data.f1` off `unknown` (TS2571). Harmless at run time (the runtime transpiles without checking) but the cast should be tightened.",
+    "InputSchema is declared but never parsed — it only feeds `z.infer`. No runtime validation of the trigger payload."
+  ],
+  "created_at": "2026-08-07T09:12:04.591Z",
+  "version_created_at": "2026-08-07T09:12:05.992Z",
+  "description": "Buttondown reschedule -> Notion Newsletter Issues Send Date. Migrated from the classic Zapier UI to a Durable via the Durables UI migration tool (2026-08-07); stored here as deployed, unmodified."
+}
