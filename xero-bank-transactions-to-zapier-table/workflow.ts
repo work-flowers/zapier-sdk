@@ -90,10 +90,17 @@ const INITIAL_LOOKBACK_DAYS = 30;
  *  the loop is hard-bounded rather than running until it sees an empty page. */
 const MAX_PAGES = 3;
 
-/** Belt-and-braces cap on how many transactions one run will upsert. At the
- *  observed rate (~651 rows over ~1 year, so ~12/week) a 7-day window returns
- *  ~12-15, and this covers roughly four months of catch-up. */
-const MAX_TRANSACTIONS = 200;
+/**
+ * Belt-and-braces cap on how many transactions one run will upsert. At the
+ * observed rate (~685 rows over ~1 year, so ~12/week) a 7-day window returns
+ * ~12-15, so this is pure headroom.
+ *
+ * It MUST be >= MAX_PAGES * 100. When it was 200 against 3 pages, a wide window
+ * fetched 201-215 transactions and then silently processed only the first 200
+ * *sorted by transaction id* — an arbitrary subset, so recent transactions could
+ * be excluded from the mirror indefinitely while the run still reported success.
+ */
+const MAX_TRANSACTIONS = MAX_PAGES * 100;
 
 // The schedule trigger's payload carries nothing this workflow needs — it is a
 // tick, not a record. Accept anything and ignore it. Firing the workflow by
@@ -101,6 +108,23 @@ const MAX_TRANSACTIONS = 200;
 const InputSchema = z.unknown();
 
 // --- Pure helpers ----------------------------------------------------------
+
+function normalizeInput(rawInput: unknown): unknown {
+  // The trigger pipeline can deliver input double-encoded (a JSON string of a
+  // JSON string), while a manual `trigger-workflow --input` delivers it
+  // single-encoded. Parse until we reach a non-string, or stop on parse failure.
+  let v: unknown = rawInput;
+  for (let i = 0; i < 4 && typeof v === "string"; i++) {
+    const t = v.trim();
+    if (t[0] !== "{" && t[0] !== "[" && t[0] !== '"') break;
+    try {
+      v = JSON.parse(t);
+    } catch {
+      break;
+    }
+  }
+  return v;
+}
 
 function firstString(...vals: unknown[]): string | null {
   for (const v of vals) {
@@ -185,13 +209,26 @@ function toIsoDate(v: unknown): string | null {
   const s = firstString(v);
   if (!s) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-  if (!m) return null;
-  const [, y, mo, d] = m;
-  const month = Number(mo);
-  const day = Number(d);
-  if (month < 1 || month > 12) return null;
-  if (day < 1 || day > daysInMonth(Number(y), month)) return null;
-  return `${y}-${mo}-${d}`;
+  if (m) {
+    const [, y, mo, d] = m;
+    const month = Number(mo);
+    const day = Number(d);
+    if (month < 1 || month > 12) return null;
+    if (day < 1 || day > daysInMonth(Number(y), month)) return null;
+    return `${y}-${mo}-${d}`;
+  }
+  // Xero's raw JSON API returns dates in .NET epoch form — `Date` comes back as
+  // "/Date(1784937600000+0000)/" while only `DateString` is ISO-ish. The
+  // POLLING trigger this workflow used to run on delivered a plain date, so a
+  // parser that handled only the ISO form worked for a year and then silently
+  // returned null for every row the moment the read moved to the raw API. See
+  // the 2026-08-07 entry in zap.json's version_history.
+  const dotNet = /\/Date\((-?\d+)/.exec(s);
+  if (dotNet) {
+    const ms = Number(dotNet[1]);
+    if (Number.isFinite(ms)) return isoDateFromEpochMs(ms);
+  }
+  return null;
 }
 
 function dayNumber(iso: string): number {
@@ -248,7 +285,12 @@ function extractSnapshot(payload: unknown): Snapshot | null {
   if (!id) return null;
   return {
     bank_transaction_id: id,
-    date: toTableDate(p.Date ?? p.DateString),
+    // `DateString` FIRST, and each candidate tried independently rather than
+    // via `??`. `p.Date` is always present on a raw API read, so `p.Date ??
+    // p.DateString` never reached DateString — and since `Date` is .NET epoch
+    // form, every row got a null date, which the update path then wrote back
+    // over good stored values. That wiped the date on 214 rows.
+    date: toTableDate(p.DateString) ?? toTableDate(p.Date) ?? toTableDate(p.date),
     bank_account_id: firstString(p.BankAccount?.AccountID) ?? "",
     reference: firstString(p.Reference) ?? "",
     // Transfers (SPEND-TRANSFER / RECEIVE-TRANSFER) carry no contact at all.
@@ -262,13 +304,45 @@ function extractSnapshot(payload: unknown): Snapshot | null {
   };
 }
 
+/**
+ * NEVER BLANK A POPULATED FIELD.
+ *
+ * This is the guard that should have stopped the 2026-08-07 incident on its
+ * own, independently of the date-parsing bug that caused it. A bad extraction
+ * produced `date: null`, `changedFields` duly reported a difference against a
+ * good stored date, and the update path wrote the null straight over it —
+ * destroying the value on 214 rows and marching this workflow's own read window
+ * backwards through history as the mirror's apparent newest row receded.
+ *
+ * A mirror should only ever be able to ADD or CORRECT information, never to
+ * delete it: if we could not read a value, we have learned nothing about it, so
+ * the stored value stands. Worst case we keep something stale, which is
+ * recoverable; a wiped column is not distinguishable from a real absence.
+ *
+ * The same fill-don't-blank discipline is used for Xero contact writes in
+ * `drive-invoice-to-xero` ("fill a gap or fix drift, never blank").
+ */
+function wouldBlankAPopulatedField(stored: Record<string, unknown>, snap: Snapshot, field: string): boolean {
+  const want: unknown = (snap as any)[field];
+  const got = field === "type" || field === "currency_code" ? labeledValue(stored[field]) : stored[field];
+  const wantBlank = want == null || (typeof want === "string" && want.trim() === "");
+  const gotBlank = got == null || (typeof got === "string" && String(got).trim() === "");
+  return wantBlank && !gotBlank;
+}
+
 /** Compare a stored row against the snapshot, field by field, as the Table
- *  would return them. Returns the fields that actually differ. */
+ *  would return them. Returns the fields that actually differ.
+ *
+ *  A field whose snapshot value is blank while the stored value is populated is
+ *  NOT reported as a difference — see `wouldBlankAPopulatedField`. */
 function changedFields(stored: Record<string, unknown>, snap: Snapshot): string[] {
   const diffs: string[] = [];
   for (const field of MIRRORED_FIELDS) {
     const want: unknown = snap[field];
     const got = stored[field];
+    // `has_attachments` is a genuine boolean, so `false` is a real value rather
+    // than an absence and this guard must not apply to it.
+    if (field !== "has_attachments" && wouldBlankAPopulatedField(stored, snap, field)) continue;
     if (field === "type" || field === "currency_code") {
       if ((labeledValue(got) ?? "") !== String(want ?? "")) diffs.push(field);
       continue;
@@ -334,7 +408,22 @@ async function fetchPage(sinceIso: string, page: number): Promise<any[]> {
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "xero-bank-transactions-to-zapier-table",
   async (ctx, rawInput) => {
-    InputSchema.parse(rawInput);
+    const payload = (InputSchema.parse(normalizeInput(rawInput)) ?? {}) as any;
+
+    /**
+     * Compute the whole pass and report what it WOULD write, writing nothing.
+     *
+     * This exists because of the 2026-08-07 incident. The version that wiped the
+     * date column was "validated" by a `run-durable` that died at the Xero fetch
+     * on a rate limit, so the extraction and upsert code below was never
+     * executed even once before it reached production. A skip-path test proves
+     * nothing about the code after it — and without a dry run there was no way
+     * to exercise the main path against real Xero data without also writing to
+     * the production Table.
+     *
+     * `trigger-workflow <id> --input '{"dryRun":true}'` is now the safe test.
+     */
+    const dryRun = payload?.dryRun === true || payload?.dry_run === true || payload?.dryRun === "true";
 
     // The ONLY clock read, and it is inside a step so its value is fixed for
     // every retry of this run.
@@ -427,6 +516,15 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const existing = await ctx.step(`find-row-${tag}`, async () => findRows(snap.bank_transaction_id));
 
       if (existing.length === 0) {
+        if (dryRun) {
+          created++;
+          changedIds.push(snap.bank_transaction_id);
+          console.log(
+            `dry run: would CREATE ${snap.bank_transaction_id} date=${snap.date} ` +
+              `(${snap.contact_name || "no contact"} ${snap.type} ${snap.currency_code} ${snap.total})`,
+          );
+          continue;
+        }
         await ctx.step(`create-row-${tag}`, async () =>
           sdk.createTableRecords({
             table: TABLE_ID,
@@ -460,7 +558,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }
 
       // Already mirrored. Clear any strays first so the key stays unique.
-      if (existing.length > 1) {
+      if (existing.length > 1 && !dryRun) {
         await ctx.step(`delete-duplicates-${tag}`, async () =>
           sdk.deleteTableRecords({
             table: TABLE_ID,
@@ -477,9 +575,44 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       // the mirror. The old polling trigger almost never got that chance,
       // which is why stale columns accumulated.
       const winner = existing[0];
-      const diffs = changedFields((winner?.data ?? {}) as Record<string, unknown>, snap);
+      const storedRow = (winner?.data ?? {}) as Record<string, unknown>;
+      const diffs = changedFields(storedRow, snap);
       if (diffs.length === 0) {
         unchanged++;
+        continue;
+      }
+
+      // Build the write from the snapshot MINUS any field that would blank a
+      // populated stored value. Excluding it from `diffs` is not enough on its
+      // own: the write sends the whole snapshot, so a null still lands unless it
+      // is dropped from the payload too. Omitting a key leaves that column
+      // untouched. This is the second half of the guard described on
+      // `wouldBlankAPopulatedField` — the half whose absence caused the incident.
+      const writeData: Record<string, unknown> = {};
+      const preserved: string[] = [];
+      for (const field of MIRRORED_FIELDS) {
+        if (field !== "has_attachments" && wouldBlankAPopulatedField(storedRow, snap, field)) {
+          preserved.push(field);
+          continue;
+        }
+        writeData[field] = (snap as any)[field];
+      }
+      if (preserved.length > 0) {
+        console.log(
+          `WARNING: ${snap.bank_transaction_id} — could not read ${preserved.join(", ")} from Xero, ` +
+            `so the stored value(s) were KEPT rather than blanked. If this is widespread, the ` +
+            `extraction for that field is broken (this is exactly how the date column was wiped ` +
+            `on 214 rows in the 2026-08-07 incident).`,
+        );
+      }
+
+      if (dryRun) {
+        updated++;
+        changedIds.push(snap.bank_transaction_id);
+        console.log(
+          `dry run: would UPDATE ${snap.bank_transaction_id} [${diffs.join(", ")}] ` +
+            `stored date=${firstString(storedRow.date) ?? "(none)"} -> ${snap.date ?? "(none)"}`,
+        );
         continue;
       }
 
@@ -487,7 +620,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         sdk.updateTableRecords({
           table: TABLE_ID,
           keyMode: "names",
-          records: [{ id: String(winner.id), data: { ...snap } }],
+          records: [{ id: String(winner.id), data: writeData }],
         }),
       );
       updated++;
@@ -502,6 +635,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     );
 
     return {
+      dryRun,
       windowFrom: sinceIso,
       windowTo: today,
       latestRowDateBefore: latestRowDate,
