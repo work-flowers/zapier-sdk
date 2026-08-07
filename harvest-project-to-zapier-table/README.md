@@ -61,9 +61,11 @@ Only **3** Harvest projects are active — `48185265` DEAL-40 Knoxx, `47968437` 
 - two reference Harvest projects since deleted,
 - one is a blank row.
 
-So the table is now honest and time tracking is effectively switched off. That was the accepted trade: the previous 20 matches were all stale `true`s.
+So the table is now honest, and the Notion Track Time path can no longer resolve a project. That was the accepted trade: the previous 20 matches were all stale `true`s.
 
-**Open question worth its own look:** the Notion Projects are archived in Harvest while time is actually billed to the `DEAL-*` retainers. The Projects → Harvest mapping may simply be the wrong axis for time tracking.
+**In practice this removed an accidental capability, not a working one.** The time-entry mapping table (`01K5060J1B1FHCJEWVVH597B71`, 670 rows) shows **576 timers keyed to Linear and 4 ever keyed to a Notion task**, the most recent on 2026-05-21. The `WF-*` Harvest projects were not created until 2026-06-20, so those 4 predate the mapping and it has never once been exercised. The live path — last used 2026-08-05 — is Linear, and is untouched by any of this.
+
+**Context, not a bug:** client delivery was tracked in Linear before a recent migration to Notion Projects, which is why the `WF-*` ids start where they do and why every one of them is archived in Harvest while time is billed to the `DEAL-*` retainers. That migration is still under review — Dennis is weighing reverting to Linear for issue tracking — so **don't re-plumb the Notion → Harvest mapping until that call is made.**
 
 ## Maintainer notes
 
