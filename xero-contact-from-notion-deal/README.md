@@ -85,6 +85,80 @@ Three deliberate differences; everything else is a straight port.
 
 Two smaller ones: the empty `address__type_of: "Postal Address"` is dropped (no address data was ever sent with it), and the `contact_person__first_name: "na"` placeholder is gone — when there is no second person the contact-person fields are simply omitted.
 
+## The reverse direction: [`xero-contact-to-notion-company`](../xero-contact-to-notion-company/)
+
+This durable covers **Notion → Xero**. There is a genuine **Xero → Notion** case it structurally
+cannot cover, and a *classic* Zap owns it:
+
+> A contact gets created in Xero by other means — typically a transaction arrives from a new vendor
+> and Dennis makes the contact by hand. If a Company record for that vendor already exists in Notion,
+> he pastes its **Notion Company ID into the Xero contact's Account Number**, and the classic Zap
+> links the two.
+
+Nothing on the Notion side changes in that flow, so no webhook fires and this durable never runs.
+That case is real and needed — it is **not** redundant with this workflow.
+
+> ### ✅ Migrated to a durable on 2026-08-07
+>
+> It now lives in [`xero-contact-to-notion-company`](../xero-contact-to-notion-company/), which is
+> schedule-driven (~24 Xero calls/day) and writes to **Notion** rather than the Table, fixing both
+> faults described below. **Both classic Zaps should now be turned off in the Zapier UI** — while
+> enabled they keep writing `f15` directly and keep costing ~192 Xero calls/day.
+>
+> The rest of this section is kept as the record of what was wrong and why, since the reasoning is
+> what makes the durable's shape make sense.
+
+### ⚠️ There were TWO of them, and both wrote to the wrong place
+
+As of 2026-08-07 the account held two classic Zaps doing this, *functionally identical*:
+**"Add Xero Contact ID to Company IDs Table"** and **"Associate Xero Contact with Notion Company"**.
+Same trigger (`XeroCLIAPI@2.21.0` / `updated_contact`), same connection, same organization, same
+filter, same table, same lookup and write fields. The only differences were the titles, the per-Zap
+step ids inside their `gives[…]` references, a `stepTitle` on one filter, and
+`_zap_search_success_on_miss` being the string `"False"` in one and boolean `false` in the other.
+**One is pure duplication** — at 1-minute polling the pair cost ~2,880 Xero API calls/day between
+them and were the largest single contributor to the 2026-08-06 quota exhaustion. Both were moved to
+15-minute polling (~192/day); one should be deleted outright.
+
+**And the survivor wrote the ContactID into `[Table] Company IDs` (`f15`) rather than onto the Notion
+company page.** That is the wrong target, for two reasons:
+
+1. **The link was temporary.** [`notion-companies-to-zapier-table`](../notion-companies-to-zapier-table/)
+   is a *true mirror* — its own source comment says *"empty in Notion clears the table value"* — and
+   `Xero Contact ID` is in its mirrored set. So with the Notion property still empty, the next edit
+   of that company in Notion wiped `f15` straight back out.
+2. **This durable's dedupe guard stayed blind.** The guard reads `Xero Contact ID` off the *Notion
+   page*. With that property empty, a later Companies-button or Deals-stage trigger would re-run the
+   upsert — and Xero matches on **name**, so it would silently overwrite the hand-made vendor
+   contact's people. Exactly the failure the guard exists to prevent.
+
+### The corrected classic Zap
+
+Steps 1–3 are unchanged. Step 3 does double duty and every part still matters: `f11 exact = Account
+Number` proves the company really is one we hold in Notion, `f15 isnull` stops a re-fire once linked,
+and its output supplies **`f14` (Notion Page ID)** — the page UUID, which the trigger alone cannot
+give, because `AccountNumber` carries Notion's `ID` property (a `unique_id` like `COMP-42`), not a
+UUID. Keep **Success on miss = No** so an unrecognised Account Number simply halts.
+
+Replace **step 4** (`TableCLIAPI` / `update_record`) with:
+
+| Field | Value |
+| --- | --- |
+| App / action | **Notion → Update Data Source Item** (`update_database_item`) |
+| Connection | `work.flowers \| Dennis <dennis@work.flowers>` (`02b73654-15c8-85c3-b16a-07304d2beb17`) — **never** the Knoxx connection, which cannot see work.flowers databases |
+| Data source | **Companies** |
+| Item / Page ID | step 3 → **`Notion Page ID`** (`f14`) |
+| Property `Xero Contact ID` | step 1 → **`ContactID`** |
+
+Writing to Notion instead of the Table fixes both faults at once and needs no new plumbing: Notion
+stays the single source of truth, the mirror carries the value into `f15` for free, and this
+durable's guard finally has something to read. It is also **self-limiting** — once the mirror
+populates `f15`, step 3's `f15 isnull` gate goes false and the Zap stops firing for that contact.
+
+> Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so none of this is
+> machine-verifiable from this repo and the change has to be made in the Zapier UI. That is also why
+> it is written down here: the durable is the only tracked artifact adjacent to it.
+
 ## Maintainer notes
 
 - Connection aliases `notion_wf` (Notion, **work.flowers** workspace — never the Knoxx one) and `xero_wf` (Xero work.flowers), resolved at run/publish time via `--connections`.
