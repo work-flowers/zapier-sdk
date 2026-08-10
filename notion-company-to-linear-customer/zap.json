@@ -41,8 +41,8 @@
   "version_created_at": "2026-08-10",
   "replaces_classic_zap": "Company Linked to Deal -> Create Customer in Linear",
   "cutover": {
-    "classic_zap_disabled": "PENDING — disable in the Zapier UI. Both poll the same trigger, so while both are enabled each new company-with-deal is raced by two creators; the durable's page-property guard makes it lose gracefully only if the classic Zap has already written the id back.",
-    "status": "deployed, awaiting cutover"
+    "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector. Race with the classic Zap is now moot.",
+    "status": "complete — this durable is the only thing creating Linear customers from Notion"
   },
   "description": "Notion Companies polling trigger (Deals relation changed) -> create the company as a Linear customer (bare-domain + COM-n external id), write the customer id back to the Company."
 }

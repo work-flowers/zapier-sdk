@@ -77,13 +77,13 @@ create/invite path is exercised offline by the AI harness above plus
 field-verified `new_channel` / `channels_invite_v2` inputs; watch the first
 live run after cutover.
 
-## Cutover (pending)
+## Cutover
 
-1. In Notion, repoint the Deals automation/button that POSTs to the classic
-   Zap's catch URL to the `webhook_url` above.
-2. Disable the classic Zap **"Create Client Slack Channel from Notion"** in the
-   Zapier UI (classic Zaps are not reachable from the CLI).
-3. Record both in `zap.json` → `cutover`.
+**Complete as of 2026-08-10.** The Notion Deals sender was repointed to the
+`webhook_url` above and the classic Zap **"Create Client Slack Channel from
+Notion"** was disabled — confirmed by Dennis. Not machine-verifiable: classic
+Zap and Notion automation config are exposed by neither the SDK CLI nor the
+MCP connector.
 
 ## Maintainer notes
 
