@@ -9,7 +9,17 @@ const sdk = createZapierSdk();
 // Connection aliases are resolved at run/publish time via --connections.
 const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
-// Primary enrichment: Lusha Connect. Two-call flow — despite its name,
+// Primary enrichment: Apollo.io people/match. Called through Apollo's native
+// "API Request (Beta)" action (_zap_raw_request), which makes an authenticated
+// raw HTTP request that includes the integration's own auth headers — a plain
+// sdk.fetch through the connection does NOT get those headers and Apollo
+// rejects it with 401. Preferred over Lusha because it also returns a profile
+// photo (page icon/cover) and a bio, which Lusha never provides.
+const APOLLO_APP_KEY = "ApolloCLIAPI";
+const APOLLO_CONNECTION = "apollo";
+const APOLLO_RAW_REQUEST_ACTION = "_zap_raw_request";
+const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
+// Second source: Lusha Connect. Two-call flow — despite its name,
 // `search_and_enrich_contacts` only resolves a Lusha contact id (its output
 // carries no email fields at all; verified 2026-08-10 against Megan Anderson
 // with reveal set and unset). The id then goes to `enrich_contacts` with
@@ -17,15 +27,6 @@ const NOTION_CONNECTION = "notion_wf";
 // and never spends phone credits — this workflow doesn't consume phone data.
 const LUSHA_APP_KEY = "LushaCLIAPI";
 const LUSHA_CONNECTION = "lusha";
-// Second source: Apollo.io people/match. Called through Apollo's native
-// "API Request (Beta)" action (_zap_raw_request), which makes an authenticated
-// raw HTTP request that includes the integration's own auth headers — a plain
-// sdk.fetch through the connection does NOT get those headers and Apollo
-// rejects it with 401.
-const APOLLO_APP_KEY = "ApolloCLIAPI";
-const APOLLO_CONNECTION = "apollo";
-const APOLLO_RAW_REQUEST_ACTION = "_zap_raw_request";
-const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
 // Final fallback: NinjaPear (unofficial Zapier app).
 const ENRICHMENT_APP_KEY = "App243984CLIAPI";
 const ENRICHMENT_CONNECTION = "enrichment";
@@ -236,12 +237,12 @@ function extractContactData(raw: unknown): ContactData {
 
 // --- Enrichment result extraction ------------------------------------------
 
-/** The cascade order: Lusha first, Apollo second, NinjaPear last. */
-type EnrichmentSource = "lusha" | "apollo" | "ninjapear";
+/** The cascade order: Apollo first, Lusha second, NinjaPear last. */
+type EnrichmentSource = "apollo" | "lusha" | "ninjapear";
 
 const SOURCE_LABELS: Record<EnrichmentSource, string> = {
-  lusha: "Lusha",
   apollo: "Apollo",
+  lusha: "Lusha",
   ninjapear: "NinjaPear",
 };
 
@@ -817,8 +818,8 @@ const workflow = defineDurable<unknown, unknown>(
       `Enriching contact ${contact.pageId}: ${contact.firstName} ${contact.lastName}`.trim(),
     );
 
-    // 1. Enrich the contact. Three-source cascade: Lusha first, then Apollo
-    //    (people/match), then NinjaPear as the final fallback. Each source
+    // 1. Enrich the contact. Three-source cascade: Apollo (people/match)
+    //    first, then Lusha, then NinjaPear as the final fallback. Each source
     //    runs inside a step that catches its own errors and returns a value
     //    instead of throwing — so a failing source does NOT trigger the
     //    durable's step-retry loop (which would stall every run on an
@@ -827,173 +828,174 @@ const workflow = defineDurable<unknown, unknown>(
     let source: EnrichmentSource | null = null;
     const reasons: string[] = [];
 
-    // --- First: Lusha. Search resolves the Lusha contact id, enrich_contacts
-    //     reveals the details (see the bindings comment for why two calls).
-    //     Lusha matches on an email, a LinkedIn URL, or a name + company
-    //     domain; with none of those there is nothing to send.
-    const lushaViable = Boolean(
-      contact.primaryEmail ||
-        contact.linkedinUrl ||
-        ((contact.firstName || contact.lastName) && contact.domain),
-    );
-
-    if (!lushaViable) {
-      const why =
-        "lusha skipped — no email, LinkedIn URL, or name + company domain to match on";
-      reasons.push(why);
-      console.log(`Lusha ${why.slice("lusha ".length)} for ${contact.pageId}`);
-    } else {
-      const lusha = await ctx.step("lusha-enrich", async () => {
-        try {
-          const searchRes = await sdk.runAction({
-            appKey: LUSHA_APP_KEY,
-            actionType: "search",
-            actionKey: "search_and_enrich_contacts",
-            connection: LUSHA_CONNECTION,
-            inputs: {
-              email: contact.primaryEmail,
-              firstName: contact.firstName,
-              lastName: contact.lastName,
-              domain: contact.domain,
-              linkedinUrl: contact.linkedinUrl,
-            },
-          });
-          // Result shape: { "Request Id", results: [{ id, error, ...fields }] }.
-          const searchOuter = firstResult(searchRes) ?? {};
-          const hit = Array.isArray(searchOuter.results)
-            ? searchOuter.results[0]
-            : searchOuter;
-          const lushaId = firstString(hit?.id);
-          if (!lushaId) {
-            const hitError = firstString(hit?.error);
-            return {
-              contact: null as any,
-              error: hitError ? `search error: ${hitError}` : null,
-            };
-          }
-          // reveal:["emails"] — never spend Lusha phone credits; this
-          // workflow doesn't consume phone data.
-          const enrichRes = await sdk.runAction({
-            appKey: LUSHA_APP_KEY,
-            actionType: "search",
-            actionKey: "enrich_contacts",
-            connection: LUSHA_CONNECTION,
-            inputs: { ids: [lushaId], reveal: ["emails"] },
-          });
-          const enrichOuter = firstResult(enrichRes) ?? {};
-          const person = Array.isArray(enrichOuter.results)
-            ? enrichOuter.results[0]
-            : enrichOuter;
-          const personError = firstString(person?.error);
-          return {
-            contact: person ?? null,
-            error: personError ? `enrich error: ${personError}` : null,
-          };
-        } catch (err) {
-          return {
-            contact: null as any,
-            error: String((err as Error)?.message ?? err),
-          };
-        }
-      });
-
-      if (!lusha.error && lushaContactUsable(lusha.contact)) {
-        enrichedData = extractEnrichedFromLusha(lusha.contact);
-        source = "lusha";
-        console.log(`Lusha enriched ${contact.pageId}`);
-      } else {
-        const why = lusha.error
-          ? `lusha error: ${lusha.error}`
-          : "lusha returned no result";
-        reasons.push(why);
-        console.log(
-          `Lusha enrichment unavailable for ${contact.pageId} (${why}); falling back to Apollo`,
-        );
-      }
-    }
-
-    // --- Second: Apollo people/match, via the "API Request (Beta)" action.
+    // --- First: Apollo people/match, via the "API Request (Beta)" action.
     //     fail_on_errors:false makes the action return the response (with its
     //     status) instead of throwing on a non-2xx, so a locked/credit-less
-    //     Apollo response falls through to NinjaPear without retries.
-    if (!enrichedData) {
-      const apollo = await ctx.step("apollo-match", async () => {
-        try {
-          const res = await sdk.runAction({
-            appKey: APOLLO_APP_KEY,
-            actionType: "write",
-            actionKey: APOLLO_RAW_REQUEST_ACTION,
-            connection: APOLLO_CONNECTION,
-            inputs: {
-              method: "POST",
-              url: APOLLO_MATCH_URL,
-              headers: {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache",
-              },
-              body: JSON.stringify({
-                first_name: contact.firstName,
-                last_name: contact.lastName,
-                email: contact.primaryEmail,
-                domain: contact.domain,
-                linkedin_url: contact.linkedinUrl,
-                // Keep credit spend minimal; we don't consume Apollo's phone data
-                // and personal emails aren't wanted here.
-                reveal_personal_emails: false,
-                reveal_phone_number: false,
-              }),
-              fail_on_errors: false,
+    //     Apollo response falls through to Lusha without retries.
+    const apollo = await ctx.step("apollo-match", async () => {
+      try {
+        const res = await sdk.runAction({
+          appKey: APOLLO_APP_KEY,
+          actionType: "write",
+          actionKey: APOLLO_RAW_REQUEST_ACTION,
+          connection: APOLLO_CONNECTION,
+          inputs: {
+            method: "POST",
+            url: APOLLO_MATCH_URL,
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache",
             },
-          });
-          // The action result wraps the upstream call as { request, response }.
-          const response = firstResult(res)?.response ?? {};
-          const status =
-            typeof response.status === "number" ? response.status : 0;
-          let person = response?.data?.person ?? null;
-          if (!person && typeof response?.body === "string") {
-            try {
-              person = JSON.parse(response.body)?.person ?? null;
-            } catch {
-              /* non-JSON body */
-            }
+            body: JSON.stringify({
+              first_name: contact.firstName,
+              last_name: contact.lastName,
+              email: contact.primaryEmail,
+              domain: contact.domain,
+              linkedin_url: contact.linkedinUrl,
+              // Keep credit spend minimal; we don't consume Apollo's phone data
+              // and personal emails aren't wanted here.
+              reveal_personal_emails: false,
+              reveal_phone_number: false,
+            }),
+            fail_on_errors: false,
+          },
+        });
+        // The action result wraps the upstream call as { request, response }.
+        const response = firstResult(res)?.response ?? {};
+        const status =
+          typeof response.status === "number" ? response.status : 0;
+        let person = response?.data?.person ?? null;
+        if (!person && typeof response?.body === "string") {
+          try {
+            person = JSON.parse(response.body)?.person ?? null;
+          } catch {
+            /* non-JSON body */
           }
-          const ok = status >= 200 && status < 300;
-          return {
-            ok,
-            status,
-            person,
-            raw: ok ? "" : String(response?.body ?? "").slice(0, 300),
-            error: null as string | null,
-          };
-        } catch (err) {
-          return {
-            ok: false,
-            status: 0,
-            person: null as any,
-            raw: "",
-            error: String((err as Error)?.message ?? err),
-          };
         }
-      });
+        const ok = status >= 200 && status < 300;
+        return {
+          ok,
+          status,
+          person,
+          raw: ok ? "" : String(response?.body ?? "").slice(0, 300),
+          error: null as string | null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          status: 0,
+          person: null as any,
+          raw: "",
+          error: String((err as Error)?.message ?? err),
+        };
+      }
+    });
 
-      if (apollo.ok && apolloPersonUsable(apollo.person)) {
-        enrichedData = extractEnrichedFromApollo(apollo.person);
-        source = "apollo";
-        console.log(`Apollo enriched ${contact.pageId}`);
-      } else {
-        const why = apollo.error
-          ? `apollo error: ${apollo.error}`
-          : !apollo.ok
-            ? `apollo http ${apollo.status}: ${apollo.raw}`.trim()
-            : "apollo returned no usable match";
+    if (apollo.ok && apolloPersonUsable(apollo.person)) {
+      enrichedData = extractEnrichedFromApollo(apollo.person);
+      source = "apollo";
+      console.log(`Apollo enriched ${contact.pageId}`);
+    } else {
+      const why = apollo.error
+        ? `apollo error: ${apollo.error}`
+        : !apollo.ok
+          ? `apollo http ${apollo.status}: ${apollo.raw}`.trim()
+          : "apollo returned no usable match";
+      reasons.push(why);
+      console.log(
+        `Apollo enrichment unavailable for ${contact.pageId} (${why}); falling back to Lusha`,
+      );
+    }
+
+    // --- Second: Lusha — only when Apollo produced nothing. Search resolves
+    //     the Lusha contact id, enrich_contacts reveals the details (see the
+    //     bindings comment for why two calls). Lusha matches on an email, a
+    //     LinkedIn URL, or a name + company domain; with none of those there
+    //     is nothing to send.
+    if (!enrichedData) {
+      const lushaViable = Boolean(
+        contact.primaryEmail ||
+          contact.linkedinUrl ||
+          ((contact.firstName || contact.lastName) && contact.domain),
+      );
+
+      if (!lushaViable) {
+        const why =
+          "lusha skipped — no email, LinkedIn URL, or name + company domain to match on";
         reasons.push(why);
-        console.log(
-          `Apollo enrichment unavailable for ${contact.pageId} (${why}); falling back to NinjaPear`,
-        );
+        console.log(`Lusha ${why.slice("lusha ".length)} for ${contact.pageId}`);
+      } else {
+        const lusha = await ctx.step("lusha-enrich", async () => {
+          try {
+            const searchRes = await sdk.runAction({
+              appKey: LUSHA_APP_KEY,
+              actionType: "search",
+              actionKey: "search_and_enrich_contacts",
+              connection: LUSHA_CONNECTION,
+              inputs: {
+                email: contact.primaryEmail,
+                firstName: contact.firstName,
+                lastName: contact.lastName,
+                domain: contact.domain,
+                linkedinUrl: contact.linkedinUrl,
+              },
+            });
+            // Result shape: { "Request Id", results: [{ id, error, ...fields }] }.
+            const searchOuter = firstResult(searchRes) ?? {};
+            const hit = Array.isArray(searchOuter.results)
+              ? searchOuter.results[0]
+              : searchOuter;
+            const lushaId = firstString(hit?.id);
+            if (!lushaId) {
+              const hitError = firstString(hit?.error);
+              return {
+                contact: null as any,
+                error: hitError ? `search error: ${hitError}` : null,
+              };
+            }
+            // reveal:["emails"] — never spend Lusha phone credits; this
+            // workflow doesn't consume phone data.
+            const enrichRes = await sdk.runAction({
+              appKey: LUSHA_APP_KEY,
+              actionType: "search",
+              actionKey: "enrich_contacts",
+              connection: LUSHA_CONNECTION,
+              inputs: { ids: [lushaId], reveal: ["emails"] },
+            });
+            const enrichOuter = firstResult(enrichRes) ?? {};
+            const person = Array.isArray(enrichOuter.results)
+              ? enrichOuter.results[0]
+              : enrichOuter;
+            const personError = firstString(person?.error);
+            return {
+              contact: person ?? null,
+              error: personError ? `enrich error: ${personError}` : null,
+            };
+          } catch (err) {
+            return {
+              contact: null as any,
+              error: String((err as Error)?.message ?? err),
+            };
+          }
+        });
+
+        if (!lusha.error && lushaContactUsable(lusha.contact)) {
+          enrichedData = extractEnrichedFromLusha(lusha.contact);
+          source = "lusha";
+          console.log(`Lusha enriched ${contact.pageId}`);
+        } else {
+          const why = lusha.error
+            ? `lusha error: ${lusha.error}`
+            : "lusha returned no result";
+          reasons.push(why);
+          console.log(
+            `Lusha enrichment unavailable for ${contact.pageId} (${why}); falling back to NinjaPear`,
+          );
+        }
       }
     }
 
-    // --- Final fallback: NinjaPear — only when neither Lusha nor Apollo
+    // --- Final fallback: NinjaPear — only when neither Apollo nor Lusha
     //     produced anything.
     if (!enrichedData) {
       // NinjaPear find_person_profile.
