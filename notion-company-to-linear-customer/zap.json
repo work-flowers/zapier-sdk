@@ -1,0 +1,48 @@
+{
+  "name": "notion-company-to-linear-customer",
+  "workflow_id": "019feb0a-aa26-7322-9cb9-d744919fc0d7",
+  "current_version_id": "019feb0b-3708-72f4-a18e-3e6053e78b51",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ9llVPqyiWw9fOMMpysFQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "NotionCLIAPI@2.39.1",
+    "action": "updated_data_source_item_properties",
+    "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "params": {
+      "datasource": "21991b07-11ac-80b0-b787-000b3d3995f6",
+      "watched_properties": ["giUg"]
+    },
+    "status": "active",
+    "trigger_note": "Notion POLLING trigger on Companies, watching the Deals relation (property id giUg), same as the classic Zap. Durable triggers have no polling-interval field, so it polls at the account default — matching the classic Zap's polling_interval_override of 0. No external URL to cut over."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "linear_wf": "02657f6e-5360-8418-ba05-cb02eb2b95f5"
+  },
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "api_version": "2026-03-11",
+    "note": "Guard + write-back property: Companies 'Linear Customer ID' (rich_text). NOTE: the classic Zap's mapping left DOMAINS in this property on existing records (e.g. tanninroad.com.au) instead of Linear customer UUIDs — the guard treats any non-empty value as 'already in Linear', so those records are unaffected; the durable writes real UUIDs going forward."
+  },
+  "linear": {
+    "action": "LinearCLIAPI write createCustomer",
+    "note": "domains gets the bare hostname parsed out of the Companies Website url (the classic Zap passed the raw url); externalIds gets the COM-n unique id read off the page (the classic Zap read the same value from [Table] Company IDs)."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read by this workflow. The classic Zap looked up f11/f7 here; the durable reads the COM-n id and the guard off the Notion page itself, and notion-companies-to-zapier-table mirrors the written id back into f7."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-10",
+  "version_created_at": "2026-08-10",
+  "replaces_classic_zap": "Company Linked to Deal -> Create Customer in Linear",
+  "cutover": {
+    "classic_zap_disabled": "PENDING — disable in the Zapier UI. Both poll the same trigger, so while both are enabled each new company-with-deal is raced by two creators; the durable's page-property guard makes it lose gracefully only if the classic Zap has already written the id back.",
+    "status": "deployed, awaiting cutover"
+  },
+  "description": "Notion Companies polling trigger (Deals relation changed) -> create the company as a Linear customer (bare-domain + COM-n external id), write the customer id back to the Company."
+}

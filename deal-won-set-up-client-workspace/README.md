@@ -2,7 +2,7 @@
 
 Sets up a client workspace when a deal is won: creates the company's Google Drive folder under Client Docs and links it back to the Notion Companies record.
 
-**Status:** ⚠️ not deployed — no workflow with this name exists on Zapier as of 2026-07-23 (source only; no `zap.json`).
+**Status:** ⚠️ not deployed — no workflow with this name exists on Zapier as of 2026-07-23 (source only; no `zap.json`). **Superseded 2026-08-10 by [`deal-to-client-drive-folder`](../deal-to-client-drive-folder/)**, the deployed migration of the classic "Create Google Drive Folder from Notion" Zap; kept for reference only.
 
 ## What it does
 
