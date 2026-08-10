@@ -1,0 +1,40 @@
+{
+  "name": "proposal-fee-to-deal-value",
+  "workflow_id": "019feb0a-b966-78a1-b2e1-da422eca223f",
+  "current_version_id": "019feb0b-453f-7963-8a4c-187425d1ea68",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfzSzKI4Y1BoLTGDNGA8Kw",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/cCSLFIVwOZMqVxFz/",
+    "trigger_note": "Catch hook. A Notion database automation POSTs the proposal page here when its Project Fee changes. The SOURCE database is not shared with the Zapier integration (no visible data source carries a 'Project Fee' property), so the payload snapshot is the only input — the page cannot be re-read."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "notion": {
+    "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
+    "api_version": "2026-03-11",
+    "note": "Writes Deals 'Value' (number) via a raw page PATCH. An empty Project Fee SKIPS rather than blanking Value (mirror rule: never blank what you failed to read)."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-10",
+  "version_created_at": "2026-08-10",
+  "replaces_classic_zap": "Update Deal Value When Proposal Fee Updated",
+  "staleness_flag": "As of 2026-08-10 NO data source visible to the work.flowers Zapier integration carries a 'Project Fee' property — the current 'Project Proposals' data source (1d791b07-11ac-8058-8c70-000b0d0dfaf2) has none, and fees appear to have moved to Xero Quotes. The classic Zap's export also showed has_automatic_issues on its Notion step. When repointing the Notion automation (cutover), verify the source database still sends 'Project Fee' + 'Deal'; if the shape changed, the durable throws loudly naming the properties it saw.",
+  "cutover": {
+    "notion_sender_repointed": "PENDING — find the Notion automation that POSTs proposal pages to the classic Zap's catch URL, repoint it to webhook_url above, and confirm the source DB's property names",
+    "classic_zap_disabled": "PENDING — disable in the Zapier UI",
+    "status": "deployed, awaiting cutover"
+  },
+  "description": "Proposal webhook from Notion -> copy Project Fee onto the related Deal's Value. Skips on empty fee or missing Deal relation; throws when the payload shape is unrecognizable."
+}

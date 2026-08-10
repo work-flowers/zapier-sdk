@@ -1,0 +1,50 @@
+{
+  "name": "deal-to-client-slack-channel",
+  "workflow_id": "019feb0a-51c3-729c-9e8f-759eed70a2b2",
+  "current_version_id": "019feb0b-1c24-7950-add2-a12fe763b747",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcCtXqD8fx-eLcorQujkpQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/C1a22fqjigbJS2n2t/",
+    "trigger_note": "Catch hook. The Notion DEALS database automation (deal stage change) and/or the Deals 'Create Slack Channel' button property POST the deal page here. `webhook_url` is the one external systems call; `trigger_url` is Zapier-internal."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74"
+  },
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
+    "api_version": "2026-03-11",
+    "note": "Pages are read and written with sdk.fetch against the Notion REST API, matching the rest of this repo. Guard + write-back property: Companies 'Slack Channel ID' (rich_text); the 'Slack Channel' property is now a FORMULA rendering the URL from it, so the id is the only write."
+  },
+  "tables": {
+    "01JM3J9SG5X6S8GBSSC8AS28AT": "[Table] Internal User IDs — Notion user id (f6) -> Slack user id (f3), for inviting the deal owner. A missing mapping throws (config gap, not a skip).",
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read or written by this workflow. The classic Zap's find-or-create + guard queried it; the durable guards on the Notion page property instead, and notion-companies-to-zapier-table mirrors the id into the Table."
+  },
+  "ai_model": {
+    "step": "generate-channel-name",
+    "tier": "standard/auto",
+    "why": "Shortening a company name to a slug is a trivial generation task; Standard matched the intent on every verified case and the workflow deterministically re-enforces all naming rules afterwards (normalizeChannelName), so tier only affects word choice."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-10",
+  "version_created_at": "2026-08-10",
+  "replaces_classic_zap": "Create Client Slack Channel from Notion",
+  "cutover": {
+    "notion_sender_repointed": "PENDING — repoint the Notion Deals automation/button that POSTs to the classic Zap's catch URL to webhook_url above",
+    "classic_zap_disabled": "PENDING — classic Zaps are exposed by neither the SDK CLI nor the MCP connector; disable in the Zapier UI",
+    "status": "deployed, awaiting cutover"
+  },
+  "description": "Deal webhook from Notion -> AI-shortened 'deal-*' Slack channel for the company, channel id written back to the Company, deal owner invited unless it's Dennis (whose connection created the channel)."
+}
