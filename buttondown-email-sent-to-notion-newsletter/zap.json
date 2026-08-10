@@ -1,0 +1,77 @@
+{
+  "name": "buttondown-email-sent-to-notion-newsletter",
+  "workflow_id": "019febf8-2485-77fe-a81b-7db323701ff6",
+  "current_version_id": "019febf8-a57c-760b-8cae-925dea9cc7de",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR28ffoWa-QdV0xr1JSgIQ",
+  "enabled": true,
+  "is_private": false,
+  "replaces_classic_zap": "Newsletter Sent -> Update Status in Notion",
+  "trigger": {
+    "selected_api": "ButtondownCLIAPI@2.0.4",
+    "action": "email",
+    "authentication_id": "02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe",
+    "params": {},
+    "status": "active",
+    "webhook_url": null,
+    "notes": "Polling trigger on the official Buttondown app, connection `workflowers`. Fires for EVERY email Buttondown sends, not only ones drafted from Notion — see the skip path. Durable triggers cannot set a polling interval, so any custom interval on the classic Zap was silently dropped at migration."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers | Dennis <dennis@work.flowers>. NEVER the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
+    "TableCLIAPI": "search/find_record against Zapier Table 01KNJN2MSBAJVXRME6M1Y65F5B — Zapier Tables need no connection and cost no tasks."
+  },
+  "app_versions": {
+    "NotionCLIAPI": {
+      "implementation_name": "NotionCLIAPI",
+      "version": "2.39.1"
+    },
+    "TableCLIAPI": {
+      "implementation_name": "TableCLIAPI",
+      "version": "1.26.0"
+    }
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "notion": {
+    "data_source_id": "0c691b07-11ac-82fa-bc1b-07d0186a095d",
+    "data_source_name": "Newsletter Issues",
+    "properties_written": "Status (status) -> \"Sent\"; Send Date (date) via `properties|||Send Date|||date__start`, which requires use_zapier_datetime_fields: true alongside it",
+    "template_mode": "N/A — this updates an existing page and never creates one, so repo rule 5 does not apply"
+  },
+  "zapier_table": {
+    "id": "01KNJN2MSBAJVXRME6M1Y65F5B",
+    "name": "Email Newsletter ID Mapping",
+    "fields": {
+      "f1": "Page ID (Notion Newsletter Issues page id)",
+      "f2": "Buttondown Email ID",
+      "f3": "Created at"
+    },
+    "writer": "notion-newsletter-to-buttondown (best-effort, keyed on Page ID)",
+    "result_shape": "find_record wraps each hit as {new, old, record_id, table_id} — values at data[0].old.data.<fieldId> — and returns {data: []} on a miss."
+  },
+  "fixes_applied_vs_classic_zap": [
+    "Empty-lookup guard. The classic Zap set `_zap_search_success_on_miss: false`, which halts on a miss. A durable reading `data[0].old.data.f1` unguarded would throw and burn all five step retries — exactly the bug that cost update-notion-when-rescheduled-in-buttondown 100% of its runs. Since the trigger fires for every Buttondown send, a miss is a routine non-event: it logs and returns `{skipped: \"no-notion-page-for-email\"}`.",
+    "publish_date is optional. A send event without one now still marks the issue Sent rather than failing; the classic Zap would have written an empty date.",
+    "A payload with no email id still throws, naming the keys it received.",
+    "Returns only ids rather than the Notion action's echo of the entire page, which keeps the step checkpoint small."
+  ],
+  "relationship_to_sibling_zaps": {
+    "notion-newsletter-to-buttondown": "The outbound leg. Creates the Buttondown draft/scheduled email from the Notion page and writes the mapping row this Zap reads.",
+    "update-notion-when-rescheduled-in-buttondown": "Writes the same `Send Date` property off the `new_email_reschedule` trigger. No conflict: that one fires while the email is still scheduled, this one when it actually sends, and both write the same value from the same source. This Zap additionally sets Status."
+  },
+  "verification": {
+    "date": "2026-08-10",
+    "main_path": "run 019febf6-f1f3-761d-bfb8-65cf43d8c456 — em_1msefrj2489f1bdf3sj8k2wmdk -> page 93cdde00-bfd7-4321-8e5c-dc9723505826 (\"What I Learned Optimising a Multi-Turn AI Agent\"). Chosen because that issue was ALREADY Status=Sent with Send Date 2026-04-07T01:00:00.000Z, so the write was a no-op against live data.",
+    "skip_path": "run 019febee-5990-744f-81b5-cf9c9ee7b3fa — an unmapped Buttondown email id returns {skipped: \"no-notion-page-for-email\"} without raising.",
+    "typecheck": "tsc --strict --skipLibCheck clean",
+    "note": "An earlier main-path run (019febe9-8c3f-7006-964c-0c3f6feaa378) stalled in `started` with zero recorded operations and never completed. The identical code and input finished in seconds on retry, so this was a transient run-durable sandbox stall, not a workflow defect."
+  },
+  "created_at": "2026-08-10T13:58:00.000Z",
+  "version_created_at": "2026-08-10T13:59:29.013Z",
+  "description": "Buttondown email sent -> set Status=Sent and Send Date on the Notion Newsletter Issues page, resolved via the Email Newsletter ID Mapping Table."
+}

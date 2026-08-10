@@ -1,0 +1,71 @@
+{
+  "name": "deal-won-to-newsletter-subscriber",
+  "workflow_id": "019febf8-3292-7656-81c7-1282de5e0937",
+  "current_version_id": "019febf8-b13e-7ad6-be58-912e56ab898d",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AewcWF109tWHfnuXqx79yw",
+  "enabled": true,
+  "is_private": false,
+  "replaces_classic_zap": "Deal Won -> Add Lead Contact to Mailing List",
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CqdlciNMGmX51pfG/",
+    "trigger_note": "Catch hook, posted to by a Notion Deals database automation when a deal is won. `webhook_url` is the one external systems call; `trigger_url` is Zapier-internal and must never be handed out. THIS IS A NEW URL — the Notion automation must be repointed at it or this Zap never fires (see `cutover`)."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "buttondown_wf": "02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers | Dennis <dennis@work.flowers>. NEVER the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
+    "buttondown_wf": "Official Buttondown app, connection titled `workflowers`."
+  },
+  "app_versions": {
+    "ButtondownCLIAPI": {
+      "implementation_name": "ButtondownCLIAPI",
+      "version": "2.0.4"
+    }
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "notion": {
+    "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
+    "property_read": "Contact Email (rollup over the linked Contact's email)",
+    "api_version": "2026-03-11",
+    "note": "The deal page is re-read with sdk.fetch against the Notion REST API rather than trusted from the webhook payload. A rollup in particular is computed downstream of the relation that triggered the automation, so the payload snapshot can be stale. Nothing is written to Notion."
+  },
+  "buttondown": {
+    "action": "ButtondownCLIAPI write subscriber, with automatically_activate: true",
+    "firewall_finding": "Buttondown answers a re-subscribe of an existing address with `This subscriber was blocked by your firewall` (partner_error, HTTP 200) — NOT an 'already exists' message, and indistinguishable from a genuine firewall refusal of a brand-new address. Reproduced live on 2026-08-10 (run 019febef-133f-7f63-b9a7-37864a9c51eb), where it burned all five step retries and failed the run. The workflow therefore looks before it writes: `search subscriber` first (a miss returns `{data: []}`, not an error), short-circuit if found, and only then create. Any refusal that survives that check is real and fails loudly, by design — a lead silently not subscribed is worse than an alert."
+  },
+  "behaviour_changes_vs_classic_zap": [
+    "Empty-payload guard (repo rule). A catch URL is public and gets pinged during setup; an empty body now returns {skipped: \"empty-payload\"} instead of raising. A payload with content but no usable page id still throws.",
+    "Subscribes EVERY distinct address in the rollup, not just the first. The classic Zap mapped the flattened `array[]email`, which on a multi-contact deal would have sent Buttondown a single comma-joined, unusable string.",
+    "Re-reads the deal page instead of trusting the webhook snapshot.",
+    "Skips (does not raise) when the rollup is empty — the classic Zap's `Contact Email Populated` filter, which halted silently.",
+    "Skips when the deal page is archived or in the trash.",
+    "Idempotent on a re-won deal: the pre-check finds the existing subscriber and short-circuits."
+  ],
+  "cutover": {
+    "status": "PENDING — Dennis to repoint the Notion Deals automation at the webhook_url above, then disable the classic Zap.",
+    "why_it_matters": "Until the Notion automation is repointed this durable has an active trigger and zero traffic, while the classic Zap keeps serving. Leaving both pointed at their own URLs would double-subscribe, though Buttondown's duplicate handling makes that harmless.",
+    "classic_zap_disabled": null,
+    "not_machine_verifiable": "Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so the disable must be done and confirmed in the Zapier UI."
+  },
+  "verification": {
+    "date": "2026-08-10",
+    "main_path": "run 019febf5-e9d0-754c-aa5a-f60f32fdca31 — deal 1d8004ce-a30e-4796-a8dd-5bc213339f15 (\"Terrascope — GTM Automation\") -> rollup resolved jochen@terrascope.com -> already a Buttondown subscriber (44aa2095-…), short-circuited. Chosen so the run exercised page fetch, rollup extraction and the subscriber pre-check end to end without creating a subscriber.",
+    "ping_path": "run 019febf6-54e7-7468-af4c-5910010b2d0b — {\"querystring\":{}} returns {skipped: \"empty-payload\"} without raising.",
+    "untested": "The create branch. Every address reachable from a real won deal is already subscribed, and exercising it would have added a real person to the live mailing list.",
+    "typecheck": "tsc --strict --skipLibCheck clean"
+  },
+  "created_at": "2026-08-10T13:58:00.000Z",
+  "version_created_at": "2026-08-10T13:59:32.129Z",
+  "description": "Notion Deal Won webhook -> subscribe the deal's contact email(s) to the Buttondown newsletter."
+}

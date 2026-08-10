@@ -1,0 +1,13 @@
+{
+  "name": "notion-contact-to-newsletter-subscriber",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.97.1",
+    "@zapier/zapier-durable": "0.12.5",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
