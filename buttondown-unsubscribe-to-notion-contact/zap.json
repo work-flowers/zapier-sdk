@@ -1,0 +1,76 @@
+{
+  "name": "buttondown-unsubscribe-to-notion-contact",
+  "workflow_id": "019febf8-14c3-77c3-bdf2-b47bda07eb5a",
+  "current_version_id": "019febf8-990a-7f4c-8120-ef7cc39771fb",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ad3irtPKfZaBFD9TBXqMIw",
+  "enabled": true,
+  "is_private": false,
+  "replaces_classic_zap": "Unsubscribe in Buttondown -> Update in Notion",
+  "trigger": {
+    "selected_api": "App240106CLIAPI@1.0.4",
+    "action": "new_unsubscribe",
+    "authentication_id": "02a9a6e8-4c09-8cdb-a798-4d65af16d32a",
+    "params": {},
+    "status": "active",
+    "webhook_url": null,
+    "notes": "Polling trigger on the private `Buttondown Unofficial #2` app (source: ~/Repos/zapier-buttondown), the same app that carries `new_email_reschedule` for update-notion-when-rescheduled-in-buttondown. The official ButtondownCLIAPI exposes an `unsubscriber` read, but it is is_hidden and therefore off the stable surface. Durable triggers cannot set a polling interval, so any custom interval on the classic Zap was silently dropped at migration."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers | Dennis <dennis@work.flowers>. NEVER the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
+    "TableCLIAPI": "search/find_record against Zapier Table 01JYEPSEARXB2Z6BJRCMFGXBC2 \u2014 Zapier Tables need no connection and cost no tasks."
+  },
+  "app_versions": {
+    "NotionCLIAPI": {
+      "implementation_name": "NotionCLIAPI",
+      "version": "2.39.1"
+    },
+    "TableCLIAPI": {
+      "implementation_name": "TableCLIAPI",
+      "version": "1.26.0"
+    }
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "notion": {
+    "data_source_id": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "data_source_name": "Contacts",
+    "property_written": "Mailing List (checkbox) -> false",
+    "template_mode": "N/A \u2014 this updates an existing page and never creates one, so repo rule 5 does not apply"
+  },
+  "zapier_table": {
+    "id": "01JYEPSEARXB2Z6BJRCMFGXBC2",
+    "name": "Email Addresses <-> Notion Contact Page IDs",
+    "fields": {
+      "f2": "Notion Contacts page id",
+      "f3": "Email (stored lowercase)"
+    },
+    "writer": "contact-emails-to-zapier-table",
+    "result_shape": "find_record wraps each hit as {new, old, record_id, table_id} \u2014 values at data[0].old.data.<fieldId> \u2014 and returns {data: []} on a miss."
+  },
+  "fixes_applied_vs_classic_zap": [
+    "Empty-lookup guard. The classic Zap set `_zap_search_success_on_miss: false`, which halts the Zap on a miss. A durable reading `data[0].old.data.f2` unguarded would instead throw and burn all five step retries. Buttondown holds addresses that were never CRM contacts (site sign-ups, imported lists), so a miss is routine \u2014 it now logs and returns `{skipped: \"no-notion-contact-for-email\"}`.",
+    "Lowercases the lookup address. The Table is indexed lowercase by contact-emails-to-zapier-table, so a mixed-case unsubscribe would have missed every row.",
+    "A payload with no email_address still throws, naming the keys it received, instead of writing against `undefined`.",
+    "Returns only the email and page id rather than the Notion action's echo of the entire contact page, which keeps the step checkpoint small."
+  ],
+  "verification": {
+    "date": "2026-08-10",
+    "main_path": "run 019febe7-35e2-7a5c-a373-8bcb57cc1cd2 \u2014 nitya@heyamos.com -> contact 04260295-4ab8-4bd2-896c-b28a684d6696, Mailing List written false. Chosen because that contact's Mailing List was ALREADY false, so the write was a no-op against live data.",
+    "skip_path": "run 019febf7-6119-7ccc-961f-e3836ee51929 \u2014 an address with no Table row returns {skipped: \"no-notion-contact-for-email\"} without raising.",
+    "typecheck": "tsc --strict --skipLibCheck clean"
+  },
+  "created_at": "2026-08-10T13:58:00.000Z",
+  "version_created_at": "2026-08-10T13:59:25.912Z",
+  "description": "Buttondown unsubscribe -> untick Mailing List on the matching Notion contact, resolved via the shared email->page-id Zapier Table.",
+  "cutover": {
+    "status": "complete \u2014 2026-08-10, confirmed by Dennis.",
+    "external_rewiring_needed": "none \u2014 this is a polling trigger, so there was no catch URL for an external system to be repointed at.",
+    "classic_zap_disabled": "2026-08-10 \u2014 confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector."
+  }
+}
