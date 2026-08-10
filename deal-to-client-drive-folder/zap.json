@@ -41,9 +41,9 @@
   "replaces_classic_zap": "Create Google Drive Folder from Notion",
   "supersedes": "deal-won-set-up-client-workspace (source-only, never deployed)",
   "cutover": {
-    "notion_sender_repointed": "PENDING — repoint the Notion Deals automation/button that POSTs to the classic Zap's catch URL to webhook_url above",
-    "classic_zap_disabled": "PENDING — disable in the Zapier UI",
-    "status": "deployed, awaiting cutover"
+    "notion_sender_repointed": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: Notion automation/button config isn't exposed by the SDK CLI or MCP connector",
+    "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector",
+    "status": "complete — this durable is the only thing serving this Notion sender"
   },
   "description": "Deal webhook from Notion -> create the company's Google Drive folder under Client Docs (Work.Flowers HQ shared drive), write the folder id back to the Company."
 }

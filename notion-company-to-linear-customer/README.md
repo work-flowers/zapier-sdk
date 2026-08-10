@@ -50,14 +50,12 @@ set) → `skipped: already-in-linear`. The `createCustomer` inputs (`name`,
 `domains`, `externalIds`) are field-verified against the live connection;
 watch the first live run after cutover.
 
-## Cutover (pending)
+## Cutover
 
-1. Disable the classic Zap **"Company Linked to Deal -> Create Customer in
-   Linear"** in the Zapier UI. While both are enabled, each new
-   company-with-deal is raced by two creators — the durable loses gracefully
-   only if the classic Zap has already written the id back to Notion, so
-   don't leave the overlap running longer than needed.
-2. Record it in `zap.json` → `cutover`.
+**Complete as of 2026-08-10.** The classic Zap **"Company Linked to Deal ->
+Create Customer in Linear"** was disabled — confirmed by Dennis. Not
+machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the
+MCP connector.
 
 ## Maintainer notes
 
