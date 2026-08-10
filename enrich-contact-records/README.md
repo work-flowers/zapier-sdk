@@ -13,7 +13,9 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    payload with content but no page id still throws, loudly. (Added
    2026-08-10.)
 2. **Enrich** — Three-source cascade with the contact's email, name, domain,
-   and LinkedIn URL: **Lusha → Apollo → NinjaPear**. When the `First Name` /
+   and LinkedIn URL: **Apollo → Lusha → NinjaPear**. Apollo leads because it
+   also returns a profile photo (used for the page icon/cover) and a bio,
+   which Lusha never provides. (Order flipped 2026-08-10; Lusha briefly led.) When the `First Name` /
    `Last Name` properties are empty, the name is parsed from the page **title**
    instead (auto-created contacts often carry the person's name only there); a
    title that is just an email address is not treated as a name. (Added
@@ -28,7 +30,15 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    (skipped for freemail addresses, which name no employer). Contacts with a
    perfectly good corporate email but no linked Company page were previously
    unenrichable by the fallback for want of a domain. (Added 2026-07-28.)
-   - **Primary — Lusha Connect** (`LushaCLIAPI`): a two-call flow, because
+   - **Primary — Apollo.io** (`POST https://api.apollo.io/api/v1/people/match`):
+     called through Apollo's native **API Request (Beta)** action
+     (`_zap_raw_request`), which issues the raw HTTP request *with the
+     integration's own auth headers attached*. (A plain `sdk.fetch` through the
+     connection does **not** get those headers and Apollo returns 401.) Sent
+     with `reveal_personal_emails: false` / `reveal_phone_number: false` to keep
+     credit spend minimal, and `fail_on_errors: false` so a non-2xx response is
+     returned (and falls back) rather than throwing.
+   - **Second — Lusha Connect** (`LushaCLIAPI`): a two-call flow, because
      `search_and_enrich_contacts` — despite its name — only resolves a Lusha
      contact id; its output carries **no email fields at all** (verified
      2026-08-10 against Megan Anderson, with the `reveal` param set and unset).
@@ -39,16 +49,8 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      its existing page icon and Bio. The call is skipped (with an explicit
      reason) when the contact has no email, no LinkedIn URL, and no
      name + company domain — nothing Lusha can match on.
-   - **Second — Apollo.io** (`POST https://api.apollo.io/api/v1/people/match`):
-     called through Apollo's native **API Request (Beta)** action
-     (`_zap_raw_request`), which issues the raw HTTP request *with the
-     integration's own auth headers attached*. (A plain `sdk.fetch` through the
-     connection does **not** get those headers and Apollo returns 401.) Sent
-     with `reveal_personal_emails: false` / `reveal_phone_number: false` to keep
-     credit spend minimal, and `fail_on_errors: false` so a non-2xx response is
-     returned (and falls back) rather than throwing.
    - **Final fallback — NinjaPear** (`App243984CLIAPI.search.find_person_profile`):
-     used only when both Lusha and Apollo error (e.g. invalid key / no credits),
+     used only when both Apollo and Lusha error (e.g. invalid key / no credits),
      return a non-2xx, or return no usable match.
 
      **NinjaPear rejects personal-email lookups** (data-privacy policy), and a
@@ -96,10 +98,10 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      never fails the run.
 4. **Add outcome comment** — Posts a brief comment on the triggering Notion
    page stating the outcome of the run:
-   - which source did the enrichment (**Lusha**, **Apollo** or **NinjaPear**);
+   - which source did the enrichment (**Apollo**, **Lusha** or **NinjaPear**);
    - when a fallback source did the work, a short labelled note on **why each
-     earlier source failed** (e.g. `(Lusha: no result; Apollo: HTTP 422 — You
-     have insufficient credits!)`);
+     earlier source failed** (e.g. `(Apollo: HTTP 422 — You have insufficient
+     credits!; Lusha: no result)`);
    - when nothing enriched, **one clause per source tried**, each labelled and
      trimmed on its own, with JSON/HTML error wrapping stripped — e.g.
      `Enrichment skipped — Apollo: HTTP 422 — You have insufficient credits! …;
@@ -122,11 +124,11 @@ flowchart TD
     A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> P{"Empty ping?<br/>(URL test, browser hit, curl)"}
     P -- yes --> PS(["Log and skip<br/>(no error raised)"])
     P -- no --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title;<br/>domain falls back to email host)"]
-    B --> LU["Primary: Lusha search_and_enrich_contacts<br/>(resolves Lusha id) → enrich_contacts<br/>with reveal: emails only"]
-    LU -- "usable match" --> E
-    LU -- "error / no id / no match /<br/>nothing to match on" --> AP["Second: Apollo people/match<br/>with email, name, domain, LinkedIn URL"]
+    B --> AP["Primary: Apollo people/match<br/>with email, name, domain, LinkedIn URL"]
     AP -- "usable match" --> E
-    AP -- "error / no credits / no match" --> NPG{"Company domain AND a name?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
+    AP -- "error / no credits / no match" --> LU["Second: Lusha search_and_enrich_contacts<br/>(resolves Lusha id) → enrich_contacts<br/>with reveal: emails only"]
+    LU -- "usable match" --> E
+    LU -- "error / no id / no match /<br/>nothing to match on" --> NPG{"Company domain AND a name?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
     NPG -- "yes" --> NP["Fallback: NinjaPear<br/>find_person_profile<br/>(domain + name is the only<br/>combo that resolves)"]
     NPG -- "no domain, or no name" --> D
     NP -- "profile found" --> E{"Enriched email vs existing<br/>Primary Email?"}
@@ -258,8 +260,8 @@ stale, which is harmless — lookups match on `Email` only.
 | Alias | App key | Connection | Connection id |
 |---|---|---|---|
 | `notion_wf` | `NotionCLIAPI` | `work.flowers \| Dennis` | `02b73654-15c8-85c3-b16a-07304d2beb17` |
-| `lusha` | `LushaCLIAPI` | Lusha Connect (primary enrichment) | `02532e03-2b39-869c-8fe4-15257e2b099c` |
-| `apollo` | `ApolloCLIAPI` | Apollo.io (second source, via API Request Beta) | `02be390b-7f16-8214-9337-c9a9b04cf4f7` |
+| `apollo` | `ApolloCLIAPI` | Apollo.io (primary enrichment, via API Request Beta) | `02be390b-7f16-8214-9337-c9a9b04cf4f7` |
+| `lusha` | `LushaCLIAPI` | Lusha Connect (second source) | `02532e03-2b39-869c-8fe4-15257e2b099c` |
 | `enrichment` | `App243984CLIAPI` | Person enrichment app (zapier-ninjapear, final fallback) | `025703ba-3a5f-8132-9138-e87fb3599abc` |
 
 > ⚠️ **Notion connection:** `notion_wf` **must** be the `work.flowers | Dennis`
@@ -329,14 +331,16 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
 
 ## Architectural changes vs the original Zaps
 
-- **Lusha primary, Apollo second, NinjaPear last** — the original Zap used
-  NinjaPear as the sole enrichment source. This Durable tries Lusha's
-  search + enrich pair first (added 2026-08-10), then Apollo.io's
-  `people/match` endpoint (via Apollo's API Request (Beta) action,
-  `_zap_raw_request`), and only falls back to NinjaPear when both fail. Each
-  enrichment call catches its own errors and returns a value rather than
-  throwing, so a failing source falls through on the first attempt instead of
-  burning the durable's step-retry budget.
+- **Apollo primary, Lusha second, NinjaPear last** — the original Zap used
+  NinjaPear as the sole enrichment source. This Durable tries Apollo.io's
+  `people/match` endpoint first (via Apollo's API Request (Beta) action,
+  `_zap_raw_request`), then Lusha's search + enrich pair (added 2026-08-10;
+  it briefly led before the order was flipped the same day — Apollo also
+  returns a profile photo and bio, which Lusha never does), and only falls
+  back to NinjaPear when both fail. Each enrichment call catches its own
+  errors and returns a value rather than throwing, so a failing source falls
+  through on the first attempt instead of burning the durable's step-retry
+  budget.
 - **No sub-Zap** — the sub-Zap's four-path branching logic (Path D / G / C / E)
   collapses into a single inline function with if/else blocks.
 - **No retry** — the original parent Zap retried enrichment after a 1-minute
