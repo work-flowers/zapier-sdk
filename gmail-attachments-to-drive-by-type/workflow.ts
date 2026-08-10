@@ -179,12 +179,31 @@ function looksLikeRawFileBytes(text: string): boolean {
  * error that quotes the offending bytes back at us would checkpoint just as badly
  * as the text itself.
  */
-const C0_EXCEPT_WHITESPACE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g;
-const LONE_SURROGATE =
-  /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-
+// Written with char-code arithmetic instead of regex escape literals on
+// purpose: a backslash-u0000 or lone-surrogate escape in this file's OWN SOURCE
+// hits the same jsonb 22P05 rejection this function exists to prevent, whenever
+// the source is shipped through a JSON channel that decodes escapes (observed
+// publishing via the Zapier MCP connector). Keep this block pure printable ASCII.
 function stripUncheckpointableChars(text: string): string {
-  return text.replace(C0_EXCEPT_WHITESPACE, "").replace(LONE_SURROGATE, "");
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    // C0 controls, keeping tab (9), newline (10) and carriage return (13).
+    if (c < 32 && c !== 9 && c !== 10 && c !== 13) continue;
+    // High surrogate: keep only as half of a valid pair.
+    if (c >= 55296 && c <= 56319) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (next >= 56320 && next <= 57343) {
+        out += text[i] + text[i + 1];
+        i++;
+      }
+      continue;
+    }
+    // A low surrogate here did not follow a high one: lone, drop it.
+    if (c >= 56320 && c <= 57343) continue;
+    out += text[i];
+  }
+  return out;
 }
 
 interface Attachment {
@@ -574,8 +593,16 @@ type Decision =
  *
  * The whole point of classifying an email's attachments together is this
  * function: an invoice is withheld from the Invoices folder when the SAME email
- * also carries the receipt that settles it. Four independent signals establish
- * that, checked strongest first so the recorded reason names the real evidence.
+ * also carries the receipt that settles it. Independent signals establish that,
+ * checked strongest first so the recorded reason names the real evidence.
+ *
+ * A PAID INVOICE IS THE RECEIPT when no actual receipt exists. Card-billed
+ * vendors often send no separate receipt at all — just the invoice stamped
+ * "Paid" (Aspire), or an invoice plus a statement proving the auto-charge
+ * (SimplePay). In those cases the paid invoice is the only record of payment,
+ * so it files to Paid Receipts. When the email DOES carry a real receipt, the
+ * receipt is the filed record and the invoice still skips — filing both would
+ * put two documents for the same payment in the folder.
  */
 function decide(
   classifications: Array<Classification | null>,
@@ -657,15 +684,30 @@ function decide(
           reason: "already paid — classifier matched a receipt on this email to this invoice",
         };
       }
-      if (c.autoPaidByRecurringCharge && hasVendorStatement) {
+      // The invoice's own evidence of settlement: paid markers on the document,
+      // or a sibling statement proving the vendor auto-clears every invoice.
+      const paidOnOwnEvidence =
+        c.paymentStatus === "Paid" || (c.autoPaidByRecurringCharge && hasVendorStatement);
+      if (paidOnOwnEvidence) {
+        const evidence =
+          c.autoPaidByRecurringCharge && hasVendorStatement
+            ? "the account statement on this email shows this vendor's invoices auto-cleared by same-day card payments"
+            : "payment markers on the invoice itself";
+        // A readable receipt on this email always files to Paid Receipts, so
+        // it is the record of this payment — the invoice would be a duplicate.
+        if (hasReceipt) {
+          return {
+            action: "skip",
+            reason: `already paid — ${evidence}; the receipt on this email is the filed record`,
+          };
+        }
+        // No receipt exists, so the paid invoice IS the receipt.
         return {
-          action: "skip",
-          reason:
-            "already paid — the account statement on this email shows this vendor's invoices auto-cleared by same-day card payments",
+          action: "file",
+          folderId: FOLDER_PAID_RECEIPTS,
+          folderName: "Paid Receipts",
+          reason: `paid invoice — ${evidence}; no receipt on this email, so the invoice is the record of payment`,
         };
-      }
-      if (c.paymentStatus === "Paid") {
-        return { action: "skip", reason: "already paid — payment markers on the invoice itself" };
       }
       if (hasSettlingReceipt && present.length > 1) {
         return {
@@ -740,7 +782,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     // 1. Extract each PDF's text. Files by Zapier needs no connection.
     //
     // A PDF that won't convert (scanned, encrypted, malformed) yields empty
-    // text rather than failing the run — the classifier still sees its filename
+    // text rather than failing the run — the classifier still gets its filename
     // and the surrounding email, which is often enough to categorise it.
     const extracted = await Promise.all(
       attachments.map((att, index) =>

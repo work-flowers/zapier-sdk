@@ -1,14 +1,15 @@
 {
   "type": "module",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.91.0",
     "@zapier/zapier-durable": "0.10.1",
+    "@zapier/zapier-sdk": "0.91.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "typescript": "latest"
   },
   "scripts": {
-    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts",
+    "test": "node decide.test.mjs"
   }
 }

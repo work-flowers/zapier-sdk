@@ -1,7 +1,7 @@
 {
   "name": "gmail-attachments-to-drive-by-type",
   "workflow_id": "019fa1a7-56b8-7a92-bcef-e276ccf409d3",
-  "current_version_id": "019fdb72-9792-7d2e-94b8-b8e8c1cba7b5",
+  "current_version_id": "019fead3-84ca-7e22-9c63-1f8a0fa14af5",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac3NgVbpd6LybyXHk36LAg",
   "enabled": true,
   "is_private": false,
@@ -35,13 +35,13 @@
     "Financial Reporting": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo"
   },
   "created_at": "2026-07-27T03:38:46.329Z",
-  "version_created_at": "2026-08-07T08:59:08.252Z",
+  "version_created_at": "2026-08-10T08:39:18.613Z",
   "ai_model": {
     "model_id": "standard/auto",
     "authentication_id": "0",
     "note": "Tier drives task cost: standard 1x, advanced 3x, premium 5x tasks per run (plus the same multiplier per tool call; this step makes none). Those three sentinels are the only valid values — anything else errors with 'Unknown tier sentinel'. Standard reaches the same routing verdict as Advanced on every case in the README's verified table, including SimplePay's statement-history inference. Re-run those cases before changing tier."
   },
-  "description": "Gmail email with PDF attachments -> classify every attachment in ONE AI by Zapier call (email context + all extracted PDF text) -> file each into Invoices / Paid Receipts / Signed Agreements / Financial Reporting. Migration of the classic 'Gmail Attachments to Google Drive by Type' Zap. The Invoices folder holds only outstanding bills: an invoice is withheld when a receipt on the same email settles it (matched on invoice number), when the classifier matches a sibling receipt on vendor+amount+date, when a sibling account statement shows the vendor auto-clearing every prior invoice with a same-day card payment, or when the invoice itself carries paid markers. The classic Zap's 'due date == invoice date' proxy is deliberately gone — due-on-receipt invoices are often genuinely unpaid.",
+  "description": "Gmail email with PDF attachments -> classify every attachment in ONE AI by Zapier call (email context + all extracted PDF text) -> file each into Invoices / Paid Receipts / Signed Agreements / Financial Reporting. Migration of the classic 'Gmail Attachments to Google Drive by Type' Zap. The Invoices folder holds only outstanding bills: an invoice is withheld when a receipt on the same email settles it (matched on invoice number), when the classifier matches a sibling receipt on vendor+amount+date, when a sibling account statement shows the vendor auto-clearing every prior invoice with a same-day card payment, or when the invoice itself carries paid markers. A paid invoice is treated as the receipt when no actual receipt exists: settled on its own evidence (paid markers, or the auto-charge statement) with no sibling receipt on the email, it files to Paid Receipts as the record of payment; with a real receipt attached, the receipt is the filed record and the invoice skips. The classic Zap's 'due date == invoice date' proxy is deliberately gone — due-on-receipt invoices are often genuinely unpaid.",
   "version_history": [
     {
       "id": "019fa1a7-c94b-7ce7-9a03-9ee90bf20863",
@@ -67,6 +67,11 @@
       "id": "019fdb72-9792-7d2e-94b8-b8e8c1cba7b5",
       "created_at": "2026-08-07T08:59:08.252Z",
       "note": "An attachment whose text could not be extracted is now NEVER filed, whatever it classifies as - encrypted, scanned, malformed or converted to empty text all stop at textExtracted:false with the reason 'no text could be extracted - not filed on filename and email evidence alone' and the underlying cause in the new textExtractionError output field. Dennis's call: classifying a document you cannot read is a guess off its filename and the surrounding email, and a guessed invoice in the Invoices folder is indistinguishable from a real bill. Unreadable attachments are also excluded from the sibling-evidence signals in decide(), so a filename-guessed 'Receipt' can no longer suppress a genuine outstanding invoice. They are still classified (the AI call is one per email, so a readable sibling pays for it anyway) and the verdict is recorded in run history. Accepted trade-off: a real unpaid bill arriving as a scan or encrypted PDF stays in Gmail only - fix that with OCR on extraction, not by relaxing this rule. Covered by 19 offline assertions over the real decide(), including every case in the README's verified table."
+    },
+    {
+      "id": "019fead3-84ca-7e22-9c63-1f8a0fa14af5",
+      "created_at": "2026-08-10T08:39:18.613Z",
+      "note": "A paid invoice is now treated as the receipt when no actual receipt exists (Dennis's call, prompted by Aspire's GISG-26080125-Paid.pdf being classified correctly but dropped). An invoice settled on its OWN evidence - paid markers on the document, or a sibling statement proving the recurring auto-charge - files to Paid Receipts as the record of payment, with the reason 'paid invoice - <evidence>; no receipt on this email, so the invoice is the record of payment'. When the email also carries a readable receipt, the receipt remains the filed record and the invoice still skips, so Paid Receipts never gets two documents for one payment. Classifier prompt unchanged; the change is entirely in decide(). Also rewrote stripUncheckpointableChars() with char-code arithmetic instead of regex escape literals: the old source's backslash-u0000 escape hit the same jsonb 22P05 rejection it guards against when the source was shipped through the Zapier MCP connector's JSON channel (four failed publish attempts before the rewrite). The offline decide() assertions are now COMMITTED as decide.test.mjs (npm test, 29 assertions, no network) instead of living only in a past session."
     }
   ],
   "replaces_classic_zap": {
