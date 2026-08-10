@@ -6,7 +6,11 @@ Drive folder. Migrated from the classic multi-step Zap *"Gmail Attachments to Go
 Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Paths → four Drive uploads).
 
 > **The Invoices folder is for bills that still need paying.** Everything below about payment
-> detection exists to keep already-settled invoices out of it.
+> detection exists to keep already-settled invoices out of it. A settled invoice is not
+> dropped, though: **when no actual receipt exists, the paid invoice is treated as the
+> receipt** and filed to Paid Receipts — it is the only record of the payment. Only when the
+> same email carries a real receipt does the invoice skip, since the receipt is the filed
+> record and the invoice would duplicate it.
 
 ## What it does
 
@@ -40,7 +44,8 @@ flowchart TD
     RD -- yes --> R{"Route per attachment"}
 
     R -- "Invoice<br/><b>still outstanding</b>" --> INV["📁 Invoices"]
-    R -- "Invoice<br/><b>already paid</b>" --> S1["⏹ skip — see Payment detection"]
+    R -- "Invoice <b>already paid</b>,<br/>sibling receipt on the email" --> S1["⏹ skip — the receipt<br/>is the filed record"]
+    R -- "Invoice <b>already paid</b>,<br/>no receipt exists" --> REC
     R -- Receipt --> REC["📁 Paid Receipts"]
     R -- "Legal Agreement<br/>Governance Document" --> AGR["📁 Signed Agreements"]
     R -- "Financial Statements" --> FIN["📁 Financial Reporting"]
@@ -81,13 +86,21 @@ first, so the reason recorded in the run output names the actual evidence:
 Only attachments whose text was actually extracted take part — see
 [Nothing is filed on evidence we couldn't read](#nothing-is-filed-on-evidence-we-couldnt-read).
 
-| # | Signal | Recorded reason |
+| # | Signal | Outcome |
 | --- | --- | --- |
-| 1 | A **`Receipt`** on this same email quotes the **same invoice number** (normalised: non-alphanumerics stripped, uppercased, ≥4 chars) | `a receipt on this email settles invoice <n>` |
-| 2 | The classifier set **Superseded By Receipt = Yes** — it matched a sibling receipt on vendor + amount + date when no invoice number was available | `classifier matched a receipt on this email to this invoice` |
-| 3 | The classifier set **Auto-Paid By Recurring Charge = Yes** *and* a `Vendor Account Statement` is attached — see [Recurring auto-charge](#recurring-auto-charge-no-receipt-exists) | `the account statement on this email shows this vendor's invoices auto-cleared by same-day card payments` |
-| 4 | **Paid markers on the invoice itself** — amount due zero, "Paid", "Date paid", card last-four, a settled payment-history row | `payment markers on the invoice itself` |
-| 5 | The email carries **any** paid receipt and more than one attachment (weakest; last resort) | `this email also carries a paid receipt` |
+| 1 | A **`Receipt`** on this same email quotes the **same invoice number** (normalised: non-alphanumerics stripped, uppercased, ≥4 chars) | **skip** — `a receipt on this email settles invoice <n>` |
+| 2 | The classifier set **Superseded By Receipt = Yes** — it matched a sibling receipt on vendor + amount + date when no invoice number was available | **skip** — `classifier matched a receipt on this email to this invoice` |
+| 3 | The classifier set **Auto-Paid By Recurring Charge = Yes** *and* a `Vendor Account Statement` is attached — see [Recurring auto-charge](#recurring-auto-charge-no-receipt-exists) | **filed → Paid Receipts** (or skip, if a receipt is also attached) |
+| 4 | **Paid markers on the invoice itself** — amount due zero, "Paid", "Date paid", card last-four, a settled payment-history row | **filed → Paid Receipts** (or skip, if a receipt is also attached) |
+| 5 | The email carries **any** paid receipt and more than one attachment (weakest; last resort) | **skip** — `this email also carries a paid receipt` |
+
+Signals 1, 2 and 5 all mean an actual receipt is on the email; that receipt files to Paid
+Receipts and the invoice skips as a duplicate. Signals 3 and 4 are the invoice's **own**
+evidence of settlement — no receipt exists in those shapes, so **the paid invoice is the
+receipt** and files to Paid Receipts with the reason
+`paid invoice — <evidence>; no receipt on this email, so the invoice is the record of payment`.
+If a readable receipt happens to be attached anyway, the invoice skips with
+`already paid — <evidence>; the receipt on this email is the filed record`.
 
 Signal 1 collects invoice numbers **from receipts only**, so an invoice can never mark itself
 settled. Signals 2 and 3 are each gated in code on the corresponding document actually being
@@ -136,7 +149,9 @@ an unpaid one is a missed bill — so when the model can't tell, it errs toward 
 
 | Category | Destination | Folder ID |
 | --- | --- | --- |
-| Invoice *(outstanding only)* | Invoices | `14RpcjSzye4BVZPS_1OzspabmQzDwFVRE` |
+| Invoice *(outstanding)* | Invoices | `14RpcjSzye4BVZPS_1OzspabmQzDwFVRE` |
+| Invoice *(paid, no sibling receipt)* | Paid Receipts | `1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC` |
+| Invoice *(paid, sibling receipt attached)* | *(none — the receipt is the filed record)* | — |
 | Receipt | Paid Receipts | `1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC` |
 | Legal Agreement | Signed Agreements | `1-1HCfTIdnngXv_1fhUHuPpjI6Nupk7-K` |
 | Governance Document | Signed Agreements | `1-1HCfTIdnngXv_1fhUHuPpjI6Nupk7-K` |
@@ -303,24 +318,25 @@ Run against real mail before publishing:
 | --- | --- | --- |
 | Vanta `#86736448-0002` | `Invoice-86736448-0002.pdf` — $18,178.94 due | **filed → Invoices** (correctly kept) |
 | NinjaPear `NP-2026-3DF070` | `Invoice-NP-2026-3DF070.pdf` — "AMOUNT DUE USD 0.00" | **filed → Paid Receipts** (reclassified despite the filename) |
-| Aspire, Google Workspace June | `GISG-26070126-Paid.pdf` — "Invoice Status : Paid" | **skipped** — paid markers |
-| Anthropic `#2215-5909-1740` | invoice + receipt pair | invoice **skipped**, receipt **filed** |
+| Aspire, Google Workspace June/July | `GISG-…-Paid.pdf` — "Invoice Status : Paid" | **filed → Paid Receipts** — paid markers, no receipt exists, so the invoice is the record. *(Skipped outright before 2026-08-10; the paid-invoice-is-the-receipt rule changed that.)* |
+| Anthropic `#2215-5909-1740` | invoice + receipt pair | invoice **skipped** (the receipt is the filed record), receipt **filed → Paid Receipts** |
 | Xero `INV-0081 from Company Flow` | `Invoice INV-0081.pdf` | **email skipped** — blocked subject |
-| SimplePay, July + March | `Invoice …pdf` + `Statement …pdf` | invoice **skipped** (recurring auto-charge, 16 / 12 priors), statement skipped |
+| SimplePay, July + March | `Invoice …pdf` + `Statement …pdf` | invoice **filed → Paid Receipts** (recurring auto-charge, 16 / 12 priors; no receipt exists — *skipped outright before 2026-08-10*), statement skipped |
 | Wise `Your monthly statement for Assets` | `Monthly_Statement.pdf` — password-protected | **email skipped** — blocked subject. With the subject unblocked, `extract-text-0` completes, `textExtracted: false`, `textExtractionError` names the conversion failure, and the attachment is **skipped as unreadable** rather than filed. Both paths re-run against the real 2026-08-07 payload. |
 
-The routing rules are also covered by 19 offline assertions over the real `decide()` — every case
-above, plus the unreadable-attachment rule and the guarantee that an unreadable sibling cannot
-suppress a readable outstanding invoice.
+The routing rules are also covered by offline assertions over the real `decide()` — now
+committed as [`decide.test.mjs`](decide.test.mjs), run with `npm test` (25 assertions; no
+network, no credentials). They cover every case above, the unreadable-attachment rule, the
+guarantee that an unreadable sibling cannot suppress a readable outstanding invoice, and the
+paid-invoice-is-the-receipt routing in both directions (files with no receipt, skips with one).
 
 Regression-checked after adding signal 3: Vanta still files (no statement, `Auto-Paid = No`) and
 Anthropic still skips via signal 1.
 
-> **Known nondeterminism.** Aspire's `GISG-…-Paid.pdf` — an invoice document stamped
-> `Invoice Status : Paid` — classifies as `Invoice`+`Paid` (skipped) on some runs and `Receipt`
-> (filed to Paid Receipts) on others. Both keep it out of Invoices, so neither outcome is
-> harmful; the difference is only whether the document is archived or dropped. Pin it by adding
-> a line to the prompt's category definitions if consistency matters.
+> **Known nondeterminism, now harmless.** Aspire's `GISG-…-Paid.pdf` — an invoice document
+> stamped `Invoice Status : Paid` — classifies as `Invoice`+`Paid` on some runs and `Receipt`
+> on others. Since the paid-invoice-is-the-receipt rule (2026-08-10), **both classifications
+> land in Paid Receipts**, so the nondeterminism no longer changes the outcome at all.
 
 ## Maintainer notes
 
