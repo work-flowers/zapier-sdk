@@ -52,10 +52,10 @@
     "Idempotent on a repeated click: the pre-check finds the existing subscriber and short-circuits."
   ],
   "cutover": {
-    "status": "PENDING — Dennis to repoint the Notion Contacts button property at the webhook_url above, then disable the classic Zap.",
-    "why_it_matters": "Until the button is repointed this durable has an active trigger and zero traffic, while the classic Zap keeps serving. Each button posts to exactly one URL, so there is no double-fire window.",
-    "classic_zap_disabled": null,
-    "not_machine_verifiable": "Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so the disable must be done and confirmed in the Zapier UI."
+    "status": "complete — 2026-08-10, confirmed by Dennis. This durable is the only thing serving the Notion Contacts button property.",
+    "notion_button_repointed": "2026-08-10",
+    "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "first_traffic": "Run 019fedff-1154-7f33-b6ee-6f213a145a04 (2026-08-10T23:25:44Z) — the wiring-up test click, delivering {\"querystring\":{}}. Returned {skipped: \"empty-payload\"} and did NOT raise. This is the exact case the guard was written for: a Notion button property delivers an empty body on every test click, and the predecessor behaviour would have raised an error alert here. No real button press on a populated contact has reached it yet."
   },
   "verification": {
     "date": "2026-08-10",

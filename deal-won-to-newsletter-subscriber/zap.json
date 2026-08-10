@@ -53,10 +53,10 @@
     "Idempotent on a re-won deal: the pre-check finds the existing subscriber and short-circuits."
   ],
   "cutover": {
-    "status": "PENDING — Dennis to repoint the Notion Deals automation at the webhook_url above, then disable the classic Zap.",
-    "why_it_matters": "Until the Notion automation is repointed this durable has an active trigger and zero traffic, while the classic Zap keeps serving. Leaving both pointed at their own URLs would double-subscribe, though Buttondown's duplicate handling makes that harmless.",
-    "classic_zap_disabled": null,
-    "not_machine_verifiable": "Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so the disable must be done and confirmed in the Zapier UI."
+    "status": "complete — 2026-08-10, confirmed by Dennis. This durable is the only thing serving the Notion Deals won automation.",
+    "notion_automation_repointed": "2026-08-10",
+    "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "first_traffic": "Run 019fedfe-5f17-7e9a-8eeb-e77f6a67b630 (2026-08-10T23:24:58Z) — the wiring-up test click, delivering {\"querystring\":{}}. Returned {skipped: \"empty-payload\"} and did NOT raise, which is the empty-payload guard doing its job in production. No real won-deal event has reached it yet."
   },
   "verification": {
     "date": "2026-08-10",

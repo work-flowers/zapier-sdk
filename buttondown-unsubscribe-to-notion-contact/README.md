@@ -66,3 +66,7 @@ Repo rule 5 (default templates) does not apply: this only ever updates an existi
 | Skip | `019febf7-6119-7ccc-961f-e3836ee51929` | unmapped address → `{skipped: "no-notion-contact-for-email"}` |
 
 The main-path contact was picked because its `Mailing List` was **already false**, so the test wrote the same value it found — a real end-to-end run against live data with no state change.
+
+## Cutover complete (2026-08-10)
+
+Nothing external needed rewiring — this is a polling trigger, so there is no catch URL. The classic Zap it replaces was turned off on 2026-08-10, confirmed by Dennis; that state is not machine-verifiable, since classic Zaps are exposed by neither the SDK CLI nor the MCP connector.

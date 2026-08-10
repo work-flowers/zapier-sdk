@@ -6,20 +6,19 @@ Migrated from the classic Zap **"Deal Won -> Add Lead Contact to Mailing List"**
 
 Sibling of [`notion-contact-to-newsletter-subscriber`](../notion-contact-to-newsletter-subscriber/), which does the same thing from a manual button press on a Contact. They were deliberately kept separate rather than merged: each stays independently disableable, and each Notion sender posts to exactly one URL.
 
-## ⚠️ Cutover is pending
+## Cutover complete (2026-08-10)
 
-This durable has a **new catch URL**. Until the Notion Deals automation is repointed at it, this Zap has an active trigger and zero traffic while the classic Zap keeps serving.
+The Notion **Deals** automation posts here, and the classic Zap is off. This durable is the only thing serving that automation.
 
 ```
 https://hooks.zapier.com/hooks/catch/20495893/CqdlciNMGmX51pfG/
 ```
 
-1. Repoint the Notion **Deals** database automation at the URL above.
-2. Disable the classic Zap **"Deal Won -> Add Lead Contact to Mailing List"** in the Zapier UI.
-
-Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so step 2 cannot be verified from this repo.
+Both confirmed by Dennis; the classic Zap's state is not machine-verifiable, since classic Zaps are exposed by neither the SDK CLI nor the MCP connector.
 
 > Use `webhook_url` above — **never** the `trigger_url` in `zap.json`, which is Zapier-internal.
+
+**First traffic** was run `019fedfe-5f17-…` (2026-08-10T23:24:58Z): the wiring-up test click, delivering `{"querystring":{}}`. It returned `{skipped: "empty-payload"}` and did **not** raise — the guard working in production. No real won-deal event has reached it yet.
 
 ## Workflow
 

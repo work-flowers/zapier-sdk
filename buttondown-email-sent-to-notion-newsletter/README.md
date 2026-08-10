@@ -78,3 +78,7 @@ Repo rule 5 (default templates) does not apply: this only ever updates an existi
 The main-path issue ("What I Learned Optimising a Multi-Turn AI Agent") was picked because it was **already** `Sent` with Send Date `2026-04-07T01:00:00.000Z`, so the test wrote the values it found — a real end-to-end run against live data with no state change.
 
 > One earlier main-path run (`019febe9-8c3f-…`) stalled in `started` with **zero** recorded operations and never completed. Identical code and input finished in seconds on retry, so this was a transient `run-durable` sandbox stall rather than a workflow defect. Worth recognising if it recurs.
+
+## Cutover complete (2026-08-10)
+
+Nothing external needed rewiring — this is a polling trigger, so there is no catch URL. The classic Zap it replaces was turned off on 2026-08-10, confirmed by Dennis; that state is not machine-verifiable, since classic Zaps are exposed by neither the SDK CLI nor the MCP connector.

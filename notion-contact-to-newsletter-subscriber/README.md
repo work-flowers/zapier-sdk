@@ -8,20 +8,19 @@ Sibling of [`deal-won-to-newsletter-subscriber`](../deal-won-to-newsletter-subsc
 
 Nothing is written back to Notion. The `Mailing List` tick comes back round on its own via [`new-buttondown-subscriber-update-in-notion`](../new-buttondown-subscriber-update-in-notion/) once Buttondown confirms the subscription.
 
-## ⚠️ Cutover is pending
+## Cutover complete (2026-08-10)
 
-This durable has a **new catch URL**. Until the Notion button property is repointed at it, this Zap has an active trigger and zero traffic while the classic Zap keeps serving.
+The Notion **Contacts** button property posts here, and the classic Zap is off. This durable is the only thing serving that button.
 
 ```
 https://hooks.zapier.com/hooks/catch/20495893/mu4Zr5AmKVd2g2Zv/
 ```
 
-1. Repoint the **Contacts** button property at the URL above.
-2. Disable the classic Zap **"Click to Add Newsletter Subscriber"** in the Zapier UI.
-
-Each button posts to exactly one URL, so there is no double-fire window between the two steps. Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so step 2 cannot be verified from this repo.
+Both confirmed by Dennis; the classic Zap's state is not machine-verifiable, since classic Zaps are exposed by neither the SDK CLI nor the MCP connector.
 
 > Use `webhook_url` above — **never** the `trigger_url` in `zap.json`, which is Zapier-internal.
+
+**First traffic** was run `019fedff-1154-…` (2026-08-10T23:25:44Z): the wiring-up test click, delivering `{"querystring":{}}`. It returned `{skipped: "empty-payload"}` and did **not** raise. This is precisely the case the guard was written for — a Notion button property delivers an empty body on every test click, and without the guard that click would have been an error alert. No real press on a populated contact has reached it yet.
 
 ## Workflow
 
