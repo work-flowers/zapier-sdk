@@ -3,8 +3,9 @@
   "workflow_id": "019feb0a-b966-78a1-b2e1-da422eca223f",
   "current_version_id": "019feb0b-453f-7963-8a4c-187425d1ea68",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfzSzKI4Y1BoLTGDNGA8Kw",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
+  "retired": "2026-08-10 — deprecated the same day it was migrated: Dennis removed the fee property from the Proposals data source because it was superfluous, which confirms the staleness_flag below. The Notion sender was never repointed; the durable never ran on a live event. Disabled via disable-workflow (the catch URL survives a disable). The classic Zap 'Update Deal Value When Proposal Fee Updated' should still be disabled in the Zapier UI.",
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
     "action": "hook_v2",
@@ -32,9 +33,9 @@
   "replaces_classic_zap": "Update Deal Value When Proposal Fee Updated",
   "staleness_flag": "As of 2026-08-10 NO data source visible to the work.flowers Zapier integration carries a 'Project Fee' property — the current 'Project Proposals' data source (1d791b07-11ac-8058-8c70-000b0d0dfaf2) has none, and fees appear to have moved to Xero Quotes. The classic Zap's export also showed has_automatic_issues on its Notion step. When repointing the Notion automation (cutover), verify the source database still sends 'Project Fee' + 'Deal'; if the shape changed, the durable throws loudly naming the properties it saw.",
   "cutover": {
-    "notion_sender_repointed": "PENDING — find the Notion automation that POSTs proposal pages to the classic Zap's catch URL, repoint it to webhook_url above, and confirm the source DB's property names",
-    "classic_zap_disabled": "PENDING — disable in the Zapier UI",
-    "status": "deployed, awaiting cutover"
+    "notion_sender_repointed": "CANCELLED — workflow retired before cutover; nothing was ever repointed to it",
+    "classic_zap_disabled": "PENDING — the classic Zap is dead weight (its source property no longer exists) and should still be disabled in the Zapier UI, along with whatever Notion automation posts to it",
+    "status": "retired 2026-08-10, no cutover"
   },
   "description": "Proposal webhook from Notion -> copy Project Fee onto the related Deal's Value. Skips on empty fee or missing Deal relation; throws when the payload shape is unrecognizable."
 }

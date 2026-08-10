@@ -1,27 +1,32 @@
 # proposal-fee-to-deal-value
 
+**⏸️ Retired 2026-08-10 — deprecated the same day it was migrated.** Dennis
+removed the fee property from the Proposals data source because it was
+superfluous, which confirmed the staleness flag this migration shipped with
+(see below). The durable is **disabled** on Zapier, was never repointed to,
+and never ran on a live event; the directory is kept for reference. The
+classic Zap **"Update Deal Value When Proposal Fee Updated"** is equally dead
+(its source property no longer exists) and should still be disabled in the
+Zapier UI, along with whatever Notion automation posts to its catch URL.
+
 Proposal webhook from Notion → copy the proposal's **Project Fee** onto the
 related Deal's **Value**.
 
 Migration of the classic Zap **"Update Deal Value When Proposal Fee Updated"**.
 
-- **Workflow ID:** `019feb0a-b966-78a1-b2e1-da422eca223f` (account-visible)
+- **Workflow ID:** `019feb0a-b966-78a1-b2e1-da422eca223f` (account-visible, disabled)
 - **Trigger:** Webhooks by Zapier catch hook —
   `https://hooks.zapier.com/hooks/catch/20495893/cCSLFIVwOZMqVxFz/`
 - **Editor:** <https://zapier.com/durables-editor/019feb0a-b966-78a1-b2e1-da422eca223f>
 
-## ⚠️ Staleness flag — verify at cutover
+## ⚠️ Staleness flag (confirmed — the reason it was retired)
 
 As of 2026-08-10 **no data source visible to the work.flowers Zapier
 integration carries a "Project Fee" property**. The current *Project
 Proposals* data source (`1d791b07-11ac-8058-8c70-000b0d0dfaf2`) has `Deals`
-but no fee — fees appear to have moved into the Xero Quote flow — and the
-classic Zap's export already showed `has_automatic_issues` on its Notion step.
-The source database is either unshared with the integration (a Notion webhook
-automation doesn't need sharing) or has been restructured since the Zap was
-built. **When repointing the Notion automation, open it and confirm what its
-source database actually sends.** If the shape changed, this durable throws
-loudly, naming the properties it saw.
+but no fee, and the classic Zap's export already showed
+`has_automatic_issues` on its Notion step. Dennis confirmed he removed the
+fee property deliberately.
 
 ## Workflow
 
@@ -57,15 +62,11 @@ payload carrying deal `9ca1f339-617f-4e08-946b-7bb00a475fa9` (Tannin Road) and
 its current fee `2500` → `updated: true`, Deal Value re-written to the same
 number. Empty-ping payload → `skipped: empty-payload`.
 
-## Cutover (pending)
+## Cutover
 
-1. In Notion, find the automation that POSTs proposal pages to the classic
-   Zap's catch URL, repoint it to the `webhook_url` above, and **verify the
-   source database still sends `Project Fee` + a `Deal`/`Deals` relation**
-   (see the staleness flag).
-2. Disable the classic Zap **"Update Deal Value When Proposal Fee Updated"**
-   in the Zapier UI.
-3. Record both in `zap.json` → `cutover`.
+Cancelled — retired before any cutover. Remaining cleanup: disable the classic
+Zap **"Update Deal Value When Proposal Fee Updated"** in the Zapier UI and
+remove the Notion automation that posts to its catch URL.
 
 ## Maintainer notes
 
