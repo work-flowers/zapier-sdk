@@ -1,7 +1,7 @@
 {
   "name": "enrich-contact-records",
   "workflow_id": "019f878c-64ff-7332-92df-58e39f803836",
-  "current_version_id": "019ff4ab-df38-71aa-87e8-ad8b359be1bf",
+  "current_version_id": "019ff5fa-fdc7-71ce-be7a-17a8308defb2",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AW11SY4tM7eAkPQzytW3yg",
   "enabled": true,
   "trigger": {
@@ -21,6 +21,6 @@
     "enrichment": "025703ba-3a5f-8132-9138-e87fb3599abc"
   },
   "created_at": "2026-07-22T01:59:12.898Z",
-  "version_created_at": "2026-08-12T06:32:12.482Z",
-  "description": "Enrich Notion contact records with person profile data via a three-source cascade: Apollo people/match first (it also returns a profile photo and bio), then Lusha (search_and_enrich_contacts resolves the id, enrich_contacts reveals emails only — no phone credits), then NinjaPear. An enriched work address takes Primary Email when the existing Primary is a consumer mailbox; a corporate Primary is treated as curated and left alone. Addresses compare case-insensitively, name falls back to the page title, and the outcome comment names each failed source separately. Empty webhook pings (URL tests) are skipped without raising. NinjaPear is never queried with a personal email and is gated on domain + name."
+  "version_created_at": "2026-08-12T12:38:14.866Z",
+  "description": "Enrich Notion contact records with person profile data via a three-source cascade: Apollo people/match first (it also returns a profile photo and bio), then Lusha (search_and_enrich_contacts resolves the id, enrich_contacts reveals emails only — no phone credits), then NinjaPear. An enriched email is written only when the match is corroborated against something the CRM already holds — a shared address, the contact's LinkedIn profile, the known company domain, a Lusha hit on the contact's own identifier, or NinjaPear's domain+name resolution; an uncorroborated address is written nowhere (not Primary, not Secondary, not the contact Table) and is named in the outcome comment instead. Once corroborated, an enriched work address takes Primary Email when the existing Primary is a consumer mailbox; a corporate Primary is treated as curated and left alone. Addresses compare case-insensitively, name falls back to the page title, and the outcome comment names each failed source separately. Empty webhook pings (URL tests) are skipped without raising. NinjaPear is never queried with a personal email and is gated on domain + name."
 }
