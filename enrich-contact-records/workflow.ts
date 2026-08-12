@@ -256,6 +256,14 @@ interface EnrichedData {
   jobTitle: string;
   firstName: string;
   lastName: string;
+  /** EVERY address the matched record carries, `newEmail` included. Used only
+   *  to corroborate identity (see `corroborateEnrichedIdentity`) — never
+   *  written to Notion. An address the contact already holds appearing here is
+   *  proof the source found the right person. */
+  allEmails: string[];
+  /** The employer domain on the matched record, normalised. Corroborating
+   *  evidence when it equals the company domain the CRM already holds. */
+  employerDomain: string;
 }
 
 function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
@@ -267,6 +275,8 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
       ? we
       : (we?.description ?? "");
 
+  const workExperience = Array.isArray(we) ? we : [];
+
   return {
     profilePicUrl: firstString(enriched?.profile_pic_url) ?? "",
     linkedinUrl: firstString(enriched?.linkedin_profile_url) ?? "",
@@ -277,6 +287,23 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
     jobTitle: firstString(enriched?.current_role) ?? "",
     firstName: firstString(enriched?.first_name) ?? "",
     lastName: firstString(enriched?.last_name) ?? "",
+    allEmails: dedupeAddresses(
+      [
+        firstString(enriched?.work_email_lookup) ?? "",
+        firstString(enriched?.personal_email) ?? "",
+        ...(Array.isArray(enriched?.personal_emails)
+          ? enriched.personal_emails.map((e: unknown) => firstString(e) ?? "")
+          : []),
+      ].filter(Boolean),
+    ),
+    employerDomain: normalizeDomain(
+      firstString(
+        enriched?.employer_website,
+        workExperience[0]?.company_website,
+        workExperience[0]?.website,
+        workExperience[0]?.company?.website,
+      ),
+    ),
   };
 }
 
@@ -286,8 +313,8 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
 // `emailAddresses` array) are checked as fallbacks in case the integration's
 // output mapping changes.
 
-/** First revealed email on a Lusha contact, preferring type "work". */
-function lushaEmail(c: any): string {
+/** Every revealed email on a Lusha contact, work addresses first. */
+function lushaEmails(c: any): string[] {
   const pairs: Array<{ email: string; type: string }> = [];
   for (let i = 1; i <= 5; i++) {
     const e = firstString(c?.[`Email ${i}`]);
@@ -307,7 +334,14 @@ function lushaEmail(c: any): string {
         });
     }
   }
-  return (pairs.find((p) => p.type === "work") ?? pairs[0])?.email ?? "";
+  const work = pairs.filter((p) => p.type === "work");
+  const rest = pairs.filter((p) => p.type !== "work");
+  return dedupeAddresses([...work, ...rest].map((p) => p.email));
+}
+
+/** First revealed email on a Lusha contact, preferring type "work". */
+function lushaEmail(c: any): string {
+  return lushaEmails(c)[0] ?? "";
 }
 
 /** True when a Lusha contact carries at least one useful signal — a bare
@@ -336,6 +370,16 @@ function extractEnrichedFromLusha(c: any): EnrichedData {
     jobTitle: firstString(c?.["Job Title"], c?.jobTitle?.title ?? c?.jobTitle) ?? "",
     firstName: firstString(c?.["First Name"], c?.firstName) ?? "",
     lastName: firstString(c?.["Last Name"], c?.lastName) ?? "",
+    allEmails: lushaEmails(c),
+    employerDomain: normalizeDomain(
+      firstString(
+        c?.["Company Domain"],
+        c?.["Company Website"],
+        c?.companyDomain,
+        c?.company?.domain,
+        c?.company?.website,
+      ),
+    ),
   };
 }
 
@@ -438,7 +482,143 @@ function extractEnrichedFromApollo(person: any): EnrichedData {
     jobTitle: firstString(person?.title) ?? "",
     firstName: firstString(person?.first_name) ?? "",
     lastName: firstString(person?.last_name) ?? "",
+    allEmails: dedupeAddresses(
+      [
+        apolloRealEmail(person?.email),
+        ...(Array.isArray(person?.personal_emails)
+          ? person.personal_emails.map((e: unknown) => apolloRealEmail(e))
+          : []),
+        ...(Array.isArray(person?.contact_emails)
+          ? person.contact_emails.map((e: any) => apolloRealEmail(e?.email))
+          : []),
+      ].filter(Boolean),
+    ),
+    employerDomain: normalizeDomain(
+      firstString(
+        person?.organization?.primary_domain,
+        person?.organization?.website_url,
+        person?.organization?.domain,
+      ),
+    ),
   };
+}
+
+// --- Identity corroboration -------------------------------------------------
+//
+// An enriched email address is the one field here that carries IDENTITY. It
+// goes into `Primary Email` or `Secondary Email` and from there into
+// CONTACT_EMAIL_TABLE, which is how the Luma guest workflows decide *who a
+// registration belongs to*. So an address written here does not merely annotate
+// a contact — it defines them for every other Zap.
+//
+// That is what made the Grace Tang collision (diagnosed 2026-08-12) so
+// expensive. Apollo's people/match is FUZZY: it is handed name, email, domain
+// and LinkedIn URL together and will happily match on the name alone. For a
+// long-standing contact whose Primary was a personal Gmail with no Company
+// relation, it returned a *different person of the same name*, whose corporate
+// address then took the Primary slot (Path G-promote) and was indexed into the
+// Table. From then on the stranger's Luma registrations, her account address, a
+// company page, 25 email threads and a signed agreement all attached to the
+// wrong contact — and nothing errored, because every one of those Zaps was
+// correctly trusting the Table.
+//
+// So before an enriched address is written, the match has to be corroborated
+// against something the CRM already knows. The bar differs per source because
+// their matching does:
+//
+//   * Apollo — fuzzy. Requires evidence in the RETURNED record: an address the
+//     contact already holds, the contact's LinkedIn URL, or the company domain
+//     the CRM already has.
+//   * Lusha — exact-identifier search (`id | linkedinUrl | email | firstName +
+//     lastName + company`). When the request carried only identifiers the
+//     contact OWNS — their email, their LinkedIn URL — and no name branch at
+//     all, a hit IS the corroboration. This is the case that legitimately
+//     discovers a work address for a contact sitting on a personal mailbox, and
+//     the guard deliberately keeps it working.
+//   * NinjaPear — only ever resolves on employer_website + name, and the
+//     workflow gates the call on the contact's OWN company domain, so any
+//     profile it returns is a person at the employer the CRM already recorded.
+//
+// An uncorroborated address is not written anywhere — not Primary, not
+// Secondary, not the Table — and is named in the outcome comment for a human to
+// judge. Everything else the source returned (title, bio, city, photo) is still
+// written: those are visible on the page and carry no identity downstream, and
+// in the Grace case they were in fact correct.
+//
+// The known false negative: a contact on a personal mailbox with no Company and
+// no LinkedIn URL, whom Apollo matched genuinely by that personal address.
+// Apollo is called with `reveal_personal_emails: false`, so the address we sent
+// usually is not echoed back and the match reads as uncorroborated. That costs
+// an enrichment we would previously have taken — visibly, in the comment,
+// rather than silently writing a stranger's identity. That trade is the point.
+
+interface IdentityCorroboration {
+  verified: boolean;
+  /** Which signal cleared it, or why nothing did. For the outcome comment. */
+  how: string;
+}
+
+function corroborateEnrichedIdentity(
+  contact: ContactData,
+  enriched: EnrichedData,
+  source: EnrichmentSource,
+  /** Lusha only: the search carried the contact's own email and/or LinkedIn
+   *  URL, and no name + domain branch that could have matched someone else. */
+  matchedOwnIdentifierOnly: boolean,
+): IdentityCorroboration {
+  const ownAddresses = dedupeAddresses([
+    contact.primaryEmail,
+    ...contact.secondaryEmails,
+  ]);
+
+  const shared = enriched.allEmails.find((e) =>
+    ownAddresses.some((own) => sameAddress(own, e)),
+  );
+  if (shared) {
+    return { verified: true, how: `matched an address already on the contact (${shared})` };
+  }
+
+  const ownLinkedin = normalizeLinkedin(contact.linkedinUrl);
+  const foundLinkedin = normalizeLinkedin(enriched.linkedinUrl);
+  if (ownLinkedin && foundLinkedin && ownLinkedin === foundLinkedin) {
+    return { verified: true, how: "matched the contact's LinkedIn profile" };
+  }
+
+  if (contact.domain) {
+    const emailDomain = normalizeDomain(enriched.newEmail);
+    if (emailDomain === contact.domain || enriched.employerDomain === contact.domain) {
+      return {
+        verified: true,
+        how: `employer matches the contact's company domain (${contact.domain})`,
+      };
+    }
+  }
+
+  if (source === "ninjapear") {
+    // The lookup is gated on the contact's own company domain + name, so the
+    // profile is a person at the employer the CRM already holds.
+    return { verified: true, how: "resolved from the contact's own company domain and name" };
+  }
+
+  if (source === "lusha" && matchedOwnIdentifierOnly) {
+    return {
+      verified: true,
+      how: "Lusha matched on the contact's own email or LinkedIn URL",
+    };
+  }
+
+  return {
+    verified: false,
+    how: "no shared address, LinkedIn profile or company domain ties it to this contact",
+  };
+}
+
+/** A LinkedIn profile URL reduced to its identifying slug, so
+ *  `https://www.linkedin.com/in/gtang1/` and `linkedin.com/in/gtang1` compare
+ *  equal. Returns "" when there is no `/in/<slug>` to compare. */
+function normalizeLinkedin(url: string | null | undefined): string {
+  const m = (url ?? "").trim().toLowerCase().match(/\/in\/([^/?#]+)/);
+  return m?.[1] ?? "";
 }
 
 // --- Profile photo storage -------------------------------------------------
@@ -572,19 +752,50 @@ async function updateContactRecord(
   ctx: DurableCtx,
   contact: ContactData,
   enriched: EnrichedData,
-): Promise<{ emailPath: string; iconUpdated: boolean; iconError?: string }> {
+  source: EnrichmentSource,
+  matchedOwnIdentifierOnly: boolean,
+): Promise<{
+  emailPath: string;
+  iconUpdated: boolean;
+  iconError?: string;
+  unverifiedEmail?: string;
+  identity?: string;
+}> {
   const fullName = `${enriched.firstName || contact.firstName} ${enriched.lastName || contact.lastName}`.trim();
 
+  // --- Gate the enriched address on identity corroboration ---
+  // See "Identity corroboration" above. An address that cannot be tied to this
+  // contact is dropped here, before any path logic sees it: the rest of this
+  // function then behaves exactly as it does for a source that returned no
+  // email at all, so nothing reaches Primary, Secondary or the Table.
+  const identity = enriched.newEmail
+    ? corroborateEnrichedIdentity(
+        contact,
+        enriched,
+        source,
+        matchedOwnIdentifierOnly,
+      )
+    : { verified: true, how: "no email returned" };
+  const unverifiedEmail =
+    enriched.newEmail && !identity.verified ? enriched.newEmail : "";
+  const newEmail = unverifiedEmail ? "" : enriched.newEmail;
+
+  if (unverifiedEmail) {
+    console.log(
+      `Enriched email ${unverifiedEmail} not written to ${contact.pageId} — ${identity.how}`,
+    );
+  }
+
   // --- Determine email path (mirrors the sub-zap's Path D / Path G logic) ---
-  const hasNewEmail = Boolean(enriched.newEmail);
+  const hasNewEmail = Boolean(newEmail);
   const hasExistingEmail = Boolean(contact.primaryEmail);
   // Case-insensitive: an enriched address that differs from the Primary only by
   // case is the same address, not a new one. See `sameAddress`.
   const sameEmail =
     hasNewEmail &&
     hasExistingEmail &&
-    sameAddress(contact.primaryEmail, enriched.newEmail);
-  const noPriorEmail = !hasExistingEmail;
+    sameAddress(contact.primaryEmail, newEmail);
+  const noPriorEmail = hasNewEmail && !hasExistingEmail;
   const differentEmail = hasNewEmail && hasExistingEmail && !sameEmail;
 
   // Base property updates applied in all paths.
@@ -608,14 +819,20 @@ async function updateContactRecord(
 
   let emailPath: string;
 
-  if (sameEmail || noPriorEmail) {
+  if (unverifiedEmail) {
+    // Path U: the source returned an address it cannot corroborate against this
+    // contact. Write no email at all — neither slot, and no Table row — and let
+    // the outcome comment name the address so a person can judge it. Every other
+    // property still updates.
+    emailPath = "unverified-email";
+  } else if (sameEmail || noPriorEmail) {
     // Path D: set primary email to the enriched email; leave secondary untouched.
     emailPath = "same-or-no-prior";
-    updateInputs["properties|||Primary Email|||email"] = enriched.newEmail;
+    updateInputs["properties|||Primary Email|||email"] = newEmail;
   } else if (
     differentEmail &&
     isFreemail(contact.primaryEmail) &&
-    !isFreemail(enriched.newEmail)
+    !isFreemail(newEmail)
   ) {
     // Path G-promote: the contact's Primary is a consumer mailbox (a signup
     // artefact) and enrichment found a corporate address, so the work address
@@ -624,11 +841,11 @@ async function updateContactRecord(
     // answer; before it existed, Path G left the personal address in Primary and
     // buried the work address in Secondary — inverted on ~26 contacts.
     emailPath = "promote-over-freemail";
-    updateInputs["properties|||Primary Email|||email"] = enriched.newEmail;
+    updateInputs["properties|||Primary Email|||email"] = newEmail;
     updateInputs["properties|||Secondary Email|||multi_select"] = dedupeAddresses([
       ...contact.secondaryEmails,
       contact.primaryEmail,
-    ]).filter((e) => !sameAddress(e, enriched.newEmail));
+    ]).filter((e) => !sameAddress(e, newEmail));
   } else if (differentEmail) {
     // Path G: the existing Primary is already on a corporate domain (or the
     // enriched address is itself a consumer mailbox), so treat the Primary as
@@ -642,7 +859,7 @@ async function updateContactRecord(
     // earlier run already wrote, so a contact heals itself on next enrichment.
     updateInputs["properties|||Secondary Email|||multi_select"] = dedupeAddresses([
       ...contact.secondaryEmails,
-      enriched.newEmail,
+      newEmail,
     ]).filter((e) => !sameAddress(e, contact.primaryEmail));
   } else {
     // No new email from enrichment; just update the other fields.
@@ -693,8 +910,12 @@ async function updateContactRecord(
   // The address Path G-promote DEMOTES needs no row of its own: it was this
   // contact's Primary, so it already resolves here. Its row keeps `Type:
   // "Primary"` and goes stale, which is harmless — lookups match on Email only.
+  //
+  // Path U writes nothing here: `hasNewEmail` is false for an uncorroborated
+  // address, and this Table is exactly where such an address does the damage —
+  // it is what the Luma guest workflows resolve a registration's identity from.
   if (hasNewEmail && emailPath !== "no-new-email") {
-    const emailLower = enriched.newEmail!.toLowerCase();
+    const emailLower = newEmail.toLowerCase();
     const emailType = emailPath === "new-email" ? "Secondary" : "Primary";
     await ctx.step("index-email-in-table", async () => {
       try {
@@ -780,7 +1001,13 @@ async function updateContactRecord(
     }
   }
 
-  return { emailPath, iconUpdated, iconError };
+  return {
+    emailPath,
+    iconUpdated,
+    iconError,
+    unverifiedEmail: unverifiedEmail || undefined,
+    identity: unverifiedEmail ? identity.how : undefined,
+  };
 }
 
 // --- Add outcome comment to the triggering page ----------------------------
@@ -805,6 +1032,12 @@ interface WorkflowResult {
    *  the fallback look like it never ran (TKT-811). */
   reasons?: string[];
   emailPath?: string;
+  /** An enriched address that was NOT written because it could not be tied to
+   *  this contact (Path U). Named in the outcome comment so a person can judge
+   *  it — the whole point of the guard is that this is visible, not silent. */
+  unverifiedEmail?: string;
+  /** Why `unverifiedEmail` failed corroboration. */
+  identity?: string;
   iconUpdated?: boolean;
   /** Why the profile photo could not be stored, when one was offered. Kept
    *  distinct from `reasons` — the enrichment itself succeeded. */
@@ -858,6 +1091,13 @@ async function addOutcomeComment(
     changes.push("contact details");
     const via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
+    // An address the source returned but that could not be tied to this contact
+    // (Path U). Worth naming prominently: it is either a real address this
+    // contact owns and nobody has recorded, or evidence the source matched a
+    // different person of the same name. Only a human can tell which.
+    if (result.unverifiedEmail) {
+      summary += ` Email ${result.unverifiedEmail} NOT written — ${result.identity ?? "could not be corroborated"}. Add it by hand if it is really theirs.`;
+    }
     // A photo that failed to store is worth naming: the rest of the record is
     // correct, so nothing else in this comment would hint the icon is missing.
     if (result.iconError) {
@@ -962,6 +1202,11 @@ const workflow = defineDurable<unknown, unknown>(
     let enrichedData: EnrichedData | null = null;
     let source: EnrichmentSource | null = null;
     const reasons: string[] = [];
+    // Set when the Lusha search is sent with only identifiers the contact OWNS
+    // (their email and/or LinkedIn URL) and no firstName/lastName branch that
+    // could have matched a different person of the same name. A hit on such a
+    // request is itself proof of identity — see "Identity corroboration".
+    let lushaMatchedOwnIdentifierOnly = false;
 
     // --- First: Apollo people/match, via the "API Request (Beta)" action.
     //     fail_on_errors:false makes the action return the response (with its
@@ -1087,6 +1332,16 @@ const workflow = defineDurable<unknown, unknown>(
           if (contact.firstName) lushaInputs.firstName = contact.firstName;
           if (contact.lastName) lushaInputs.lastName = contact.lastName;
         }
+
+        // Whether a hit can stand as its own identity proof: true when the only
+        // things Lusha had to match on are this contact's own email / LinkedIn
+        // URL. Once a name + domain branch rides along, Lusha may have matched
+        // through that instead, and the returned record has to corroborate
+        // itself like Apollo's does.
+        lushaMatchedOwnIdentifierOnly =
+          Boolean(lushaInputs.email || lushaInputs.linkedinUrl) &&
+          !lushaInputs.firstName &&
+          !lushaInputs.lastName;
 
         const lusha = await ctx.step("lusha-enrich", async () => {
           try {
@@ -1247,7 +1502,13 @@ const workflow = defineDurable<unknown, unknown>(
       };
     } else {
       // 2. Update the contact record (inline sub-zap logic).
-      const updateResult = await updateContactRecord(ctx, contact, enrichedData);
+      const updateResult = await updateContactRecord(
+        ctx,
+        contact,
+        enrichedData,
+        source,
+        lushaMatchedOwnIdentifierOnly,
+      );
       result = {
         pageId: contact.pageId,
         enriched: true,

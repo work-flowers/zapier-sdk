@@ -77,6 +77,12 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    source, it logs and returns (no retry; the original Zap retried after a
    1-minute delay).
 3. **Update contact** — Inline function that replaces the sub-Zap:
+   - **Corroborate the enriched address first** (Path U): an enriched email that
+     cannot be tied to this contact is **not written anywhere** — not Primary,
+     not Secondary, not the Table — and is named in the outcome comment instead.
+     The other properties still update. See [Identity
+     corroboration](#identity-corroboration) for the per-source bar and why this
+     exists. (Added 2026-08-12.)
    - **Same or no prior email** (Path D): sets Primary Email to the enriched
      email; leaves Secondary Email untouched.
    - **Work address over a consumer mailbox** (Path G-promote): when the existing
@@ -99,7 +105,9 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      Table — an email on a contact but missing from the Table produces a
      **duplicate contact** when that person registers with it (bug observed
      2026-07-24 with a secondary email). Best-effort: a Table error logs and
-     never fails the run.
+     never fails the run. **Path U never reaches this step**: an uncorroborated
+     address in this Table is precisely how a stranger inherits a contact's
+     identity across every other Zap.
 4. **Add outcome comment** — Posts a brief comment on the triggering Notion
    page stating the outcome of the run:
    - which source did the enrichment (**Apollo**, **Lusha** or **NinjaPear**);
@@ -110,6 +118,11 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      trimmed on its own, with JSON/HTML error wrapping stripped — e.g.
      `Enrichment skipped — Apollo: HTTP 422 — You have insufficient credits! …;
      NinjaPear: no profile found.`
+   - when an address failed corroboration (Path U), the address and the reason —
+     `Email grace@leaps.sg NOT written — no shared address, LinkedIn profile or
+     company domain ties it to this contact. Add it by hand if it is really
+     theirs.` This is the guard's entire user interface: the address is never
+     lost, it is handed to a person instead of to the CRM.
 
    Skip reasons were originally joined first and truncated after, so Apollo's
    verbose out-of-credits blob (a JSON body with an inline `<a>` tag) ate the
@@ -119,7 +132,8 @@ inline function (`updateContactRecord`) — no separate Durable needed.
 
    If the webhook was triggered by a button click and the payload included the
    user's Notion ID, the comment mentions that user for better visibility.
-5. **Return** — `{ pageId, enriched, source, emailPath, iconUpdated }`.
+5. **Return** — `{ pageId, enriched, source, emailPath, iconUpdated }`, plus
+   `unverifiedEmail` and `identity` on a Path U run.
 
 ## Workflow
 
@@ -135,11 +149,15 @@ flowchart TD
     LU -- "error / no id / no match /<br/>nothing to match on" --> NPG{"Company domain AND a name?<br/>(freemail Primary is stripped —<br/>NinjaPear rejects personal emails)"}
     NPG -- "yes" --> NP["Fallback: NinjaPear<br/>find_person_profile<br/>(domain + name is the only<br/>combo that resolves)"]
     NPG -- "no domain, or no name" --> D
-    NP -- "profile found" --> E{"Enriched email vs existing<br/>Primary Email?"}
+    NP -- "profile found" --> E
     NP -- "error / no result" --> D(["Log, comment outcome, return<br/>(no retry)"])
-    E -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
-    E -- "different, and Primary is freemail<br/>while enriched is corporate<br/>(Path G-promote)" --> GP["Enriched work address → Primary,<br/>personal address → Secondary"]
-    E -- "new/different email (Path G)" --> G["Keep Primary Email, add enriched<br/>email to Secondary Email"]
+    E{"Enriched email corroborated?<br/>shared address · contact's LinkedIn ·<br/>known company domain · Lusha hit on<br/>own identifier · NinjaPear domain+name"}
+    E -- "no (Path U)" --> U["Write NO email anywhere —<br/>no Primary, no Secondary, no Table row.<br/>Other properties still update;<br/>address named in the comment"]
+    E -- "yes" --> EP{"Enriched email vs existing<br/>Primary Email?"}
+    U --> H
+    EP -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
+    EP -- "different, and Primary is freemail<br/>while enriched is corporate<br/>(Path G-promote)" --> GP["Enriched work address → Primary,<br/>personal address → Secondary"]
+    EP -- "new/different email (Path G)" --> G["Keep Primary Email, add enriched<br/>email to Secondary Email"]
     F --> H{"Profile pic URL returned?"}
     GP --> H
     G --> H
@@ -325,12 +343,92 @@ are skipped with an honest reason instead of burning a credit — but they do no
 conjure coverage NinjaPear doesn't have. Restoring Apollo credits is the only
 change that meaningfully raises the enrichment rate.
 
+## Identity corroboration
+
+**Added 2026-08-12.** An enriched email is the one field this workflow writes that
+carries **identity**. It lands in `Primary Email` or `Secondary Email`, and from
+there into `CONTACT_EMAIL_TABLE` — which is how the
+[Luma guest workflows](../luma-guest-registered-to-event-attendance/) decide *who
+a registration belongs to*. So an address written here doesn't annotate a
+contact; it **defines** them for every other Zap.
+
+### What went wrong
+
+Two different Grace Tangs ended up as one contact (diagnosed 2026-08-12). The
+contact was a former workFlowers subcontractor: personal Gmail in `Primary
+Email`, no Company relation, no LinkedIn URL on the record. Apollo's
+`people/match` is **fuzzy** — it takes name, email, domain and LinkedIn URL
+together and will happily match on the name alone — and it returned *a different
+Grace Tang*, at an unrelated company. Path G-promote saw a freemail Primary and a
+corporate enriched address, did exactly what it was written to do, and the
+stranger's address became the contact's Primary and was indexed into the Table.
+
+Everything after that was other Zaps behaving correctly on poisoned input: the
+stranger's Luma registrations resolved to this contact (two Event Attendance
+rows), her Luma account address was indexed onto it as well, a company page was
+created and absorbed 25 of the subcontractor's email threads plus a signed
+agreement, and the subcontractor's own two addresses were dropped from Notion,
+surviving only in the Table. **Nothing errored at any point.**
+
+### The bar, per source
+
+Before an enriched address is written, the match must be corroborated against
+something the CRM already knows. Any one of these clears it:
+
+| Signal | Evidence |
+|---|---|
+| **Shared address** | the matched record carries an address already on the contact (Primary or any Secondary), compared case-insensitively |
+| **LinkedIn** | the matched record's profile URL and the contact's reduce to the same `/in/<slug>` |
+| **Company domain** | the enriched address's host, or the matched record's employer domain, equals the `Domain` the CRM already holds |
+| **Lusha own-identifier hit** | the Lusha search carried *only* identifiers the contact owns (their email and/or LinkedIn URL) and no `firstName`/`lastName` branch — a hit on such a request is its own proof |
+| **NinjaPear resolution** | the call is gated on the contact's own company domain + name, so any profile returned is a person at the employer already recorded |
+
+The bar differs by source because their matching does. Apollo is fuzzy, so it must
+show evidence **in the returned record**. Lusha is an exact-identifier search
+(`id | linkedinUrl | email | firstName + lastName + company`), so a hit on the
+contact's own identifier is self-proving — but once a name + domain branch rides
+along, Lusha may have matched through *that* instead, and the returned record has
+to corroborate itself like Apollo's. NinjaPear only ever resolves on
+`employer_website` + name.
+
+An uncorroborated address goes nowhere — not Primary, not Secondary, not the
+Table (**Path U**) — and is named in the outcome comment for a person to judge.
+Every other property (title, bio, city, photo) is still written: those are
+visible on the page, carry no identity downstream, and in the Grace case were in
+fact correct — the wrong data was the *email*, not the profile.
+
+### The known false negative
+
+A contact on a personal mailbox with no Company and no LinkedIn URL, whom Apollo
+matched **genuinely** by that personal address, now reads as uncorroborated:
+Apollo is called with `reveal_personal_emails: false`, so the address we sent
+usually isn't echoed back, and there is nothing else to tie the record to the
+contact. That costs an enrichment the workflow would previously have taken — but
+it costs it **visibly**, in a comment naming the address, rather than silently
+writing a stranger's identity into the CRM's identity oracle. That trade is the
+point of the guard.
+
+The nearest fix, if the false negatives become a nuisance, is giving those
+contacts a LinkedIn URL or a Company relation — both are corroborating signals,
+and both are things the CRM should hold anyway.
+
+### Side effect on `emailPath`
+
+`noPriorEmail` now requires an enriched address to exist. A run where the contact
+has no Primary **and** the source returned no email reports
+`emailPath: "no-new-email"` rather than `"same-or-no-prior"`; it wrote no email
+before this change either (the path set `Primary Email` to `""`, which Notion
+treats as no-change), so only the label moved.
+
 ## Email paths
 
-Which slot an enriched address lands in depends on what the contact already has:
+Which slot an enriched address lands in depends on what the contact already has —
+**after** it clears [identity corroboration](#identity-corroboration); an
+uncorroborated address never reaches this table:
 
 | Existing `Primary Email` | Enriched address | Result | Path |
 |---|---|---|---|
+| — | **uncorroborated** | **nothing written; comment names the address** | **U** |
 | empty, or the same address (**compared case-insensitively**) | corporate or consumer | enriched → Primary | D |
 | **freemail** (`gmail.com`, `hotmail.co.uk`, `outlook.*`, `yahoo.*`, `icloud.com`, …) | **corporate** | **enriched → Primary, personal → Secondary** | **G-promote** |
 | already corporate | corporate | Primary untouched, enriched → Secondary | G |
@@ -348,6 +446,13 @@ a `Primary Email` someone chose deliberately. A consumer mailbox in Primary is a
 signup artefact, which is the one case where the guess is reliably better. A
 Primary already on a corporate domain is treated as curated and left alone — that
 was Path G's original point and it still holds.
+
+**Why it now needs a gate in front of it (2026-08-12).** G-promote is the widest
+path here — it is the only one that overwrites `Primary Email` — and a freemail
+Primary with no Company relation is exactly the contact Apollo is most likely to
+mismatch on the name. That combination is what merged two Grace Tangs. The path
+itself is unchanged; it just no longer sees an address that fails
+[corroboration](#identity-corroboration).
 
 **Addresses compare case-insensitively (added 2026-07-27).** Enrichment sources
 return whatever case the upstream record holds, so `Zoe@automatico.com` and
@@ -427,6 +532,26 @@ zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --input '{"data":{"id":"<contact-page-id>","properties":{"First Name":{"rich_text":[{"plain_text":"Test"}]},"Last Name":{"rich_text":[{"plain_text":"User"}]},"Primary Email":{"email":"test@example.com"}}}}' \
   --private
 ```
+
+### Corroboration checks (2026-08-12)
+
+`corroborateEnrichedIdentity` and the three `extractEnrichedFrom*` functions are
+pure, so they are verified offline rather than by running the durable against
+production Notion. Ten cases, all passing at publish time, including the exact
+regression:
+
+| Case | Expected |
+|---|---|
+| Apollo name-only match returning a stranger at another company (the Grace collision) | **rejected** |
+| Apollo match whose record also carries an address already on the contact | accepted |
+| Lusha hit on the contact's own LinkedIn URL, no name branch sent (the Derek Wong case) | accepted |
+| Lusha match where a name + domain branch also rode along and nothing else ties it | **rejected** |
+| LinkedIn URLs differing only by scheme/`www`/trailing slash | accepted (slug compare) |
+| Name + company domain contact, enriched address on that same domain | accepted |
+| Name + company domain contact, enriched address on an unrelated domain | **rejected** |
+| NinjaPear profile resolved from the contact's own domain + name | accepted |
+| Enriched address equal to the Primary but differing in case | accepted |
+| Apollo's `email_not_unlocked@…` placeholder | yields no address to gate |
 
 ## Deploy
 
