@@ -9,6 +9,7 @@
     "typescript": "latest"
   },
   "scripts": {
-    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit --allowImportingTsExtensions --strict workflow.ts",
+    "test": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --outDir dist --rewriteRelativeImportExtensions --allowImportingTsExtensions --strict workflow.ts && node wise.test.mjs"
   }
 }

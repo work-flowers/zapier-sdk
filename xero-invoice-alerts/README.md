@@ -29,6 +29,7 @@ deduped through its own state Table.
 | --- | --- | --- |
 | `ACCPAY` + `DRAFT` | `slack-bill-draft` | Slack **#finance** |
 | `ACCPAY` + `AUTHORISED` | `email-subcontractor` | approval email to the vendor — **only** with a Subcontractor Fees (`490`) line item and a valid email |
+| `ACCPAY` + `AUTHORISED` | `wise-transfer` | an **unfunded** Wise transfer, prepared for a human to fund. Runs on *every* approved bill, alongside the email |
 | `ACCREC` + `DRAFT` | `slack-sales-draft` | Slack **#finance**, with per-item line items |
 
 ```mermaid
@@ -62,6 +63,46 @@ flowchart TD
     EM --> W
     SK1 --> W
     SK2 --> W
+```
+
+### The Wise channel runs off to one side
+
+It hangs off the same `ACCPAY` + `AUTHORISED` classification but is deliberately **outside** the
+alert dedupe, so it is drawn separately rather than as a fourth branch of the diagram above:
+
+```mermaid
+flowchart TD
+    A["🏦 ACCPAY + AUTHORISED<br/><i>from the list read — no extra Xero call</i>"] --> P{"priming run?"}
+    P -- yes --> STOP["⏹ nothing — a priming<br/>run must not move money"]
+    P -- no --> C["🔎 claim row by InvoiceID<br/><i>free · Wise Transfers Prepared</i>"]
+    C --> C1{"already<br/>claimed?"}
+    C1 -- yes --> SK0["⏹ skipped — idempotent"]
+    C1 -- no --> G["🔎 vendor row by ContactID<br/><i>free · Vendor Payment Details</i>"]
+    G --> GL{"guard ladder<br/><i>all free, 0 tasks</i>"}
+    GL -- "nothing due" --> X1["⏹ nothing-due"]
+    GL -- "no vendor row" --> X2["⏹ no-vendor-row"]
+    GL -- "needs_review set" --> X3["🛑 needs-review<br/><i>possible invoice redirection</i>"]
+    GL -- "unbuildable" --> X4["⏹ not-payable-by-transfer"]
+    GL -- "cache binding fails" --> X5["🛑 cache-mismatch<br/><i>fails CLOSED</i>"]
+    GL -- "payable" --> R{"recipient<br/>cached?"}
+    R -- yes --> Q
+    R -- no --> L["🌐 Wise · GET /v2/accounts<br/><i>1 task</i>"]
+    L --> M{"vendor matched?<br/><i>bank rail preferred</i>"}
+    M -- "2 on same rail" --> X6["🛑 ambiguous-recipient"]
+    M -- "yes" --> Q
+    M -- "no" --> Q
+    Q["🌐 Wise · POST /v3/quotes<br/><i>1 task · non-committal</i>"] --> NEW{"need to create<br/>the recipient?"}
+    NEW -- yes --> RQ["🌐 GET account-requirements<br/><i>1 task · the AUTHORITY on keys</i>"]
+    RQ --> FILL{"requirements<br/>satisfiable?"}
+    FILL -- no --> X7["⏹ requirements-unmet"]
+    FILL -- yes --> CR["🌐 POST /v1/accounts<br/><i>1 task</i>"]
+    CR --> CACHE["💾 cache recipient on the vendor row<br/><i>free · single-writer</i>"]
+    NEW -- no --> T
+    CACHE --> T
+    T{"DRY_RUN?"}
+    T -- yes --> D["📝 dry-run — logs the transfer<br/>it would create, creates none"]
+    T -- no --> TR["🌐 POST /v1/transfers<br/><b>UNFUNDED</b> · customerTransactionId = InvoiceID"]
+    TR --> H["🧑 a human funds it in Wise<br/><i>nothing here moves money</i>"]
 ```
 
 ## Why a schedule
@@ -168,6 +209,50 @@ zapier-sdk --experimental trigger-workflow 019fd4cc-6d23-7aa4-964a-ddc6cf489a1b 
 
 A dry run computes the whole pass against live Xero data, reports what it *would* send, and writes
 no state. It is the safe way to inspect this Zap.
+
+## The Wise channel
+
+Design record and the live-Wise evidence:
+[`../xero-bill-approved-to-wise-transfer/`](../xero-bill-approved-to-wise-transfer/). Code:
+[`wise.ts`](wise.ts) + [`recipient.ts`](recipient.ts), covered by 25 offline assertions
+([`wise.test.mjs`](wise.test.mjs), `npm test`).
+
+**It is not gated on the alert dedupe, on purpose.** `last_alerted_status` answers "have we
+announced this status?", which is not "has this bill been paid?" — and it is a one-way latch, so an
+hour where a Wise call failed would never be retried. The channel keeps its own claim row in
+`Wise Transfers Prepared` (`01KYR680X3GNT4PE1YYDMM43HJ`), keyed on the Xero `InvoiceID`, which is
+already a GUID and is handed to Wise verbatim as `customerTransactionId` — so the free Table guard
+and Wise's own dedupe key are **one identifier**, not two that can disagree.
+
+It *is* gated on `priming` and on `dryRun`, and it reads the **list** row rather than forcing a
+detail fetch, which is what makes it cost **zero additional Xero calls**.
+
+### Cost
+
+Table reads and pure code consume no tasks, so every rejection is free:
+
+| Outcome | Zapier tasks |
+| --- | --- |
+| Any guard rejection — nothing due, no vendor row, `needs_review`, not payable, cache mismatch | **0** |
+| Recipient already cached | **2** (quote + transfer) |
+| Recipient matched from the live list | **3** (list + quote + transfer) |
+| Recipient created | **5** (list + quote + requirements + create + transfer) |
+
+The design's original table said 2/3; it did not count the recipient **list** (without which every
+vendor's first payment would mint a duplicate alongside the 14 recipients already on the account) or
+the **account-requirements** read (which is the authority on `details` key names — the corridor
+table is only a free pre-check).
+
+### Two behaviours worth knowing before touching it
+
+- **A `needs_review` vendor is a hard stop.** `drive-invoice-to-xero` sets that flag when a new
+  invoice's bank details disagree with the stored ones, which is what invoice-redirection fraud looks
+  like. Clearing it means verifying out of band — phone the vendor on a number you already had, never
+  one printed on the new invoice — then following the runbook in that Zap's README.
+- **The cache-validity test fails closed.** A bank recipient binds on the normalised account number,
+  a PayNow one on Wise's opaque `identifierAliasHash`. Drift degrades to "stops paying", never to
+  "pays the wrong account". The PayNow binding is illegible to a human by construction — Wise never
+  returns the alias in plaintext — so verifying a PayNow recipient means opening Wise.
 
 ## Maintainer notes
 
