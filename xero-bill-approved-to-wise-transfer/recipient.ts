@@ -1,8 +1,8 @@
-// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts
+// Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/xero-bill-approved-to-wise-transfer
 //
 // Turning a `Vendor Payment Details` row into a Wise recipient payload.
 //
-// Split out of `wise.ts` because it is pure: no `sdk`, no `ctx`, no clock.
+// Split out of `workflow.ts` because it is pure: no `sdk`, no `ctx`, no clock.
 // That is what lets it be exercised offline against the real recipient shapes
 // read off the live Wise account, rather than only in production.
 //
@@ -12,13 +12,6 @@
 // result in your application breaking upon a requirements change". The table
 // exists so an unbuildable vendor is rejected at 0 tasks instead of paying for
 // a quote in order to be told 422.
-//
-// `values` is the half that survives that reconciliation: `details` guesses the
-// KEY names, `values` states the same data semantically, and `fillRequirements`
-// in `wise.ts` maps `values` onto whatever keys Wise actually asked for.
-//
-// Design notes and the live-account evidence behind all of this:
-// ../xero-bill-approved-to-wise-transfer/payment-details-design.md
 
 /** The columns of a Vendor Payment Details row this module reads. */
 export interface VendorRow {
@@ -75,23 +68,11 @@ export interface RecipientPlan {
     branchCode: string | null;
     accountType: string | null;
     legalType: string;
-    /** PayNow only. Wise's alias identifier and its type. */
-    identifierValue: string | null;
-    identifierType: string | null;
     address: { country: string | null; firstLine: string | null; city: string | null; postCode: string | null; state: string | null };
   };
-  /**
-   * What binds this recipient to the row, for the cache-validity test.
-   *
-   * BANK binds on the normalised account number, which we know before the call.
-   * PAYNOW cannot: Wise returns the alias HASHED and never in plaintext, so the
-   * binding value only exists once Wise has answered. `wise.ts` reads it off the
-   * created/listed recipient and stores it in `wise_recipient_alias_hash`.
-   */
+  /** What binds this recipient to the row, for the cache-validity test. */
   binding: { accountNumber: string | null };
 }
-
-const EMPTY_ADDRESS = { country: null, firstLine: null, city: null, postCode: null, state: null };
 
 export type RecipientOutcome =
   | { ok: true; plan: RecipientPlan }
@@ -228,18 +209,6 @@ export function buildRecipient(
         currency: "SGD",
         accountHolderName: holder,
         details: { legalType, identifierType, identifierValue: alias },
-        values: {
-          accountNumber: null,
-          iban: null,
-          swiftCode: null,
-          bankCode: null,
-          branchCode: null,
-          accountType: null,
-          legalType,
-          identifierValue: alias,
-          identifierType,
-          address: { ...EMPTY_ADDRESS, country: country ?? "SG" },
-        },
         binding: { accountNumber: null },
       },
     };
@@ -345,18 +314,6 @@ export function buildRecipient(
       currency,
       accountHolderName: holder,
       details,
-      values: {
-        accountNumber: account,
-        iban,
-        swiftCode: swift,
-        bankCode: code,
-        branchCode: row.branchCode,
-        accountType: row.accountType,
-        legalType,
-        identifierValue: null,
-        identifierType: null,
-        address,
-      },
       binding: { accountNumber: account ?? iban },
     },
   };
