@@ -1,5 +1,7 @@
 {
   "name": "drive-signed-agreement-to-notion",
+  "description": "Signed agreement PDF added to the Google Drive Signed Agreements folder -> AI by Zapier extracts counterparty and signed date -> rename the file to '<signed date> <counterparty>' -> file it into the Signed Legal Agreements Notion data source with the Drive link and the file itself attached. A separate Notion agent extracts everything else, including Agreement Type.",
+  "description_note": "Updated 2026-08-12 via `update-workflow --description` (no republish — update-workflow only touches name/description, so current_version_id is unchanged). The original description still claimed the AI step extracted agreement type, which stopped being true when the classification step was dropped before the first publish.",
   "workflow_id": "019fcc1f-4d7d-75de-b0bd-609a61f988ca",
   "current_version_id": "019fcc25-2145-768d-8df4-8fd1d666a06d",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATx9AcvXlDiUt1ecPJUu6g",
