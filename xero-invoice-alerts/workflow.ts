@@ -2,6 +2,7 @@
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
+import { prepareWiseTransfer, type WiseResult } from "./wise.ts";
 
 const sdk = createZapierSdk();
 
@@ -93,6 +94,14 @@ const MAX_INVOICES = 200;
  * the backlog drains gradually instead of all at once.
  */
 const MAX_ALERTS_PER_RUN = 25;
+
+/**
+ * Separate blast-radius limit for the Wise channel, which prepares money
+ * movements rather than messages and so gets a tighter one. Anything over the
+ * cap is simply not claimed, so the next fire picks it up — the claim row makes
+ * a re-run free.
+ */
+const MAX_WISE_PREPARATIONS_PER_RUN = 5;
 
 const InputSchema = z.unknown();
 
@@ -325,8 +334,12 @@ function hasSubcontractorLineItem(lineItems: LineItem[]): boolean {
 interface Invoice {
   invoiceId: string | null;
   invoiceNumber: string | null;
+  /** Xero's own `Reference` field — the first fallback when a bill has no number. */
+  reference: string | null;
   type: string | null;
   status: string | null;
+  /** Keys the vendor's row in the Vendor Payment Details Table. */
+  contactId: string | null;
   contactName: string | null;
   contactFirstName: string | null;
   contactEmail: string | null;
@@ -336,6 +349,8 @@ interface Invoice {
   total: string | null;
   totalRaw: number | null;
   amountDue: string | null;
+  /** Unformatted, because the Wise channel pays this number rather than printing it. */
+  amountDueRaw: number | null;
   totalTax: string | null;
   lineItems: LineItem[];
 }
@@ -345,8 +360,10 @@ function readInvoice(inv: any): Invoice {
   return {
     invoiceId: firstString(inv?.InvoiceID, inv?.invoice_id, inv?.id),
     invoiceNumber: firstString(inv?.InvoiceNumber, inv?.invoice_number),
+    reference: firstString(inv?.Reference, inv?.reference),
     type: firstString(inv?.Type, inv?.type),
     status: firstString(inv?.Status, inv?.status),
+    contactId: firstString(contact.ContactID, contact.contact_id, contact.ContactId),
     contactName: firstString(contact.Name, contact.name),
     contactFirstName: firstString(contact.FirstName, contact.first_name, contact.Name, contact.name),
     contactEmail: firstString(contact.EmailAddress, contact.email_address),
@@ -356,6 +373,7 @@ function readInvoice(inv: any): Invoice {
     total: formatAmount(inv?.Total ?? inv?.total),
     totalRaw: toNumber(inv?.Total ?? inv?.total),
     amountDue: formatAmount(inv?.AmountDue ?? inv?.amount_due),
+    amountDueRaw: toNumber(inv?.AmountDue ?? inv?.amount_due),
     totalTax: formatAmount(inv?.TotalTax ?? inv?.total_tax),
     lineItems: readLineItems(inv),
   };
@@ -604,6 +622,14 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     let stateWritten = 0;
     let alertCapHit = false;
 
+    // The Wise channel keeps its own counters: its work is neither an "alert"
+    // nor deduped by the alert-state table.
+    const wiseResults: (WiseResult & { invoiceId: string; number: string | null })[] = [];
+    let wisePreparations = 0;
+    let wiseTransfers = 0;
+    let wiseTasks = 0;
+    let wiseCapHit = false;
+
     for (let i = 0; i < batch.length; i++) {
       const { inv, channel } = batch[i];
       const invoiceId = inv.invoiceId as string;
@@ -646,6 +672,61 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             }),
           );
           stateWritten++;
+        }
+      }
+
+      // 3a-bis. THE WISE CHANNEL. An approved bill also gets a Wise payout
+      //     prepared — see wise.ts for why this rides here instead of on its
+      //     own poller.
+      //
+      //     Deliberately NOT gated on `shouldAlert`. The alert dedupe answers
+      //     "have we announced this status?", which is a different question
+      //     from "has this bill been paid?" — and it is a ONE-WAY latch: an
+      //     hour where the Wise call failed would never be retried, because
+      //     the state row already records AUTHORISED. The Wise channel carries
+      //     its own idempotency instead, a claim row keyed on the invoice id,
+      //     so re-entering here every hour is free and self-healing.
+      //
+      //     It IS gated on priming (a priming run must not move money) and on
+      //     dryRun, and it reads the LIST row rather than forcing a detail
+      //     fetch — every field it needs is in the list response, which is what
+      //     makes this channel cost zero additional Xero calls.
+      if (channel === "email-subcontractor" && !priming) {
+        if (wisePreparations >= MAX_WISE_PREPARATIONS_PER_RUN) {
+          wiseCapHit = true;
+          skipped.push({ invoiceId, number: inv.invoiceNumber, channel: "wise-transfer", reason: "wise preparation cap reached" });
+        } else {
+          wisePreparations++;
+          const wise = await prepareWiseTransfer(ctx, tag, {
+            bill: {
+              invoiceId,
+              invoiceNumber: inv.invoiceNumber,
+              reference: inv.reference,
+              contactId: inv.contactId,
+              contactName: inv.contactName,
+              currencyCode: inv.currencyCode,
+              amountDue: inv.amountDueRaw,
+              date: inv.date,
+              dueDate: inv.dueDate,
+            },
+            nowIso: clock.nowIso,
+            dryRun,
+          });
+          wiseTasks += wise.tasksSpent;
+          wiseResults.push({ invoiceId, number: inv.invoiceNumber, ...wise });
+          if (wise.outcome === "prepared" || wise.outcome === "dry-run") wiseTransfers++;
+          // Only the outcomes a human must act on are logged at WARNING. The
+          // routine declines — no vendor row, nothing due, not payable by
+          // transfer — are normal and would drown the ones that matter.
+          if (wise.outcome === "needs-review" || wise.outcome === "cache-mismatch") {
+            console.log(
+              `WARNING: refusing to prepare a Wise payment for ${inv.invoiceNumber ?? invoiceId} — ${wise.reason}. ` +
+                `Verify out of band before clearing: phone the vendor on a number you already had, ` +
+                `never one printed on the invoice.`,
+            );
+          } else if (wise.outcome !== "already-claimed") {
+            console.log(`wise-transfer for ${inv.invoiceNumber ?? invoiceId}: ${wise.outcome}${wise.reason ? ` — ${wise.reason}` : ""}`);
+          }
         }
       }
 
@@ -843,9 +924,18 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       );
     }
 
+    if (wiseCapHit) {
+      console.log(
+        `WARNING: hit MAX_WISE_PREPARATIONS_PER_RUN (${MAX_WISE_PREPARATIONS_PER_RUN}). The remaining ` +
+          `approved bills were left UNCLAIMED and will be picked up next fire.`,
+      );
+    }
+
     console.log(
       `xero-invoice-alerts done: ${alertsSent} alert(s) sent, ${skipped.length} skipped, ` +
-        `${stateWritten} state row(s) written${priming ? " (PRIMING — no alerts by design)" : ""}`,
+        `${stateWritten} state row(s) written${priming ? " (PRIMING — no alerts by design)" : ""}. ` +
+        `Wise: ${wiseTransfers} transfer(s) prepared from ${wisePreparations} approved bill(s), ` +
+        `${wiseTasks} task(s) spent.`,
     );
 
     return {
@@ -863,6 +953,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       stateRowsWritten: stateWritten,
       alerted,
       skipped,
+      wise: {
+        billsConsidered: wisePreparations,
+        transfersPrepared: wiseTransfers,
+        tasksSpent: wiseTasks,
+        capHit: wiseCapHit,
+        results: wiseResults,
+      },
     };
   },
 );
