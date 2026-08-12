@@ -22,10 +22,9 @@
   "connections": {
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
-    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c",
-    "wise_wf": "023b4433-c4cc-8857-9613-4637679d35b0"
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
   },
-  "connections_note": "All three are the same credentials the retired Zaps used: Xero work.flowers, Slack (posts to #finance C08GRA41E1J), and the shared dennis@work.flowers Gmail connection on GoogleMailV2CLIAPI@2.14.0. Note the shape mismatch: reads return {\"alias\":{\"connection_id\":…}} (snake_case) while the publish/update flags take {\"alias\":{\"connectionId\":…}} (camelCase). wise_wf is the API by Zapier connection 'Wise - workFlowers' (App235435CLIAPI) — Wise has no first-party Zapier app. NOT YET BOUND ON THE DEPLOYED VERSION: see wise_channel.status.",
+  "connections_note": "All three are the same credentials the retired Zaps used: Xero work.flowers, Slack (posts to #finance C08GRA41E1J), and the shared dennis@work.flowers Gmail connection on GoogleMailV2CLIAPI@2.14.0. Note the shape mismatch: reads return {\"alias\":{\"connection_id\":…}} (snake_case) while the publish/update flags take {\"alias\":{\"connectionId\":…}} (camelCase).",
   "app_versions": {
     "slack": {
       "implementation_name": "SlackCLIAPI",
@@ -110,29 +109,5 @@
   ],
   "pending_verification": "No fire has yet completed a successful Xero read. What to watch for on the first one after ~10:11 UTC 2026-08-06: (1) `priming: true` and `alertsSent: 0` — a priming run must not send anything; (2) rows appearing in table 01KZACA2ZA3XJWWGSMNEC381ZE with `last_alerted_status` set to each invoice's current status; (3) on the NEXT fire, `priming: false` and `alertsSent: 0` again, because nothing has changed since priming. A non-zero `alertsSent` on either of the first two fires means the dedupe rule is wrong and should be investigated before more alerts go out. Also confirm `coverageIncomplete: false` — if true, the window returned more than MAX_PAGES/MAX_INVOICES and the caps need revisiting.",
   "created_at": "2026-08-06T01:59:54.917Z",
-  "version_created_at": "2026-08-06T02:00:13.146Z",
-  "wise_channel": {
-    "status": "NOT DEPLOYED — code written, typechecked and offline-tested in this repo; the published version 019fd4cc-b3c5-7bd9-8d24-b4e3a375f063 does NOT contain it.",
-    "blocker": "The Zapier SDK CLI is unauthenticated in the Claude Code remote container (browser OAuth), so the publish had to go through the MCP connector, whose update_workflow_draft REPLACES source_files wholesale — every save must carry all three files (~90KB) inline in a single call. That exceeded what could be emitted reliably, and a transcription error in money-adjacent source is not an acceptable risk. Draft 019ff352-b203-72b7-89be-236e6cc6dfe3 was discarded; the live version is untouched.",
-    "to_publish": "Authenticate the CLI (`zapier-sdk login --headless`, then `--callback-url`), then publish workflow.ts + wise.ts + recipient.ts byte-exact from disk with --trigger preserved (ScheduleCLIAPI@1.7.0 everyHour, moh '00', weekends 'yes'), --connections including wise_wf, and --app-versions unchanged. Dry-run first: trigger-workflow --input '{\"dryRun\":true}'.",
-    "source_files": [
-      "workflow.ts",
-      "wise.ts",
-      "recipient.ts"
-    ],
-    "dry_run": "wise.ts DRY_RUN = true gates the final POST /v1/transfers only. Recipient creation and quoting still happen — deliberate, per the design: they are non-committal and prove the corridor mapping. Flip to false once a real bill has been through end to end.",
-    "tables": {
-      "claim": "01KYR680X3GNT4PE1YYDMM43HJ (Wise Transfers Prepared, key xero_invoice_id)",
-      "vendor": "01KYR653H04DNMKKYAZ72534YG (Vendor Payment Details, key xero_contact_id, written by drive-invoice-to-xero)"
-    },
-    "wise": {
-      "profile_id": 80913588,
-      "app": "App235435CLIAPI (API by Zapier)",
-      "connection": "023b4433-c4cc-8857-9613-4637679d35b0",
-      "note": "Unfunded transfers only. A human funds them in Wise."
-    },
-    "xero_cost": "ZERO additional Xero API calls — the channel reads the list row the hourly pass already fetched.",
-    "dedupe": "Own claim row keyed on xero_invoice_id; deliberately NOT gated on the alert-state last_alerted_status latch, which is one-way and would prevent retry after a failed Wise call.",
-    "tests": "xero-invoice-alerts/wise.test.mjs — 25 offline assertions over tsc's emitted output (npm test). Strict typecheck passes."
-  }
+  "version_created_at": "2026-08-06T02:00:13.146Z"
 }
