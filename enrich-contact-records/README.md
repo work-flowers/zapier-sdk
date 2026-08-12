@@ -86,7 +86,11 @@ inline function (`updateContactRecord`) — no separate Durable needed.
    - **New/different email** (Path G): keeps the existing Primary Email, adds
      the enriched email to Secondary Email.
    - **Profile pic** (Path C): if the enrichment returned a profile pic URL,
-     updates the Notion page icon and cover via `sdk.fetch`.
+     hands it to Notion as a `file_uploads` `external_url` import and attaches
+     the resulting upload as both the page icon and cover. **The URL is never
+     stored as the icon** — see [Profile photos are uploaded, not
+     linked](#profile-photos-are-uploaded-not-linked). A photo that fails to
+     import is reported in the outcome comment and never fails the run.
    - **Index the email in the email→contact Zapier Table**
      (`01JYEPSEARXB2Z6BJRCMFGXBC2`): whenever a new email lands on the contact
      (Path G secondary, or a first-ever primary via Path D), upsert-if-missing a
@@ -139,10 +143,121 @@ flowchart TD
     F --> H{"Profile pic URL returned?"}
     GP --> H
     G --> H
-    H -- yes --> I["Update Notion page icon + cover<br/>(Path C, via sdk.fetch)"] --> J
+    H -- yes --> I["Import photo into Notion<br/>(file_uploads external_url)<br/>attach as page icon + cover<br/>(Path C)"] --> J
     H -- no --> J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
     J --> K(["Return pageId, enriched, source, emailPath, iconUpdated"])
 ```
+
+## Profile photos are uploaded, not linked
+
+Until 2026-08-12 Path C set the icon and cover to
+`{type: "external", external: {url: <the enrichment's photo URL>}}`. Both Apollo
+(`person.photo_url`) and NinjaPear (`profile_pic_url`) hand back LinkedIn's CDN
+link verbatim, and those are **signed and time-limited**:
+
+```
+https://media.licdn.com/dms/image/v2/…/0/1669569071244?e=1779321600&v=beta&t=xqUO1s9…
+                                                        ^^^^^^^^^^ unix expiry
+```
+
+Notion re-fetches an `external` icon on every view and stores the dead link
+forever, so a few weeks after enrichment the page keeps an icon and cover that
+**render as empty white space**. Nothing errors, nothing alerts, and the record
+looks subtly broken. An audit on 2026-08-12
+(`scripts/audit-contact-icon-urls.mjs`) found **210 of 962 contacts** already in
+that state, with expiries stretching back to 2026-04-23.
+
+The fix hands the URL to Notion instead, and lets Notion do the fetching:
+
+```
+POST /v1/file_uploads  { mode: "external_url", external_url, filename }
+GET  /v1/file_uploads/<id>            → poll until status "uploaded"
+PATCH /v1/pages/<id>  { icon: {type:"file_upload", …}, cover: {…} }
+```
+
+Notion stores the bytes on its own `prod-files-secure` S3 and re-signs the URL
+on every read, so the result comes back as `{type: "file"}` and never expires.
+
+Things worth knowing before editing this:
+
+- **`filename` is required** in `external_url` mode — omitting it is a
+  `400 validation_error`. LinkedIn URLs carry no extension in the path, so it
+  falls back to `.jpg`. The stored file's real content type comes from the
+  response Notion fetches, not from that name.
+- **One upload backs both the icon and the cover.** Passing the same
+  `file_upload` id twice in a single PATCH works; the docs don't say either way.
+- **This is the opposite choice to
+  [`esignatures-status-to-notion`](../esignatures-status-to-notion/)**, which
+  downloads the bytes and pushes a `single_part` upload. Both are right:
+  `external_url` makes Notion probe with `HEAD` first, and the S3 links
+  eSignatures receives are presigned for `GET` alone, so they 403 that probe.
+  LinkedIn answers HEAD normally.
+- **The durable cannot casually download the photo itself.** A bare `fetch`
+  fails for *every* host (probed 2026-08-12: example.com, pbs.twimg.com,
+  media.licdn.com, api.notion.com), and `sdk.fetch` *with* a connection is
+  domain-filtered to that connection's app — `Domain media.licdn.com did not
+  match expected domain filter api.notion.com`. The escape hatch, if
+  `external_url` ever stops working, is `sdk.fetch` with **no connection**.
+- **A failed import never fails the run.** It is caught inside the step (so it
+  doesn't spin the retry loop) and surfaced in the outcome comment as
+  `Profile photo not stored: …`. A Notion PATCH failure is left to throw, since
+  that one is worth retrying.
+
+### Contacts already affected
+
+The 210 broken contacts **cannot be repaired by rewriting the URL** — the links
+are dead and the bytes are gone. They need re-enrichment to fetch a fresh photo,
+which is blocked while Apollo is out of lead credits (see below). Re-running
+`scripts/audit-contact-icon-urls.mjs` reports the current count.
+
+A further 40 contacts hold a LinkedIn URL whose expiry is `2147483647` (the
+int32 maximum, i.e. "never"). Those still render and are not urgent, though they
+are still `external` links and would be made permanent by a re-enrichment.
+
+> **Apollo is out of lead credits** as of 2026-08-12: `people/match` returns
+> `422 — You have insufficient credits!`. The cascade falls through to Lusha
+> (which returns no photo at all) and NinjaPear (which does return
+> `profile_pic_url`), so photos still arrive, just only via NinjaPear.
+
+## Never send Lusha a name without a company
+
+`search_and_enrich_contacts` accepts five identifying fields — `linkedinUrl`,
+`email`, `firstName`, `lastName`, `domain` — and the obvious thing to do is pass
+all of them and let Lusha use whatever it can. **That is wrong and it fails
+closed.** Lusha validates the *name* branch independently, and a failure there
+rejects the whole request:
+
+```
+Each contact must have one of: id, linkedinUrl, email,
+or firstName + lastName + (companyName | companyDomain)
+```
+
+`firstName` + `lastName` with no company or domain trips that error **even when
+`linkedinUrl` or `email` is also present** — and either of those identifies a
+contact on its own. So passing all five turns a perfectly identifiable contact
+into a hard error the moment the domain is empty, which is *every* contact on a
+consumer mailbox with no Company relation.
+
+Measured against the live action, 2026-08-12, using Derek Wong (LinkedIn URL
+populated, gmail Primary, no Company → `domain` resolves to `""`):
+
+| Inputs | Result |
+| --- | --- |
+| `email` alone | ✅ valid request — `Contact not found` |
+| `linkedinUrl` alone | ✅ **resolves** — `id: v1.jQ8pgW…`, Derek Wong, Chief Product Officer |
+| `email` + `domain: ""` | ✅ valid request |
+| `email` + `firstName` + `lastName` | ❌ **rejected** |
+| `firstName` + `lastName` + `linkedinUrl` | ❌ **rejected** |
+| `firstName` + `lastName` + a real `domain` | ✅ valid request |
+| `linkedinUrl` + `email` | ✅ **resolves** |
+
+So the names ride along **only when a domain accompanies them**, and empty
+values are omitted rather than sent as `""`. Note also that the LinkedIn URL is
+the strongest identifier here — it resolved Derek where his email did not.
+
+This is why the bug hid for so long: the contacts it breaks are exactly the ones
+with no corporate domain, and the failure reads like a missing-input problem on
+our side rather than a validation quirk on Lusha's.
 
 ## Why the NinjaPear fallback misses
 

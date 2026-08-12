@@ -441,6 +441,109 @@ function extractEnrichedFromApollo(person: any): EnrichedData {
   };
 }
 
+// --- Profile photo storage -------------------------------------------------
+//
+// Notion renders an `external` icon/cover by re-fetching that URL on every
+// view. Apollo hands back LinkedIn's CDN link verbatim, and those links are
+// signed and time-limited — `…?e=<unix-expiry>&v=beta&t=<signature>`. A few
+// weeks after enrichment the URL starts 403ing and Notion, having stored the
+// dead link forever, renders empty white space: the page still *has* an icon
+// and cover, they just draw as nothing. Nothing errors, so it goes unnoticed.
+// An audit on 2026-08-12 found 210 of 962 contacts already in that state.
+//
+// Storing the bytes in Notion instead makes it permanent. The PATCH comes back
+// as `type: "file"` on Notion's own S3, whose URL Notion re-signs on each read.
+// One upload can back both the icon and the cover — verified 2026-08-12 against
+// a live contact; the docs don't state it either way.
+//
+// Notion does the downloading, via `file_uploads` mode `external_url`.
+//
+// Note this is the OPPOSITE choice to `esignatures-status-to-notion`, which
+// files its PDF by downloading the bytes and pushing a `single_part` upload.
+// Both are right for their case: `external_url` makes Notion probe the URL
+// with `HEAD` first, and the S3 links eSignatures hands out are presigned for
+// `GET` alone, so they answer that probe with 403. LinkedIn's CDN answers HEAD
+// normally, so the simpler route works here — no download, no hand-built
+// multipart body, no content-type matching to get wrong.
+//
+// The durable cannot casually download the bytes itself either way: a bare
+// `fetch` fails for every host — example.com, pbs.twimg.com, media.licdn.com,
+// even api.notion.com — and `sdk.fetch` *with a connection* is domain-filtered
+// to that connection's own app ("Domain media.licdn.com did not match expected
+// domain filter `api.notion.com`"). Both probed against the real runtime on
+// 2026-08-12. The escape hatch, if `external_url` ever stops working, is
+// `sdk.fetch` with **no connection** — see that Zap's README.
+
+/** How many times to poll an `external_url` import before giving up. Notion
+ *  has finished on the first poll in every observed case (~1s); the extra
+ *  attempts are headroom, not the expected path. */
+const PHOTO_UPLOAD_POLL_ATTEMPTS = 6;
+
+/** A filename for the stored photo. `external_url` mode *requires* one (a
+ *  create without it is rejected `400 validation_error`), but the photo URLs
+ *  Apollo and NinjaPear hand back are LinkedIn CDN links with no extension in
+ *  the path, so the extension is taken from the path when there is one and
+ *  falls back to `.jpg`, which is what LinkedIn serves. The stored file's real
+ *  content type comes from the response Notion fetches, not from this name. */
+function photoFilename(photoUrl: string): string {
+  const path = photoUrl.split("?")[0];
+  const ext = path.match(/\.(jpe?g|png|webp|gif)$/i)?.[1];
+  return `profile-photo.${ext ? ext.toLowerCase() : "jpg"}`;
+}
+
+/** Hand `photoUrl` to Notion to fetch and store, returning the file upload id
+ *  to attach as icon/cover. Throws on any failure; the caller catches inside
+ *  its own step so a dead photo URL never spins the step-retry loop or sinks
+ *  an otherwise good enrichment.
+ *
+ *  MUST be called from inside a `ctx.step` — it makes network calls. */
+async function storeProfilePhoto(photoUrl: string): Promise<string> {
+  const createRes = await sdk.fetch(`${NOTION_API}/file_uploads`, {
+    connection: NOTION_CONNECTION,
+    method: "POST",
+    headers: {
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      mode: "external_url",
+      external_url: photoUrl,
+      filename: photoFilename(photoUrl),
+    }),
+  });
+  if (!createRes.ok) {
+    throw new Error(
+      `file_upload create failed (${createRes.status}): ${await createRes.text()}`,
+    );
+  }
+  const created = await createRes.json();
+  const uploadId = firstString(created?.id);
+  if (!uploadId) throw new Error("file_upload create returned no id");
+
+  // The import is asynchronous — `pending` until Notion has pulled the bytes.
+  let status = firstString(created?.status) ?? "pending";
+  for (let i = 0; i < PHOTO_UPLOAD_POLL_ATTEMPTS && status === "pending"; i++) {
+    const pollRes = await sdk.fetch(`${NOTION_API}/file_uploads/${uploadId}`, {
+      connection: NOTION_CONNECTION,
+      method: "GET",
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+    if (!pollRes.ok) {
+      throw new Error(
+        `file_upload poll failed (${pollRes.status}): ${await pollRes.text()}`,
+      );
+    }
+    status = firstString((await pollRes.json())?.status) ?? "pending";
+  }
+
+  if (status !== "uploaded") {
+    // `failed` means Notion could not fetch the URL — an already-expired link,
+    // or a host that refuses Notion's fetcher. Nothing to retry.
+    throw new Error(`Notion could not import the photo (status: ${status})`);
+  }
+  return uploadId;
+}
+
 // --- Durable context type --------------------------------------------------
 
 type DurableCtx = Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0];
@@ -469,7 +572,7 @@ async function updateContactRecord(
   ctx: DurableCtx,
   contact: ContactData,
   enriched: EnrichedData,
-): Promise<{ emailPath: string; iconUpdated: boolean }> {
+): Promise<{ emailPath: string; iconUpdated: boolean; iconError?: string }> {
   const fullName = `${enriched.firstName || contact.firstName} ${enriched.lastName || contact.lastName}`.trim();
 
   // --- Determine email path (mirrors the sub-zap's Path D / Path G logic) ---
@@ -624,9 +727,30 @@ async function updateContactRecord(
   }
 
   // --- Update page icon + cover if a profile pic was found (Path C) ---
+  //
+  // The photo is uploaded to Notion rather than linked. See "Profile photo
+  // storage" above: linking the source URL is what left 210 contacts rendering
+  // a blank icon and cover once the signed link expired.
   let iconUpdated = false;
+  let iconError: string | undefined;
   if (enriched.profilePicUrl) {
-    await ctx.step("update-page-icon", async () => {
+    const outcome = await ctx.step("update-page-icon", async () => {
+      // The import is caught in here, not outside the step: a photo URL that
+      // is already dead or that Notion refuses to fetch is a fact about the
+      // source, not a transient failure, so retrying it just burns the retry
+      // budget and would eventually fail a run whose email and property
+      // updates all succeeded. A Notion PATCH failure below is genuinely worth
+      // retrying and is therefore left to throw.
+      let uploadId: string;
+      try {
+        uploadId = await storeProfilePhoto(enriched.profilePicUrl);
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: String((err as Error)?.message ?? err),
+        };
+      }
+
       const res = await sdk.fetch(`${NOTION_API}/pages/${contact.pageId}`, {
         connection: NOTION_CONNECTION,
         method: "PATCH",
@@ -635,14 +759,8 @@ async function updateContactRecord(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          icon: {
-            type: "external",
-            external: { url: enriched.profilePicUrl },
-          },
-          cover: {
-            type: "external",
-            external: { url: enriched.profilePicUrl },
-          },
+          icon: { type: "file_upload", file_upload: { id: uploadId } },
+          cover: { type: "file_upload", file_upload: { id: uploadId } },
         }),
       });
       if (!res.ok) {
@@ -650,12 +768,19 @@ async function updateContactRecord(
           `Notion icon update failed (${res.status}): ${await res.text()}`,
         );
       }
-      return { ok: true };
+      return { ok: true as const };
     });
-    iconUpdated = true;
+
+    if (outcome.ok) {
+      iconUpdated = true;
+    } else {
+      // Surfaced in the outcome comment rather than swallowed — a photo that
+      // never stored is worth seeing on the page, just not worth failing over.
+      iconError = outcome.error;
+    }
   }
 
-  return { emailPath, iconUpdated };
+  return { emailPath, iconUpdated, iconError };
 }
 
 // --- Add outcome comment to the triggering page ----------------------------
@@ -681,6 +806,9 @@ interface WorkflowResult {
   reasons?: string[];
   emailPath?: string;
   iconUpdated?: boolean;
+  /** Why the profile photo could not be stored, when one was offered. Kept
+   *  distinct from `reasons` — the enrichment itself succeeded. */
+  iconError?: string;
 }
 
 /** A single source's failure reason parsed into a source label ("Lusha",
@@ -703,8 +831,10 @@ function parseFailure(why: string): { source: string | null; brief: string } {
     s = http[2];
   }
   // Prefer the message inside a JSON error body over the raw blob, and drop
-  // any markup embedded in it.
-  s = s.match(/"error"\s*:\s*"([^"]+)"/i)?.[1] ?? s;
+  // any markup embedded in it. Apollo keys it `error`, Notion `message`.
+  s = s.match(/"error"\s*:\s*"([^"]+)"/i)?.[1] ??
+    s.match(/"message"\s*:\s*"([^"]+)"/i)?.[1] ??
+    s;
   s = s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
   if (/^returned no result$/i.test(s)) s = "no profile found";
   if (/^returned no usable match$/i.test(s)) s = "no usable match";
@@ -728,6 +858,11 @@ async function addOutcomeComment(
     changes.push("contact details");
     const via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
+    // A photo that failed to store is worth naming: the rest of the record is
+    // correct, so nothing else in this comment would hint the icon is missing.
+    if (result.iconError) {
+      summary += ` Profile photo not stored: ${parseFailure(result.iconError).brief}.`;
+    }
     // When a fallback did the work, note why each earlier source was skipped
     // over — one labelled clause per source, same as the skip branch.
     if (result.reasons?.length) {
@@ -925,6 +1060,34 @@ const workflow = defineDurable<unknown, unknown>(
         reasons.push(why);
         console.log(`Lusha ${why.slice("lusha ".length)} for ${contact.pageId}`);
       } else {
+        // Lusha validates the *name* branch independently, and a failure there
+        // aborts the whole request: `firstName` + `lastName` with no company
+        // or domain is rejected outright —
+        //   Each contact must have one of: id, linkedinUrl, email, or
+        //   firstName + lastName + (companyName | companyDomain)
+        // — EVEN WHEN `linkedinUrl` or `email` is also present and each of
+        // those identifies a contact on its own. Sending all five fields
+        // therefore turns a perfectly identifiable contact into a hard error
+        // whenever the domain is empty, which is every contact on a consumer
+        // mailbox with no Company relation. That is what made Derek Wong
+        // (LinkedIn URL populated, gmail Primary, no Company) fail on 2026-08-12.
+        //
+        // So the names ride along only when a domain accompanies them. Proven
+        // against the live action 2026-08-12: `linkedinUrl` alone resolved him
+        // where `email` alone returned "Contact not found", and
+        // `firstName + lastName + linkedinUrl` without a domain was rejected.
+        //
+        // Empty values are omitted rather than sent as "" — the identifiers
+        // are what Lusha branches on, so an empty one is noise at best.
+        const lushaInputs: Record<string, unknown> = {};
+        if (contact.linkedinUrl) lushaInputs.linkedinUrl = contact.linkedinUrl;
+        if (contact.primaryEmail) lushaInputs.email = contact.primaryEmail;
+        if (contact.domain) {
+          lushaInputs.domain = contact.domain;
+          if (contact.firstName) lushaInputs.firstName = contact.firstName;
+          if (contact.lastName) lushaInputs.lastName = contact.lastName;
+        }
+
         const lusha = await ctx.step("lusha-enrich", async () => {
           try {
             const searchRes = await sdk.runAction({
@@ -932,13 +1095,7 @@ const workflow = defineDurable<unknown, unknown>(
               actionType: "search",
               actionKey: "search_and_enrich_contacts",
               connection: LUSHA_CONNECTION,
-              inputs: {
-                email: contact.primaryEmail,
-                firstName: contact.firstName,
-                lastName: contact.lastName,
-                domain: contact.domain,
-                linkedinUrl: contact.linkedinUrl,
-              },
+              inputs: lushaInputs,
             });
             // Result shape: { "Request Id", results: [{ id, error, ...fields }] }.
             const searchOuter = firstResult(searchRes) ?? {};
