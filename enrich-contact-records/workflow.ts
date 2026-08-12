@@ -1060,6 +1060,34 @@ const workflow = defineDurable<unknown, unknown>(
         reasons.push(why);
         console.log(`Lusha ${why.slice("lusha ".length)} for ${contact.pageId}`);
       } else {
+        // Lusha validates the *name* branch independently, and a failure there
+        // aborts the whole request: `firstName` + `lastName` with no company
+        // or domain is rejected outright —
+        //   Each contact must have one of: id, linkedinUrl, email, or
+        //   firstName + lastName + (companyName | companyDomain)
+        // — EVEN WHEN `linkedinUrl` or `email` is also present and each of
+        // those identifies a contact on its own. Sending all five fields
+        // therefore turns a perfectly identifiable contact into a hard error
+        // whenever the domain is empty, which is every contact on a consumer
+        // mailbox with no Company relation. That is what made Derek Wong
+        // (LinkedIn URL populated, gmail Primary, no Company) fail on 2026-08-12.
+        //
+        // So the names ride along only when a domain accompanies them. Proven
+        // against the live action 2026-08-12: `linkedinUrl` alone resolved him
+        // where `email` alone returned "Contact not found", and
+        // `firstName + lastName + linkedinUrl` without a domain was rejected.
+        //
+        // Empty values are omitted rather than sent as "" — the identifiers
+        // are what Lusha branches on, so an empty one is noise at best.
+        const lushaInputs: Record<string, unknown> = {};
+        if (contact.linkedinUrl) lushaInputs.linkedinUrl = contact.linkedinUrl;
+        if (contact.primaryEmail) lushaInputs.email = contact.primaryEmail;
+        if (contact.domain) {
+          lushaInputs.domain = contact.domain;
+          if (contact.firstName) lushaInputs.firstName = contact.firstName;
+          if (contact.lastName) lushaInputs.lastName = contact.lastName;
+        }
+
         const lusha = await ctx.step("lusha-enrich", async () => {
           try {
             const searchRes = await sdk.runAction({
@@ -1067,13 +1095,7 @@ const workflow = defineDurable<unknown, unknown>(
               actionType: "search",
               actionKey: "search_and_enrich_contacts",
               connection: LUSHA_CONNECTION,
-              inputs: {
-                email: contact.primaryEmail,
-                firstName: contact.firstName,
-                lastName: contact.lastName,
-                domain: contact.domain,
-                linkedinUrl: contact.linkedinUrl,
-              },
+              inputs: lushaInputs,
             });
             // Result shape: { "Request Id", results: [{ id, error, ...fields }] }.
             const searchOuter = firstResult(searchRes) ?? {};

@@ -219,6 +219,46 @@ are still `external` links and would be made permanent by a re-enrichment.
 > (which returns no photo at all) and NinjaPear (which does return
 > `profile_pic_url`), so photos still arrive, just only via NinjaPear.
 
+## Never send Lusha a name without a company
+
+`search_and_enrich_contacts` accepts five identifying fields — `linkedinUrl`,
+`email`, `firstName`, `lastName`, `domain` — and the obvious thing to do is pass
+all of them and let Lusha use whatever it can. **That is wrong and it fails
+closed.** Lusha validates the *name* branch independently, and a failure there
+rejects the whole request:
+
+```
+Each contact must have one of: id, linkedinUrl, email,
+or firstName + lastName + (companyName | companyDomain)
+```
+
+`firstName` + `lastName` with no company or domain trips that error **even when
+`linkedinUrl` or `email` is also present** — and either of those identifies a
+contact on its own. So passing all five turns a perfectly identifiable contact
+into a hard error the moment the domain is empty, which is *every* contact on a
+consumer mailbox with no Company relation.
+
+Measured against the live action, 2026-08-12, using Derek Wong (LinkedIn URL
+populated, gmail Primary, no Company → `domain` resolves to `""`):
+
+| Inputs | Result |
+| --- | --- |
+| `email` alone | ✅ valid request — `Contact not found` |
+| `linkedinUrl` alone | ✅ **resolves** — `id: v1.jQ8pgW…`, Derek Wong, Chief Product Officer |
+| `email` + `domain: ""` | ✅ valid request |
+| `email` + `firstName` + `lastName` | ❌ **rejected** |
+| `firstName` + `lastName` + `linkedinUrl` | ❌ **rejected** |
+| `firstName` + `lastName` + a real `domain` | ✅ valid request |
+| `linkedinUrl` + `email` | ✅ **resolves** |
+
+So the names ride along **only when a domain accompanies them**, and empty
+values are omitted rather than sent as `""`. Note also that the LinkedIn URL is
+the strongest identifier here — it resolved Derek where his email did not.
+
+This is why the bug hid for so long: the contacts it breaks are exactly the ones
+with no corporate domain, and the failure reads like a missing-input problem on
+our side rather than a validation quirk on Lusha's.
+
 ## Why the NinjaPear fallback misses
 
 Investigated 2026-07-28, after "no profile found" became the near-universal
