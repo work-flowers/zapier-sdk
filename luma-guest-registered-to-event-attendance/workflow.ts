@@ -324,8 +324,13 @@ function extractGuest(raw: unknown): Guest | null {
   // all — treat it as absent so nothing gets promoted or duplicated.
   const workEmail = answered && answered !== accountEmail ? answered : null;
   const tickets = Array.isArray(g.tickets) ? g.tickets : [];
+  // `checked_in_at` (guest or ticket) is the physical QR-scan check-in.
+  // `joined_at` is Luma's separate signal for a virtual guest joining the
+  // meeting link — a virtual event never gets a QR scan, so this is the only
+  // way its attendance shows up.
   const checkedIn =
     firstString(g.checked_in_at) !== null ||
+    firstString(g.joined_at) !== null ||
     tickets.some((t: any) => firstString(t?.checked_in_at) !== null);
   return {
     accountEmail,
@@ -619,6 +624,26 @@ function mapApprovalStatus(status: string | null): string {
     default:
       return "Approved";
   }
+}
+
+/**
+ * The value to write into `Approval Status`.
+ *
+ * Despite the name, that select is the record's LIFECYCLE status in this
+ * workspace, not a pure approval field — "Registered" and "Attended" are both
+ * options and neither is a Luma `approval_status` value. A guest who actually
+ * turned up outranks whatever Luma still reports as their approval state, so a
+ * check-in resolves to "Attended".
+ *
+ * This is also what stops "Attended" being clobbered. The select is rewritten on
+ * EVERY `guest_updated`, so mapping straight from `approval_status` would knock a
+ * checked-in guest back to "Approved" on their next profile edit. `checkedIn` is
+ * monotonic — Luma never unsets `joined_at` or `checked_in_at` — so every later
+ * payload for that guest still resolves to "Attended" and the value survives
+ * without a read-modify-write.
+ */
+function resolveAttendanceStatus(status: string | null, checkedIn: boolean): string {
+  return checkedIn ? "Attended" : mapApprovalStatus(status);
 }
 
 // --- Workflow ----------------------------------------------------------------
@@ -1040,7 +1065,11 @@ const workflow = defineDurable<unknown, unknown>(
     }
 
     // 3. Upsert the Attendance record, deduped on Event + Contact.
-    const approvalStatus = mapApprovalStatus(guest.approvalStatus);
+    // "Attended" once the guest has checked in — see resolveAttendanceStatus.
+    const approvalStatus = resolveAttendanceStatus(
+      guest.approvalStatus,
+      guest.checkedIn,
+    );
     const matchKey = `${eventPageId}::${contactPageId}`;
 
     // If we just created the event or the contact, no attendance can pre-exist

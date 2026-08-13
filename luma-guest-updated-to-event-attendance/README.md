@@ -19,8 +19,10 @@ changes — approval-status change, check-in, registration edit — onto the exi
 ## What it does
 
 1. Extract the guest: `email` (required), `approval_status`, `checkedIn` (any
-   `tickets[].checked_in_at` set), the **`Work Email` registration answer**, and the nested
-   `event` id.
+   `tickets[].checked_in_at` set — physical QR-scan check-in — **or** a non-null `joined_at`
+   on the guest — Luma's separate signal for a virtual guest joining the meeting link, since
+   a virtual event never gets a QR scan), the **`Work Email` registration answer**, and the
+   nested `event` id.
 2. **Look up the Event** — free `LUMA_EVENT_TABLE` → Notion `Luma ID` search. Not found → skip.
 3. **Look up the Contact** — work email, then Luma account email, each → page-id via
    `CONTACT_EMAIL_TABLE`. Neither found → skip.
@@ -30,15 +32,24 @@ changes — approval-status change, check-in, registration edit — onto the exi
    Attendance record yet.
 5. **Look up the Attendance** — free `ATTENDANCE_TABLE` (`<eventPageId>::<contactPageId>`) →
    Notion `find_data_source_item` on `Event` + `Contact` relations. Not found → skip.
-6. **Update** the record: refresh `Approval Status` (mapped from `approval_status`); only ever
-   tick `Checked In` true (never un-tick); `Registration Date` untouched.
+6. **Update** the record: refresh `Approval Status` (`Attended` once checked in, else mapped
+   from `approval_status`); only ever tick `Checked In` true (never un-tick);
+   `Registration Date` untouched.
 7. If resolved via a Notion search (a pre-Table record), backfill the `ATTENDANCE_TABLE` row so
    future lookups are free.
 
 ### Approval-status mapping
 
+**A checked-in guest resolves to `Attended`**, whatever Luma reports as their approval state.
+Otherwise:
+
 `approved`→Approved · `pending_approval`/`pending`→Pending Approval ·
 `waitlist`→Waitlist · `declined`/`rejected`→Declined · `invited`→Invited · (default Approved)
+
+`resolveAttendanceStatus` is byte-identical to the
+[registered workflow's copy](../luma-guest-registered-to-event-attendance#approval-status-mapping),
+which documents in full why `Attended` wins the select and why that is what stops this
+workflow's own unconditional select write from clobbering it. **Keep the two copies in sync.**
 
 ## Work email → `Primary Email`
 
