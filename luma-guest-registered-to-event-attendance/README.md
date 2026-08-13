@@ -17,8 +17,11 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
 ## What it does
 
 1. Extract the guest: `email` (required), name, `approval_status`, `registered_at`,
-   `checkedIn` (any `tickets[].checked_in_at` set), the **`Work Email` registration
-   answer** and the **newsletter opt-in answer** (both below), and the nested `event`.
+   `checkedIn` (any `tickets[].checked_in_at` set — the physical QR-scan check-in — **or**
+   a non-null `joined_at` on the guest — Luma's separate signal for a virtual guest joining
+   the meeting link, since a virtual event never gets a QR scan), the **`Work Email`
+   registration answer** and the **newsletter opt-in answer** (both below), and the nested
+   `event`.
 2. **Resolve the Event** — free `LUMA_EVENT_TABLE` lookup → Notion `Luma ID` search →
    create from the guest's `event` object (rich, incl. page cover) and index the table.
 3. **Resolve the Contact** — work email, then Luma account email, each → page-id via
@@ -47,7 +50,8 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
 `approved`→Approved · `pending_approval`/`pending`→Pending Approval ·
 `waitlist`→Waitlist · `declined`/`rejected`→Declined · `invited`→Invited · (default Approved)
 
-Physical check-in is tracked separately in the **`Checked In`** checkbox, not in the select.
+Check-in (physical QR scan or virtual meeting-link join) is tracked separately in the
+**`Checked In`** checkbox, not in the select.
 
 ## Work email → `Primary Email`
 

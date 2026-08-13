@@ -19,8 +19,10 @@ changes — approval-status change, check-in, registration edit — onto the exi
 ## What it does
 
 1. Extract the guest: `email` (required), `approval_status`, `checkedIn` (any
-   `tickets[].checked_in_at` set), the **`Work Email` registration answer**, and the nested
-   `event` id.
+   `tickets[].checked_in_at` set — physical QR-scan check-in — **or** a non-null `joined_at`
+   on the guest — Luma's separate signal for a virtual guest joining the meeting link, since
+   a virtual event never gets a QR scan), the **`Work Email` registration answer**, and the
+   nested `event` id.
 2. **Look up the Event** — free `LUMA_EVENT_TABLE` → Notion `Luma ID` search. Not found → skip.
 3. **Look up the Contact** — work email, then Luma account email, each → page-id via
    `CONTACT_EMAIL_TABLE`. Neither found → skip.

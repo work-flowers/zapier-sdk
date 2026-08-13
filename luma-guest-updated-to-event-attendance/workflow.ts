@@ -193,8 +193,13 @@ function extractGuest(raw: unknown): Guest | null {
   // all — treat it as absent so nothing gets promoted or duplicated.
   const workEmail = answered && answered !== accountEmail ? answered : null;
   const tickets = Array.isArray(g.tickets) ? g.tickets : [];
+  // `checked_in_at` (guest or ticket) is the physical QR-scan check-in.
+  // `joined_at` is Luma's separate signal for a virtual guest joining the
+  // meeting link — a virtual event never gets a QR scan, so this is the only
+  // way its attendance shows up.
   const checkedIn =
     firstString(g.checked_in_at) !== null ||
+    firstString(g.joined_at) !== null ||
     tickets.some((t: any) => firstString(t?.checked_in_at) !== null);
   return {
     accountEmail,
