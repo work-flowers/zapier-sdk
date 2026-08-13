@@ -307,6 +307,26 @@ function mapApprovalStatus(status: string | null): string {
   }
 }
 
+/**
+ * The value to write into `Approval Status`.
+ *
+ * Despite the name, that select is the record's LIFECYCLE status in this
+ * workspace, not a pure approval field — "Registered" and "Attended" are both
+ * options and neither is a Luma `approval_status` value. A guest who actually
+ * turned up outranks whatever Luma still reports as their approval state, so a
+ * check-in resolves to "Attended".
+ *
+ * This is also what stops "Attended" being clobbered. The select is rewritten on
+ * EVERY `guest_updated`, so mapping straight from `approval_status` would knock a
+ * checked-in guest back to "Approved" on their next profile edit. `checkedIn` is
+ * monotonic — Luma never unsets `joined_at` or `checked_in_at` — so every later
+ * payload for that guest still resolves to "Attended" and the value survives
+ * without a read-modify-write.
+ */
+function resolveAttendanceStatus(status: string | null, checkedIn: boolean): string {
+  return checkedIn ? "Attended" : mapApprovalStatus(status);
+}
+
 // --- Workflow ----------------------------------------------------------------
 // PURE UPDATER — never creates Event / Contact / Attendance records. Creation
 // is owned solely by luma-guest-registered-to-event-attendance. Luma fires
@@ -546,10 +566,14 @@ const workflow = defineDurable<unknown, unknown>(
       };
     }
 
-    // 4. Update the existing record: refresh Approval Status; only ever tick
+    // 4. Update the existing record: refresh Approval Status ("Attended" once
+    // the guest has checked in — see resolveAttendanceStatus); only ever tick
     // "Checked In" true (never un-tick on a later non-checkin update).
     // Registration Date is left untouched.
-    const approvalStatus = mapApprovalStatus(guest.approvalStatus);
+    const approvalStatus = resolveAttendanceStatus(
+      guest.approvalStatus,
+      guest.checkedIn,
+    );
     const pageId = attendancePageId;
     const updateInputs: Record<string, unknown> = {
       datasource: ATTENDANCE_DS,

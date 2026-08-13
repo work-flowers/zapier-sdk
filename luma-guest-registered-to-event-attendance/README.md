@@ -47,11 +47,26 @@ Durable workflow (trigger **`guest_registered`**, `LumaCLIAPI@6.1.0`) that upser
 
 ### Approval-status mapping
 
+**A checked-in guest resolves to `Attended`, whatever Luma reports as their approval
+state.** Otherwise the Luma `approval_status` is mapped:
+
 `approved`→Approved · `pending_approval`/`pending`→Pending Approval ·
 `waitlist`→Waitlist · `declined`/`rejected`→Declined · `invited`→Invited · (default Approved)
 
-Check-in (physical QR scan or virtual meeting-link join) is tracked separately in the
-**`Checked In`** checkbox, not in the select.
+Check-in is *also* recorded in the **`Checked In`** checkbox, which is the precise fact
+(the select is coarser and shared with the pre-Luma lifecycle vocabulary).
+
+**Why `Attended` wins the select.** Despite its name, `Approval Status` is the record's
+**lifecycle** status in this workspace, not a pure approval field — `Registered` and
+`Attended` are both options and neither is a Luma `approval_status` value. A guest who
+actually turned up outranks their approval state.
+
+This is also what keeps `Attended` from being clobbered. The select is rewritten on
+**every** `guest_updated`, so mapping straight from `approval_status` would knock a
+checked-in guest back to `Approved` on their next profile edit. Because `checkedIn` is
+monotonic — Luma never unsets `joined_at` or `checked_in_at` — every later payload for
+that guest still resolves to `Attended`, so the value survives with no read-modify-write.
+`resolveAttendanceStatus` is byte-identical in both guest workflows; keep it that way.
 
 ## Work email → `Primary Email`
 

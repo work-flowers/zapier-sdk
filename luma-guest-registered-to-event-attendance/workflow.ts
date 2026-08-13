@@ -626,6 +626,26 @@ function mapApprovalStatus(status: string | null): string {
   }
 }
 
+/**
+ * The value to write into `Approval Status`.
+ *
+ * Despite the name, that select is the record's LIFECYCLE status in this
+ * workspace, not a pure approval field — "Registered" and "Attended" are both
+ * options and neither is a Luma `approval_status` value. A guest who actually
+ * turned up outranks whatever Luma still reports as their approval state, so a
+ * check-in resolves to "Attended".
+ *
+ * This is also what stops "Attended" being clobbered. The select is rewritten on
+ * EVERY `guest_updated`, so mapping straight from `approval_status` would knock a
+ * checked-in guest back to "Approved" on their next profile edit. `checkedIn` is
+ * monotonic — Luma never unsets `joined_at` or `checked_in_at` — so every later
+ * payload for that guest still resolves to "Attended" and the value survives
+ * without a read-modify-write.
+ */
+function resolveAttendanceStatus(status: string | null, checkedIn: boolean): string {
+  return checkedIn ? "Attended" : mapApprovalStatus(status);
+}
+
 // --- Workflow ----------------------------------------------------------------
 // SOLE CREATOR of Event / Contact / Attendance records for the guest flow.
 // Luma fires guest.registered AND guest.updated near-simultaneously on a new
@@ -1045,7 +1065,11 @@ const workflow = defineDurable<unknown, unknown>(
     }
 
     // 3. Upsert the Attendance record, deduped on Event + Contact.
-    const approvalStatus = mapApprovalStatus(guest.approvalStatus);
+    // "Attended" once the guest has checked in — see resolveAttendanceStatus.
+    const approvalStatus = resolveAttendanceStatus(
+      guest.approvalStatus,
+      guest.checkedIn,
+    );
     const matchKey = `${eventPageId}::${contactPageId}`;
 
     // If we just created the event or the contact, no attendance can pre-exist
