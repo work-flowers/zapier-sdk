@@ -72,7 +72,7 @@
   --c-edge-read: rgba(31, 31, 31, 0.30);
   --c-hull: rgba(156, 225, 252, 0.14);
   --c-hull-line: rgba(20, 121, 225, 0.25);
-  --c-hull-label: #1479E1;
+  --c-hull-label: var(--indigo);
   --focus-ring: var(--azure);
 }
 @media (prefers-color-scheme: dark) {
@@ -111,7 +111,7 @@
     --c-edge-read: rgba(242, 241, 247, 0.26);
     --c-hull: rgba(156, 225, 252, 0.05);
     --c-hull-line: rgba(77, 157, 240, 0.30);
-    --c-hull-label: #4D9DF0;
+    --c-hull-label: var(--indigo);
   }
 }
 :root[data-theme="dark"] {
@@ -149,7 +149,7 @@
   --c-edge-read: rgba(242, 241, 247, 0.26);
   --c-hull: rgba(156, 225, 252, 0.05);
   --c-hull-line: rgba(77, 157, 240, 0.30);
-  --c-hull-label: #4D9DF0;
+  --c-hull-label: var(--indigo);
 }
 
 * { box-sizing: border-box; }
@@ -181,7 +181,7 @@ header {
 /* Wraps rather than ellipsizing — the tagline is the map's only permanent
    explainer (#hint fades out after 6s), so it must never be clipped. */
 .tagline {
-  font-size: 12.5px;
+  font-size: 13.5px;
   line-height: 1.35;
   color: var(--ink-subtle);
   flex: 1;
