@@ -316,7 +316,8 @@ function mulberry32(seed) {
 }
 
 function collisionRadius(n) {
-  if (n.kind === "durable" || n.kind === "classic") return 58;
+  // Zap rects render 138x48 plus a status tag below; 72 covers the half-diagonal.
+  if (n.kind === "durable" || n.kind === "classic") return 72;
   const hub = Math.sqrt(Math.max(1, n.degree));
   if (n.kind === "external_app") return 40 + 6 * hub;
   return 34 + 9 * hub; // tables / notion DS / drive folders grow with degree
@@ -448,20 +449,34 @@ export function layout(graph, { seed = 7, iterations = 320 } = {}) {
     n.r = Math.round(n.r);
   }
 
-  // Cluster hulls (bounding boxes with padding) for the zoomed-out view.
+  // An asset whose neighbours all sit in one cluster belongs to that cluster's
+  // hull (its `home`); shared hubs stay between hulls with no home.
+  for (const n of nodes) {
+    if (n.cluster) continue;
+    const cs = [...new Set(neighbourClusters.get(n.id) ?? [])];
+    n.home = cs.length === 1 ? cs[0] : null;
+  }
+
+  // Cluster hulls (bounding boxes) for the zoomed-out view, sized from what the
+  // page actually renders: zap rects with a status tag below, assets with their
+  // labels, so nothing pokes out of its box.
   const hulls = {};
   for (const [cluster, def] of Object.entries(graph.clusters)) {
-    const members = nodes.filter((n) => n.cluster === cluster);
-    const minX = Math.min(...members.map((n) => n.x - n.r));
-    const maxX = Math.max(...members.map((n) => n.x + n.r));
-    const minY = Math.min(...members.map((n) => n.y - n.r));
-    const maxY = Math.max(...members.map((n) => n.y + n.r));
+    const members = nodes.filter((n) => n.cluster === cluster || n.home === cluster);
+    const ext = (n) =>
+      n.cluster
+        ? { dx: 92, dy: 54 } // 138x48 rect + status tag / AI badge overhang
+        : { dx: n.r + 22, dy: n.r + 26 }; // circle/rect + mono id line
+    const minX = Math.min(...members.map((n) => n.x - ext(n).dx));
+    const maxX = Math.max(...members.map((n) => n.x + ext(n).dx));
+    const minY = Math.min(...members.map((n) => n.y - ext(n).dy));
+    const maxY = Math.max(...members.map((n) => n.y + ext(n).dy));
     hulls[cluster] = {
       label: def.label,
-      x: Math.round(minX - 30),
-      y: Math.round(minY - 30),
-      w: Math.round(maxX - minX + 60),
-      h: Math.round(maxY - minY + 60),
+      x: Math.round(minX - 24),
+      y: Math.round(minY - 24),
+      w: Math.round(maxX - minX + 48),
+      h: Math.round(maxY - minY + 48),
     };
   }
   graph.hulls = hulls;
