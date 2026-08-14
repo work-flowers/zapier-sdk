@@ -69,26 +69,18 @@ the SSO email):
 | Linear | 🔶 Possible: GraphQL has an org-invite mutation; not exposed by the Zapier Linear app | Manual invite from Linear |
 | SimplePay | ❌ Practical no: employee creation needs payroll data (ID, bank, salary) not present in the Google payload | Manual payroll onboarding |
 
-The Harvest and Linear invites are candidate extensions if manual invites
-keep getting forgotten — both would ride the existing `email` + name from
-the trigger payload.
+The Harvest and Linear invites would ride the existing `email` + name from
+the trigger payload, but **Dennis explicitly deferred them (2026-08-14)** —
+keep those invites manual unless that decision changes.
 
-## Cutover (pending)
+## Cutover — complete (2026-08-14)
 
-The workflow is **published but disabled** — the classic Zap is still live,
-and running both would double the welcome email and the invite. In order:
-
-1. Turn **off** the classic Zap "New Google Workspace Account -> Provision
-   Standard Accounts" in the Zapier UI.
-2. Enable the durable:
-
-   ```bash
-   zapier-sdk --experimental enable-workflow 019fffce-3baf-77e8-9a5a-08a71c784df5
-   ```
-
-Polling triggers never backfill (watermark set on activation), so a user
-created between the two steps would be missed by the durable — do them
-back-to-back, or provision that user by hand.
+Published disabled on 2026-08-14 (the classic Zap was still live, and
+running both would have doubled the welcome email and invite). Dennis
+disabled the classic "New Google Workspace Account -> Provision Standard
+Accounts" Zap in the UI and enabled this workflow the same day; verified via
+`get-workflow` (`enabled: true`, trigger `active`). This durable is now the
+only provisioning flow.
 
 ## Maintainer notes
 
