@@ -1,0 +1,13 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.99.0",
+    "@zapier/zapier-durable": "0.12.5"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  },
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+  }
+}

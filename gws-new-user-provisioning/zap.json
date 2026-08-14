@@ -1,0 +1,36 @@
+{
+  "name": "gws-new-user-provisioning",
+  "workflow_id": "019fffce-3baf-77e8-9a5a-08a71c784df5",
+  "current_version_id": "019fffce-e25e-70cf-9433-fc8ccf13cc78",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATl2628ACmtobpCq5G48Qw",
+  "enabled": false,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "GoogleWorkspaceAdminCLIAPI@2.8.3",
+    "action": "list_users",
+    "authentication_id": "02a62089-aec4-80bd-859f-f24f89b65429",
+    "params": {},
+    "status": "active",
+    "trigger_note": "Polling trigger — fires when a new Google Workspace user is created. Polling triggers never backfill: the watermark is set on activation, so users created while this workflow is disabled are missed (the classic Zap covers that window until cutover)."
+  },
+  "connections": {
+    "note": "No workflow-body connections. The trigger's Google Workspace Admin connection is bound in the trigger config above; Zapier Tables, Zapier Manager (team_invite) and Email by Zapier all run on built-in account auth."
+  },
+  "tables": {
+    "01JM3J9SG5X6S8GBSSC8AS28AT": "[Table] Internal User IDs — find-or-create by Email (f2); reads Zapier ID (f7) to decide whether to send the Zapier team invite; seeds First Name (f13) / Last Name (f14) on create only. The five internal-user-ids-* durables key on the same Email column, and internal-user-ids-zapier is what writes Zapier ID back once the invite is accepted."
+  },
+  "zapier_team_id": "20491667",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "created_at": "2026-08-14",
+  "version_created_at": "2026-08-14",
+  "replaces_classic_zap": "New Google Workspace Account -> Provision Standard Accounts",
+  "cutover": {
+    "classic_zap_disabled": "PENDING — classic Zaps are exposed by neither the SDK CLI nor the MCP connector; Dennis must switch it off in the Zapier UI",
+    "durable_enabled": "PENDING — published 2026-08-14 then immediately disabled to avoid double welcome emails while the classic Zap still runs. Enable with: zapier-sdk --experimental enable-workflow 019fffce-3baf-77e8-9a5a-08a71c784df5",
+    "status": "deployed, awaiting cutover — disable the classic Zap first, then enable this workflow"
+  },
+  "description": "New Google Workspace user -> Internal User IDs Table row (find-or-create by email), Zapier team invite when the row has no Zapier ID yet, welcome email with the Slack/Notion SSO join links."
+}
