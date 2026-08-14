@@ -1,0 +1,40 @@
+{
+  "name": "sow-signed-to-deal-won",
+  "workflow_id": "019fff93-afb5-7bc2-9956-21cd2711e24d",
+  "current_version_id": "019fff99-2e4c-7fc5-8a8d-151000db49d4",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZjwYOCHTMS6jx2Wmm_eGg",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/8DfHFErXShjCLRNn/",
+    "trigger_note": "Catch hook. The Notion SOWs DB automation (Status -> Signed) must POST here; `trigger_url` is Zapier-internal."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "notion": {
+    "sows_data_source": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
+    "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
+    "api_version": "2026-03-11",
+    "note": "The SOW page is re-read with sdk.fetch (webhook is a ping); the Deal write uses the Notion update_database_item action. Deal lifecycle: esignatures-send-for-signing sets 'In signing' when the SOW goes out, this workflow sets 'Closed Won' when it is signed."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "created_at": "2026-08-14T09:21:36.695Z",
+  "version_created_at": "2026-08-14T09:27:36.900Z",
+  "replaces_classic_zap": "SOW Signed -> Mark Deal as Won",
+  "cutover": {
+    "notion_sows_automation_repointed": "PENDING — repoint the Notion SOWs DB automation (fires when Status becomes Signed) at this workflow's webhook_url.",
+    "classic_zap_disabled": "PENDING — turn the classic Zap off in the Zapier UI once repointed. Not machine-verifiable.",
+    "status": "durable live and verified; Notion-side repointing outstanding"
+  },
+  "description": "Notion SOWs automation (SOW signed) -> re-read the SOW and set its related Deal's Status to Closed Won. Skips cleanly on empty pings, archived SOWs, non-SOW pages and SOWs with no Deal relation."
+}

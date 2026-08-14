@@ -1,0 +1,56 @@
+{
+  "name": "contact-us-form-to-notion-contact",
+  "workflow_id": "019fff93-c3ca-7c22-b2a0-80891e4c169d",
+  "current_version_id": "019fff94-47c6-7de8-98da-796c94ef5c79",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYbfhf7p-bPjqmN8MnU6rQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "InterfacesCLIAPI@1.9.1",
+    "action": "new_form_submission",
+    "authentication_id": null,
+    "params": {
+      "formId": "cmgftzun0001zu2hlecmqnz3d",
+      "pageId": "cmgftztxc0034al67pe37nzbh",
+      "projectId": "cmgftztal001zlsryfo19f9j1"
+    },
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/standard/20495893/d8ceb64180424aceb7f91081e0c223d7/",
+    "trigger_note": "Zapier-managed Forms (Interfaces) trigger — Zapier wires the form to this workflow itself; nothing external to repoint. NOTE: the classic Zap subscribes to the SAME form, so while both are enabled every submission creates a contact twice (the classic Zap creates blindly). Turn the classic Zap off immediately."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "notion": {
+    "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "api_version": "2026-03-11",
+    "owner_person_id": "121d872b-594c-810b-ba5a-000206eeef1e",
+    "note": "New contacts are created with the Contacts default template (repo rule 5) via the createItemWithTemplate two-call pattern; existing contacts are patched with raw sdk.fetch fill-only writes."
+  },
+  "tables": {
+    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> contact-page-id map (owned by contact-emails-to-zapier-table). Read to resolve the submitter; a newly created contact's address is indexed immediately with Trigger Contact Creation: false."
+  },
+  "form_fields": {
+    "cmgftzuof0025u2hl56jygp0u": "First Name",
+    "cmggbzl3j000g3b6sw9n2oxid": "Last Name",
+    "cmgfu0k5800013b6siwlm7w7e": "Email",
+    "cmgfu15th00033b6sdovbx68e": "Job Title",
+    "cmgfu3w8900053b6slu04msul": "LinkedIn URL",
+    "cmgfu1dqb00043b6sm1dkhasq": "Mailing-list opt-in (checkbox)",
+    "cmgfu47jf00063b6s2cz23zhl": "Message (part 1)",
+    "cmgfu5piz00073b6s19mkdswl": "Message (part 2)"
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "created_at": "2026-08-14T09:21:41.836Z",
+  "version_created_at": "2026-08-14T09:22:15.759Z",
+  "replaces_classic_zap": "When a new Contact Us form submission is created, save to Notion",
+  "cutover": {
+    "classic_zap_disabled": "PENDING — URGENT: both Zaps subscribe to the same form, so submissions are double-processed until the classic Zap is off (this durable dedupes via the email Table; the classic Zap creates blindly). Not machine-verifiable.",
+    "status": "durable live and verified; classic Zap must be turned off"
+  },
+  "description": "Contact Us form submission (Zapier Forms) -> upsert the person in Notion Contacts: resolve through the email->page-id Zapier Table, fill blanks on an existing contact (message added as a comment when Note is taken), or create one with the Contacts default template and index the address."
+}

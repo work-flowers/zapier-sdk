@@ -257,7 +257,7 @@ reversing:
 | Step | State |
 |---|---|
 | `page.deleted` / `page.undeleted` subscriptions point at this workflow's webhook | ✅ done — first live `page.deleted` received 12:59:40Z |
-| Path A (Contacts) of "Delete Contact, Company or Meeting Note Page from Zapier Table" paused | ✅ done — paths B/C/D (Company, Meeting Note, Setup Sessions) still run there |
+| Path A (Contacts) of "Delete Contact, Company or Meeting Note Page from Zapier Table" paused | ✅ done — paths B/C/D (Company, Meeting Note, Setup Sessions) migrated to [`notion-page-deleted-to-zapier-tables`](../notion-page-deleted-to-zapier-tables/) on 2026-08-14 (its cutover retires the whole classic Zap) |
 | `MERGE_SETTLE_SECONDS` and `CONFLICT_SETTLE_SECONDS` set to `0` | ✅ done |
 
 Both constants are guarded by a `> 0` check. They exist only to work around path A

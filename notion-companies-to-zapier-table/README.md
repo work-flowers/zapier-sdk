@@ -31,6 +31,29 @@ flowchart TD
 
 Webhooks by Zapier Catch Hook (`hook_v2`) with a static hook code — a Notion database automation on the Companies DB posts to the catch URL on create/update. Input flag `previewOnly: true` returns the snapshot without writing.
 
+## Superseded classic Zaps (2026-08-14)
+
+Two classic Zaps still writing to this Table are fully superseded by this mirror
+and should be **turned off in the Zapier UI** (along with the Notion Companies
+automations that feed them, if separate from this mirror's):
+
+- **"Update Company IDs Table"** (Website updated → find-or-create by *Domain*
+  `icontains` → update Domain/ID/Name) — the `icontains` domain match can hit
+  the wrong row, and its create path mints rows this mirror then duplicates.
+- **"Update Company Name from Notion in Zapier Table"** (Company Name updated →
+  find-or-create by Page ID → update Name) — its create branch writes an
+  **empty** Company Name (`new__data__f5: ""`) before the update step fixes it.
+
+Both are unguarded racing writers against this mirror's guarded upsert. Evidence
+they carry no residual value: all **575 of 575** rows are keyed on
+`Notion Page ID` (verified 2026-08-14), so the legacy Domain-match path has
+nothing left to reach, and every column they write is in this mirror's mirrored
+set. Deletions are handled by
+[`notion-page-deleted-to-zapier-tables`](../notion-page-deleted-to-zapier-tables/),
+which also forwards company **restores** to this mirror's catch URL — a
+`page.undeleted` fires no DB automation, so the forward is how the mirror learns
+to re-create the row.
+
 ## Maintainer notes
 
 - Connection alias `notion_wf` (Notion, work.flowers workspace); Notion API version `2026-03-11` via `sdk.fetch`.
