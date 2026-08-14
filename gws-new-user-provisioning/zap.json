@@ -3,7 +3,7 @@
   "workflow_id": "019fffce-3baf-77e8-9a5a-08a71c784df5",
   "current_version_id": "019fffce-e25e-70cf-9433-fc8ccf13cc78",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATl2628ACmtobpCq5G48Qw",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "trigger": {
     "selected_api": "GoogleWorkspaceAdminCLIAPI@2.8.3",
@@ -28,9 +28,9 @@
   "version_created_at": "2026-08-14",
   "replaces_classic_zap": "New Google Workspace Account -> Provision Standard Accounts",
   "cutover": {
-    "classic_zap_disabled": "PENDING — classic Zaps are exposed by neither the SDK CLI nor the MCP connector; Dennis must switch it off in the Zapier UI",
-    "durable_enabled": "PENDING — published 2026-08-14 then immediately disabled to avoid double welcome emails while the classic Zap still runs. Enable with: zapier-sdk --experimental enable-workflow 019fffce-3baf-77e8-9a5a-08a71c784df5",
-    "status": "deployed, awaiting cutover — disable the classic Zap first, then enable this workflow"
+    "classic_zap_disabled": "2026-08-14 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector",
+    "durable_enabled": "2026-08-14 — enabled by Dennis (verified via get-workflow: enabled true, trigger active)",
+    "status": "complete — this durable is the only provisioning flow. Harvest/Linear auto-provisioning explicitly deferred (Dennis, 2026-08-14): keep them manual for now"
   },
   "description": "New Google Workspace user -> Internal User IDs Table row (find-or-create by email), Zapier team invite when the row has no Zapier ID yet, welcome email with the Slack/Notion SSO join links."
 }
