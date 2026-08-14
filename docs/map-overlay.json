@@ -1,0 +1,615 @@
+{
+  "$comment": "Curated semantics for docs/map.html, merged with extracted facts by scripts/build-map.mjs. Read/write direction lives in zap.json prose, not parseable structure, so the edges here are hand-maintained. `node scripts/build-map.mjs --check` fails when the repo and this file drift apart.",
+  "clusters": {
+    "crm-contacts": {
+      "label": "CRM & Contacts",
+      "zaps": [
+        "contact-emails-to-zapier-table",
+        "contact-us-form-to-notion-contact",
+        "email-contact-page-zap",
+        "email-db-updates",
+        "enrich-contact-records",
+        "merge-duplicate-contacts"
+      ]
+    },
+    "newsletter-content": {
+      "label": "Newsletter & Content",
+      "zaps": [
+        "blog-rss-to-slack",
+        "buttondown-email-sent-to-notion-newsletter",
+        "buttondown-unsubscribe-to-notion-contact",
+        "deal-won-to-newsletter-subscriber",
+        "new-buttondown-subscriber-update-in-notion",
+        "notion-blog-post-to-hero-image",
+        "notion-contact-to-newsletter-subscriber",
+        "notion-newsletter-to-buttondown",
+        "update-notion-when-rescheduled-in-buttondown"
+      ]
+    },
+    "events": {
+      "label": "Marketing Events",
+      "zaps": [
+        "contrast-registrations-to-event-attendance",
+        "luma-event-to-notion",
+        "luma-guest-registered-to-event-attendance",
+        "luma-guest-updated-to-event-attendance"
+      ]
+    },
+    "client-onboarding": {
+      "label": "Deals & Client Onboarding",
+      "zaps": [
+        "deal-to-client-drive-folder",
+        "deal-to-client-slack-channel",
+        "deal-won-set-up-client-workspace",
+        "notion-company-to-linear-customer",
+        "proposal-fee-to-deal-value",
+        "register-zapier-partner-lead",
+        "sow-signed-to-deal-won",
+        "spot-project-request-to-notion",
+        "zapier-partner-lead-status-to-notion"
+      ]
+    },
+    "finance-xero": {
+      "label": "Finance & Xero",
+      "zaps": [
+        "drive-invoice-to-xero",
+        "drive-paid-receipts-to-table",
+        "drive-screenshot-to-xero-sales-invoice",
+        "gmail-attachments-to-drive-by-type",
+        "stripe-payment-to-xero-invoice-paid",
+        "xero-bank-transactions-to-zapier-table",
+        "xero-bill-approved-to-subcontractor-email",
+        "xero-bill-approved-to-wise-transfer",
+        "xero-contact-from-notion-deal",
+        "xero-contact-to-notion-company",
+        "xero-draft-bill-to-slack-alert",
+        "xero-draft-sales-invoice-to-slack-alert",
+        "xero-invoice-alerts",
+        "xero-invoice-paid-to-gmail-confirmation",
+        "xero-overdue-invoice-to-gmail-reminder"
+      ]
+    },
+    "internal-ops": {
+      "label": "Internal Ops",
+      "zaps": [
+        "gcal-event-updated-to-meeting-note",
+        "gws-new-user-provisioning",
+        "internal-user-ids-to-table-and-notion",
+        "notion-companies-to-zapier-table",
+        "notion-page-deleted-to-zapier-tables",
+        "start-a-timer-from-notion-task",
+        "whatsapp-slack-bridge"
+      ]
+    },
+    "esignatures-legal": {
+      "label": "eSignatures & Legal",
+      "zaps": [
+        "drive-signed-agreement-to-notion",
+        "esignatures-send-for-signing",
+        "esignatures-status-to-notion"
+      ]
+    }
+  },
+  "assets": {
+    "table:email-contacts": {
+      "type": "table",
+      "id": "01JYEPSEARXB2Z6BJRCMFGXBC2",
+      "name": "Email → Contact Page IDs"
+    },
+    "table:user-ids": {
+      "type": "table",
+      "id": "01JM3J9SG5X6S8GBSSC8AS28AT",
+      "name": "Internal User IDs"
+    },
+    "table:company-ids": {
+      "type": "table",
+      "id": "01JM8PH8YM93A482M8BFZ6WKW6",
+      "name": "Company IDs"
+    },
+    "table:meeting-note-ids": {
+      "type": "table",
+      "id": "01JZCVG73MBWWB0357CEPS4903",
+      "name": "Meeting Note IDs",
+      "external_owner": "meeting-note-db-updates Notion Worker (outside this repo)"
+    },
+    "table:setup-session-map": {
+      "type": "table",
+      "id": "01KEE5CTAZMJ8CR2608S2QWT5H",
+      "name": "Notion Setup Session Mapping",
+      "external_owner": "setup-session sync, owned outside this repo"
+    },
+    "table:whatsapp-contacts": {
+      "type": "table",
+      "id": "01JKFHWQ82EFBHNP6XYD0M7JHK",
+      "name": "WhatsApp Contact Info & Opt-In"
+    },
+    "table:whatsapp-messages": {
+      "type": "table",
+      "id": "01KGH12QJKABVJ5H5A3Z5A4NW4",
+      "name": "WhatsApp Messages"
+    },
+    "table:newsletter-map": {
+      "type": "table",
+      "id": "01KNJN2MSBAJVXRME6M1Y65F5B",
+      "name": "Email Newsletter ID Mapping"
+    },
+    "table:address-blocklist": {
+      "type": "table",
+      "id": "01KQY6RB1TJ9X7BAYBRRRKB35S",
+      "name": "Address Blocklist",
+      "note": "Hand-maintained — no owning Zap."
+    },
+    "table:luma-events": {
+      "type": "table",
+      "id": "01KY6MEV55JF723XYDEE4EP0T6",
+      "name": "Luma Event IDs"
+    },
+    "table:attendance-map": {
+      "type": "table",
+      "id": "01KY6NDTW05196F1A3G3XY3ESY",
+      "name": "Event Attendance Map"
+    },
+    "table:bank-transactions": {
+      "type": "table",
+      "id": "01KCDV6Y17F31J2Q6S1EMYZC8K",
+      "name": "Xero Bank Transactions"
+    },
+    "table:receipts": {
+      "type": "table",
+      "id": "01KJKDRB9P8ZP7NP9HE6NS3YFQ",
+      "name": "Receipts"
+    },
+    "table:vendor-payment-details": {
+      "type": "table",
+      "id": "01KYR653H04DNMKKYAZ72534YG",
+      "name": "Vendor Payment Details"
+    },
+    "table:esignatures-map": {
+      "type": "table",
+      "id": "01KHZEP4FA560E9GMTGTBR1E2N",
+      "name": "eSignatures Mapping"
+    },
+    "table:invoice-alert-state": {
+      "type": "table",
+      "id": "01KZACA2ZA3XJWWGSMNEC381ZE",
+      "name": "Invoice Alert State"
+    },
+    "table:zapier-leads": {
+      "type": "table",
+      "id": "01KPZFHX4RP6SER3AEK4YJ62BF",
+      "name": "Register Zapier Lead"
+    },
+    "table:spot-requests": {
+      "type": "table",
+      "id": "01KYV1R8BWAZ697HQ8P1QV80AF",
+      "name": "SPOT Project Requests"
+    },
+    "table:harvest-projects": {
+      "type": "table",
+      "id": "01K8A2KV9X1W95GAB6Y69D7G4C",
+      "name": "Harvest Projects (New)",
+      "external_owner": "maintained outside this repo"
+    },
+    "table:time-entry-map": {
+      "type": "table",
+      "id": "01K5060J1B1FHCJEWVVH597B71",
+      "name": "Task → Harvest Time Entry Map"
+    },
+    "ds:contacts": {
+      "type": "notion_ds",
+      "id": "21991b07-11ac-81a6-a894-000be4a09a67",
+      "name": "Contacts"
+    },
+    "ds:companies": {
+      "type": "notion_ds",
+      "id": "21991b07-11ac-80b0-b787-000b3d3995f6",
+      "name": "Companies"
+    },
+    "ds:deals": {
+      "type": "notion_ds",
+      "id": "21a91b07-11ac-808d-9657-000b1390d20b",
+      "name": "Deals"
+    },
+    "ds:sows": {
+      "type": "notion_ds",
+      "id": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
+      "name": "SOWs"
+    },
+    "ds:project-addendums": {
+      "type": "notion_ds",
+      "id": "46234707-641a-4aa4-96f6-295554e6543f",
+      "name": "Project Addendums"
+    },
+    "ds:events": {
+      "type": "notion_ds",
+      "id": "65490a1e-aa79-4884-932b-60e88db67042",
+      "name": "Events"
+    },
+    "ds:event-attendance": {
+      "type": "notion_ds",
+      "id": "a591ecac-259f-4490-8f09-f7fddd556eed",
+      "name": "Event Attendance"
+    },
+    "ds:newsletter-issues": {
+      "type": "notion_ds",
+      "id": "0c691b07-11ac-82fa-bc1b-07d0186a095d",
+      "name": "Newsletter Issues"
+    },
+    "ds:meeting-notes": {
+      "type": "notion_ds",
+      "id": "19891b07-11ac-8137-9d62-000b75fab86e",
+      "name": "Meeting Notes"
+    },
+    "ds:setup-calls": {
+      "type": "notion_ds",
+      "id": "2d191b07-11ac-8058-97a3-000b7132e307",
+      "name": "Setup Calls"
+    },
+    "ds:blog": {
+      "type": "notion_ds",
+      "id": "1d791b07-11ac-8146-9124-000b0d6dbcc8",
+      "name": "Blog"
+    },
+    "ds:project-proposals": {
+      "type": "notion_ds",
+      "id": "1d791b07-11ac-8058-8c70-000b0d0dfaf2",
+      "name": "Project Proposals",
+      "note": "As of 2026-08-10 no visible data source carries a 'Project Fee' property — see proposal-fee-to-deal-value's staleness flag."
+    },
+    "ds:people": {
+      "type": "notion_ds",
+      "id": "a0791b07-11ac-8364-9113-07ea21165718",
+      "name": "People"
+    },
+    "ds:tasks": {
+      "type": "notion_ds",
+      "id": "27a91b07-11ac-81ed-973f-000ba6da1441",
+      "name": "Tasks"
+    },
+    "ds:projects": {
+      "type": "notion_ds",
+      "id": "407ac9c1-7045-4529-acde-6d71f3b288d5",
+      "name": "Projects"
+    },
+    "ds:emails": {
+      "type": "notion_ds",
+      "id": "1e491b07-11ac-80ce-8b86-000b29ba4f68",
+      "name": "Emails"
+    },
+    "ds:signed-agreements": {
+      "type": "notion_ds",
+      "id": "eb0a6e70-5cf7-4817-8140-d0e44d3ec396",
+      "name": "Signed Legal Agreements"
+    },
+    "ds:client-ws-companies": {
+      "type": "notion_ds",
+      "id": "32091b07-11ac-8111-a8ea-000b970565cf",
+      "name": "Companies (client-workspace, legacy)",
+      "legacy": true,
+      "note": "Fixed target carried over from the never-deployed deal-won-set-up-client-workspace design."
+    },
+    "folder:invoices": {
+      "type": "drive_folder",
+      "id": "14RpcjSzye4BVZPS_1OzspabmQzDwFVRE",
+      "name": "Invoices"
+    },
+    "folder:paid-receipts": {
+      "type": "drive_folder",
+      "id": "1te8aN26Kl5PVH3qY1bXrw9vzX3CfsQwC",
+      "name": "Paid Receipts"
+    },
+    "folder:signed-agreements": {
+      "type": "drive_folder",
+      "id": "1-1HCfTIdnngXv_1fhUHuPpjI6Nupk7-K",
+      "name": "Signed Agreements"
+    },
+    "folder:financial-reporting": {
+      "type": "drive_folder",
+      "id": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo",
+      "name": "Financial Reporting"
+    },
+    "folder:setup-session-screenshots": {
+      "type": "drive_folder",
+      "id": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM",
+      "name": "Notion Setup Sessions screenshots"
+    },
+    "app:xero": { "type": "external_app", "name": "Xero" },
+    "app:buttondown": { "type": "external_app", "name": "Buttondown" },
+    "app:slack": { "type": "external_app", "name": "Slack" },
+    "app:gmail": { "type": "external_app", "name": "Gmail" },
+    "app:luma": { "type": "external_app", "name": "Luma" },
+    "app:esignatures": { "type": "external_app", "name": "eSignatures.io" },
+    "app:zapier-partner": { "type": "external_app", "name": "Zapier Partner Program" }
+  },
+  "edges": [
+    { "from": "ds:contacts", "to": "contact-emails-to-zapier-table", "kind": "trigger" },
+    { "from": "contact-emails-to-zapier-table", "to": "table:email-contacts", "kind": "own" },
+    { "from": "contact-emails-to-zapier-table", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "table:email-contacts", "to": "contact-us-form-to-notion-contact", "kind": "read" },
+    { "from": "contact-us-form-to-notion-contact", "to": "table:email-contacts", "kind": "write" },
+    { "from": "contact-us-form-to-notion-contact", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "table:email-contacts", "to": "email-contact-page-zap", "kind": "read" },
+    { "from": "email-contact-page-zap", "to": "table:email-contacts", "kind": "write" },
+    { "from": "email-contact-page-zap", "to": "ds:emails", "kind": "write" },
+
+    { "from": "ds:emails", "to": "email-db-updates", "kind": "trigger" },
+    { "from": "email-db-updates", "to": "ds:emails", "kind": "write" },
+    { "from": "email-db-updates", "to": "ds:contacts", "kind": "write" },
+    { "from": "table:email-contacts", "to": "email-db-updates", "kind": "read" },
+    { "from": "email-db-updates", "to": "table:email-contacts", "kind": "write" },
+    { "from": "table:address-blocklist", "to": "email-db-updates", "kind": "read" },
+
+    { "from": "ds:contacts", "to": "enrich-contact-records", "kind": "trigger" },
+    { "from": "enrich-contact-records", "to": "ds:contacts", "kind": "write" },
+    { "from": "table:email-contacts", "to": "enrich-contact-records", "kind": "read" },
+
+    { "from": "ds:contacts", "to": "merge-duplicate-contacts", "kind": "trigger" },
+    { "from": "merge-duplicate-contacts", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "app:buttondown", "to": "new-buttondown-subscriber-update-in-notion", "kind": "trigger" },
+    { "from": "table:email-contacts", "to": "new-buttondown-subscriber-update-in-notion", "kind": "read" },
+    { "from": "new-buttondown-subscriber-update-in-notion", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "app:buttondown", "to": "buttondown-unsubscribe-to-notion-contact", "kind": "trigger" },
+    { "from": "table:email-contacts", "to": "buttondown-unsubscribe-to-notion-contact", "kind": "read" },
+    { "from": "buttondown-unsubscribe-to-notion-contact", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "ds:contacts", "to": "notion-contact-to-newsletter-subscriber", "kind": "trigger" },
+    { "from": "notion-contact-to-newsletter-subscriber", "to": "app:buttondown", "kind": "write" },
+
+    { "from": "ds:deals", "to": "deal-won-to-newsletter-subscriber", "kind": "trigger" },
+    { "from": "ds:contacts", "to": "deal-won-to-newsletter-subscriber", "kind": "read" },
+    { "from": "deal-won-to-newsletter-subscriber", "to": "app:buttondown", "kind": "write" },
+
+    { "from": "ds:newsletter-issues", "to": "notion-newsletter-to-buttondown", "kind": "trigger" },
+    { "from": "notion-newsletter-to-buttondown", "to": "table:newsletter-map", "kind": "own" },
+    { "from": "notion-newsletter-to-buttondown", "to": "app:buttondown", "kind": "write" },
+
+    { "from": "app:buttondown", "to": "buttondown-email-sent-to-notion-newsletter", "kind": "trigger" },
+    { "from": "table:newsletter-map", "to": "buttondown-email-sent-to-notion-newsletter", "kind": "read" },
+    { "from": "buttondown-email-sent-to-notion-newsletter", "to": "ds:newsletter-issues", "kind": "write" },
+
+    { "from": "app:buttondown", "to": "update-notion-when-rescheduled-in-buttondown", "kind": "trigger" },
+    { "from": "table:newsletter-map", "to": "update-notion-when-rescheduled-in-buttondown", "kind": "read" },
+    { "from": "update-notion-when-rescheduled-in-buttondown", "to": "ds:newsletter-issues", "kind": "write" },
+
+    { "from": "blog-rss-to-slack", "to": "app:slack", "kind": "write" },
+
+    { "from": "ds:blog", "to": "notion-blog-post-to-hero-image", "kind": "trigger" },
+    { "from": "notion-blog-post-to-hero-image", "to": "ds:blog", "kind": "write" },
+
+    { "from": "app:luma", "to": "luma-event-to-notion", "kind": "trigger" },
+    { "from": "luma-event-to-notion", "to": "table:luma-events", "kind": "own" },
+    { "from": "luma-event-to-notion", "to": "ds:events", "kind": "write" },
+
+    { "from": "app:luma", "to": "luma-guest-registered-to-event-attendance", "kind": "trigger" },
+    { "from": "table:luma-events", "to": "luma-guest-registered-to-event-attendance", "kind": "read" },
+    { "from": "table:email-contacts", "to": "luma-guest-registered-to-event-attendance", "kind": "read" },
+    { "from": "luma-guest-registered-to-event-attendance", "to": "table:attendance-map", "kind": "own" },
+    { "from": "luma-guest-registered-to-event-attendance", "to": "ds:events", "kind": "write" },
+    { "from": "luma-guest-registered-to-event-attendance", "to": "ds:event-attendance", "kind": "write" },
+    { "from": "luma-guest-registered-to-event-attendance", "to": "ds:contacts", "kind": "write" },
+    { "from": "luma-guest-registered-to-event-attendance", "to": "app:buttondown", "kind": "write" },
+
+    { "from": "app:luma", "to": "luma-guest-updated-to-event-attendance", "kind": "trigger" },
+    { "from": "table:luma-events", "to": "luma-guest-updated-to-event-attendance", "kind": "read" },
+    { "from": "table:attendance-map", "to": "luma-guest-updated-to-event-attendance", "kind": "read" },
+    { "from": "table:email-contacts", "to": "luma-guest-updated-to-event-attendance", "kind": "read" },
+    { "from": "ds:events", "to": "luma-guest-updated-to-event-attendance", "kind": "read" },
+    { "from": "luma-guest-updated-to-event-attendance", "to": "ds:event-attendance", "kind": "write" },
+    { "from": "luma-guest-updated-to-event-attendance", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "table:email-contacts", "to": "contrast-registrations-to-event-attendance", "kind": "read" },
+    { "from": "contrast-registrations-to-event-attendance", "to": "ds:event-attendance", "kind": "write" },
+    { "from": "contrast-registrations-to-event-attendance", "to": "ds:events", "kind": "write" },
+    { "from": "contrast-registrations-to-event-attendance", "to": "ds:contacts", "kind": "write" },
+
+    { "from": "ds:deals", "to": "deal-to-client-drive-folder", "kind": "trigger" },
+    { "from": "deal-to-client-drive-folder", "to": "ds:companies", "kind": "write" },
+    { "from": "deal-to-client-drive-folder", "to": "table:company-ids", "kind": "reference" },
+
+    { "from": "ds:deals", "to": "deal-to-client-slack-channel", "kind": "trigger" },
+    { "from": "deal-to-client-slack-channel", "to": "ds:companies", "kind": "write" },
+    { "from": "table:user-ids", "to": "deal-to-client-slack-channel", "kind": "read" },
+    { "from": "deal-to-client-slack-channel", "to": "table:company-ids", "kind": "reference" },
+    { "from": "deal-to-client-slack-channel", "to": "app:slack", "kind": "write" },
+
+    { "from": "deal-won-set-up-client-workspace", "to": "ds:client-ws-companies", "kind": "reference" },
+
+    { "from": "ds:project-proposals", "to": "proposal-fee-to-deal-value", "kind": "trigger" },
+    { "from": "proposal-fee-to-deal-value", "to": "ds:deals", "kind": "write" },
+
+    { "from": "ds:sows", "to": "sow-signed-to-deal-won", "kind": "trigger" },
+    { "from": "ds:sows", "to": "sow-signed-to-deal-won", "kind": "read" },
+    { "from": "sow-signed-to-deal-won", "to": "ds:deals", "kind": "write" },
+
+    { "from": "app:zapier-partner", "to": "spot-project-request-to-notion", "kind": "trigger" },
+    { "from": "spot-project-request-to-notion", "to": "table:spot-requests", "kind": "own" },
+    { "from": "table:company-ids", "to": "spot-project-request-to-notion", "kind": "read" },
+    { "from": "table:email-contacts", "to": "spot-project-request-to-notion", "kind": "read" },
+    { "from": "spot-project-request-to-notion", "to": "ds:contacts", "kind": "write" },
+    { "from": "spot-project-request-to-notion", "to": "ds:companies", "kind": "write" },
+    { "from": "spot-project-request-to-notion", "to": "ds:deals", "kind": "write" },
+
+    { "from": "ds:companies", "to": "register-zapier-partner-lead", "kind": "trigger" },
+    { "from": "register-zapier-partner-lead", "to": "table:zapier-leads", "kind": "own" },
+    { "from": "table:user-ids", "to": "register-zapier-partner-lead", "kind": "read" },
+    { "from": "register-zapier-partner-lead", "to": "ds:companies", "kind": "write" },
+    { "from": "register-zapier-partner-lead", "to": "app:zapier-partner", "kind": "write" },
+
+    { "from": "app:zapier-partner", "to": "zapier-partner-lead-status-to-notion", "kind": "trigger" },
+    { "from": "table:zapier-leads", "to": "zapier-partner-lead-status-to-notion", "kind": "read" },
+    { "from": "zapier-partner-lead-status-to-notion", "to": "table:zapier-leads", "kind": "write" },
+    { "from": "table:email-contacts", "to": "zapier-partner-lead-status-to-notion", "kind": "read" },
+    { "from": "zapier-partner-lead-status-to-notion", "to": "ds:companies", "kind": "write" },
+
+    { "from": "ds:companies", "to": "notion-company-to-linear-customer", "kind": "trigger" },
+    { "from": "notion-company-to-linear-customer", "to": "ds:companies", "kind": "write" },
+    { "from": "notion-company-to-linear-customer", "to": "table:company-ids", "kind": "reference" },
+
+    { "from": "ds:companies", "to": "notion-companies-to-zapier-table", "kind": "trigger" },
+    { "from": "notion-companies-to-zapier-table", "to": "table:company-ids", "kind": "own" },
+
+    { "from": "ds:companies", "to": "notion-page-deleted-to-zapier-tables", "kind": "trigger" },
+    { "from": "ds:meeting-notes", "to": "notion-page-deleted-to-zapier-tables", "kind": "trigger" },
+    { "from": "ds:setup-calls", "to": "notion-page-deleted-to-zapier-tables", "kind": "trigger" },
+    { "from": "notion-page-deleted-to-zapier-tables", "to": "table:company-ids", "kind": "write" },
+    { "from": "notion-page-deleted-to-zapier-tables", "to": "table:meeting-note-ids", "kind": "write" },
+    { "from": "notion-page-deleted-to-zapier-tables", "to": "table:setup-session-map", "kind": "write" },
+    { "from": "notion-page-deleted-to-zapier-tables", "to": "ds:contacts", "kind": "reference" },
+    { "from": "notion-page-deleted-to-zapier-tables", "to": "notion-companies-to-zapier-table", "kind": "http" },
+
+    { "from": "table:meeting-note-ids", "to": "gcal-event-updated-to-meeting-note", "kind": "read" },
+    { "from": "gcal-event-updated-to-meeting-note", "to": "table:meeting-note-ids", "kind": "write" },
+    { "from": "gcal-event-updated-to-meeting-note", "to": "ds:meeting-notes", "kind": "write" },
+
+    { "from": "app:slack", "to": "internal-user-ids-to-table-and-notion", "kind": "trigger" },
+    { "from": "internal-user-ids-to-table-and-notion", "to": "table:user-ids", "kind": "own" },
+    { "from": "internal-user-ids-to-table-and-notion", "to": "ds:people", "kind": "write" },
+
+    { "from": "table:user-ids", "to": "gws-new-user-provisioning", "kind": "read" },
+    { "from": "gws-new-user-provisioning", "to": "table:user-ids", "kind": "write" },
+    { "from": "gws-new-user-provisioning", "to": "app:gmail", "kind": "write" },
+
+    { "from": "app:slack", "to": "whatsapp-slack-bridge", "kind": "trigger" },
+    { "from": "whatsapp-slack-bridge", "to": "table:whatsapp-contacts", "kind": "own" },
+    { "from": "whatsapp-slack-bridge", "to": "table:whatsapp-messages", "kind": "own" },
+    { "from": "table:user-ids", "to": "whatsapp-slack-bridge", "kind": "read" },
+    { "from": "whatsapp-slack-bridge", "to": "app:slack", "kind": "write" },
+
+    { "from": "ds:tasks", "to": "start-a-timer-from-notion-task", "kind": "trigger" },
+    { "from": "start-a-timer-from-notion-task", "to": "table:time-entry-map", "kind": "own" },
+    { "from": "table:harvest-projects", "to": "start-a-timer-from-notion-task", "kind": "read" },
+    { "from": "start-a-timer-from-notion-task", "to": "ds:projects", "kind": "reference" },
+
+    { "from": "app:gmail", "to": "gmail-attachments-to-drive-by-type", "kind": "trigger" },
+    { "from": "gmail-attachments-to-drive-by-type", "to": "folder:invoices", "kind": "write" },
+    { "from": "gmail-attachments-to-drive-by-type", "to": "folder:paid-receipts", "kind": "write" },
+    { "from": "gmail-attachments-to-drive-by-type", "to": "folder:signed-agreements", "kind": "write" },
+    { "from": "gmail-attachments-to-drive-by-type", "to": "folder:financial-reporting", "kind": "write" },
+
+    { "from": "folder:invoices", "to": "drive-invoice-to-xero", "kind": "trigger" },
+    { "from": "table:bank-transactions", "to": "drive-invoice-to-xero", "kind": "read" },
+    { "from": "drive-invoice-to-xero", "to": "table:vendor-payment-details", "kind": "own" },
+    { "from": "drive-invoice-to-xero", "to": "app:xero", "kind": "write" },
+
+    { "from": "folder:paid-receipts", "to": "drive-paid-receipts-to-table", "kind": "trigger" },
+    { "from": "drive-paid-receipts-to-table", "to": "table:receipts", "kind": "own" },
+
+    { "from": "folder:signed-agreements", "to": "drive-signed-agreement-to-notion", "kind": "trigger" },
+    { "from": "drive-signed-agreement-to-notion", "to": "ds:signed-agreements", "kind": "write" },
+
+    { "from": "folder:setup-session-screenshots", "to": "drive-screenshot-to-xero-sales-invoice", "kind": "trigger" },
+    { "from": "drive-screenshot-to-xero-sales-invoice", "to": "app:xero", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-bank-transactions-to-zapier-table", "kind": "read" },
+    { "from": "xero-bank-transactions-to-zapier-table", "to": "table:bank-transactions", "kind": "own" },
+
+    { "from": "ds:deals", "to": "xero-contact-from-notion-deal", "kind": "trigger" },
+    { "from": "ds:companies", "to": "xero-contact-from-notion-deal", "kind": "trigger" },
+    { "from": "xero-contact-from-notion-deal", "to": "app:xero", "kind": "write" },
+    { "from": "xero-contact-from-notion-deal", "to": "ds:companies", "kind": "write" },
+    { "from": "xero-contact-from-notion-deal", "to": "table:company-ids", "kind": "reference" },
+    { "from": "xero-contact-from-notion-deal", "to": "ds:contacts", "kind": "reference" },
+
+    { "from": "app:xero", "to": "xero-contact-to-notion-company", "kind": "read" },
+    { "from": "table:company-ids", "to": "xero-contact-to-notion-company", "kind": "read" },
+    { "from": "xero-contact-to-notion-company", "to": "ds:companies", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-invoice-alerts", "kind": "read" },
+    { "from": "xero-invoice-alerts", "to": "table:invoice-alert-state", "kind": "own" },
+    { "from": "xero-invoice-alerts", "to": "app:slack", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-draft-bill-to-slack-alert", "kind": "trigger" },
+    { "from": "xero-draft-bill-to-slack-alert", "to": "app:slack", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-draft-sales-invoice-to-slack-alert", "kind": "trigger" },
+    { "from": "xero-draft-sales-invoice-to-slack-alert", "to": "app:slack", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-bill-approved-to-subcontractor-email", "kind": "trigger" },
+    { "from": "xero-bill-approved-to-subcontractor-email", "to": "app:gmail", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-invoice-paid-to-gmail-confirmation", "kind": "trigger" },
+    { "from": "xero-invoice-paid-to-gmail-confirmation", "to": "app:gmail", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-overdue-invoice-to-gmail-reminder", "kind": "trigger" },
+    { "from": "xero-overdue-invoice-to-gmail-reminder", "to": "app:gmail", "kind": "write" },
+
+    { "from": "stripe-payment-to-xero-invoice-paid", "to": "app:xero", "kind": "write" },
+
+    { "from": "app:xero", "to": "xero-bill-approved-to-wise-transfer", "kind": "trigger" },
+    { "from": "table:vendor-payment-details", "to": "xero-bill-approved-to-wise-transfer", "kind": "read" },
+
+    { "from": "ds:sows", "to": "esignatures-send-for-signing", "kind": "trigger" },
+    { "from": "ds:project-addendums", "to": "esignatures-send-for-signing", "kind": "trigger" },
+    { "from": "esignatures-send-for-signing", "to": "table:esignatures-map", "kind": "own" },
+    { "from": "esignatures-send-for-signing", "to": "app:esignatures", "kind": "write" },
+    { "from": "esignatures-send-for-signing", "to": "ds:sows", "kind": "write" },
+    { "from": "esignatures-send-for-signing", "to": "ds:project-addendums", "kind": "write" },
+    { "from": "esignatures-send-for-signing", "to": "ds:deals", "kind": "write" },
+
+    { "from": "app:esignatures", "to": "esignatures-status-to-notion", "kind": "trigger" },
+    { "from": "table:esignatures-map", "to": "esignatures-status-to-notion", "kind": "read" },
+    { "from": "esignatures-status-to-notion", "to": "ds:sows", "kind": "write" },
+    { "from": "esignatures-status-to-notion", "to": "ds:project-addendums", "kind": "write" }
+  ],
+  "status_overrides": {
+    "email-contact-page-zap": { "status": "enabled", "classic": true },
+    "deal-won-set-up-client-workspace": { "status": "never-deployed" },
+    "xero-bill-approved-to-wise-transfer": {
+      "status": "shelved",
+      "note": "Merged to main but deliberately never deployed — waiting on Wise's official Xero bill sync."
+    },
+    "contrast-registrations-to-event-attendance": {
+      "status": "disabled",
+      "note": "zap.json still says enabled but the README records it as retired/disabled — a known repo disagreement, surfaced here rather than silently resolved."
+    },
+    "contact-us-form-to-notion-contact": { "status": "cutover-pending" },
+    "notion-page-deleted-to-zapier-tables": { "status": "cutover-pending" },
+    "sow-signed-to-deal-won": { "status": "cutover-pending" }
+  },
+  "blurbs": {
+    "blog-rss-to-slack": "New work.flowers blog post in the RSS feed → announcement in Slack #marketing as BlogBot; tag/author index pages filtered out.",
+    "email-db-updates": "New page in the Notion Emails data source → enrich it with parsed mail-block metadata, resolve or create the related Contacts, link internal recipients.",
+    "notion-blog-post-to-hero-image": "Notion Blog post webhook → AI-drafted hero image prompt → generated image written back onto the Blog page.",
+    "email-contact-page-zap": "Classic Code-step Zap: files inbound email into the sender's Notion contact page, resolving addresses through the Email → Contact Page IDs Table.",
+    "deal-won-set-up-client-workspace": "Design record for provisioning a client Notion workspace on Deal Won — never deployed.",
+    "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record."
+  },
+  "ignored_ids": {
+    "$comment": "Ids the regex sweep finds that are real but are not shared assets: test artifacts, fixed per-zap configuration, foreign-system record ids, and one Table row id.",
+    "ids": [
+      "019c4004-7a2f-e4f0-9712-2a03fe4969ce",
+      "019d489c-35c7-50fd-18ec-c10c03fef69b",
+      "019d9007-5623-5f38-9bb1-fc534eea9314",
+      "01KZD197ATZRSZG6TKXH38M4R5",
+      "02b95b31-c152-8800-9036-1107e08f70da",
+      "04260295-4ab8-4bd2-896c-b28a684d6696",
+      "0cda0de5-d87d-45ec-a654-70a19da84311",
+      "1041daf2-d152-4d21-8084-5dca1e6448b8",
+      "121d872b-594c-810b-ba5a-000206eeef1e",
+      "1b61a648-859f-46e2-a430-fc5609d0f673",
+      "1d8004ce-a30e-4796-a8dd-5bc213339f15",
+      "21991b07-11ac-8186-a243-e57dd4dd6501",
+      "28e9b5ff-59e7-4e45-98bb-754855e2aff1",
+      "2a875453-37cf-4c8a-a55e-5443f7720187",
+      "3a091b07-11ac-80d8-8e18-004dbf133f9c",
+      "443d6bed-607d-458e-a0de-27dd627bf96f",
+      "62699a8c-3351-40e8-9265-bdca5e037b03",
+      "699fb6bb-960d-4a7f-ac43-3185e242890a",
+      "6eaa0583-2cde-42d2-bf3e-2fe9b0808f3e",
+      "742441f1-81a7-498b-9f8b-bc685bb0183c",
+      "93cdde00-bfd7-4321-8e5c-dc9723505826",
+      "97f428f1-ab76-434e-aae3-bf8fed508866",
+      "99ea5905-aa60-4327-bcb7-984c1013e3e3",
+      "a773938c-5112-4bd4-9ad8-281265a5b504",
+      "a7c3277b-8f30-4d25-9aca-8237422b908b",
+      "aff36f3e-ab8b-4277-ae8e-6317c761a331",
+      "c9738320-214b-44dd-b310-8adba581f1ae",
+      "d3d91b07-11ac-82df-b0d8-014512d331ec",
+      "d9d3381a-6aeb-4221-b5f4-3623f68ea7cc"
+    ]
+  }
+}
