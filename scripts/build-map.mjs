@@ -245,8 +245,10 @@ export function buildGraph({ zaps }, overlay) {
     for (const dir of def.zaps) clusterOf.set(dir, cluster);
   }
 
+  const excluded = new Set(overlay.excluded_zaps?.dirs ?? []);
   const nodes = [];
   for (const z of zaps) {
+    if (excluded.has(z.dir)) continue;
     const override = overlay.status_overrides[z.dir];
     nodes.push({
       id: z.dir,
@@ -284,7 +286,9 @@ export function buildGraph({ zaps }, overlay) {
     });
   }
 
-  const edges = overlay.edges.map((e) => ({ ...e }));
+  const edges = overlay.edges
+    .filter((e) => !excluded.has(e.from) && !excluded.has(e.to))
+    .map((e) => ({ ...e }));
   const degree = new Map();
   for (const e of edges) {
     degree.set(e.from, (degree.get(e.from) ?? 0) + 1);

@@ -555,6 +555,10 @@
     { "from": "esignatures-status-to-notion", "to": "ds:sows", "kind": "write" },
     { "from": "esignatures-status-to-notion", "to": "ds:project-addendums", "kind": "write" }
   ],
+  "excluded_zaps": {
+    "$comment": "Zap dirs deliberately left OFF the map (still validated: they need a cluster, and their edges below stay curated as documentation). Classic Zaps are excluded per Dennis, 2026-08-14.",
+    "dirs": ["email-contact-page-zap"]
+  },
   "status_overrides": {
     "email-contact-page-zap": { "status": "enabled", "classic": true },
     "deal-won-set-up-client-workspace": { "status": "never-deployed" },
