@@ -1,0 +1,44 @@
+{
+  "name": "notion-blog-post-to-hero-image",
+  "workflow_id": "019fffd7-8cfe-74dd-8b2a-db2d9519a86d",
+  "current_version_id": "019fffd7-e519-7100-91c9-40e78ea2afae",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac2Pej0ma_rCl5MDIG-BYQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CYY3ISPRRZdolTFm/",
+    "trigger_note": "Catch hook. The Blog database's 'Generate Image' button property POSTs the page here (payload shape { data: <page object> }). `webhook_url` is the one Notion calls; `trigger_url` is Zapier-internal. Cutover done 2026-08-14: the button is repointed at this URL and the classic 'Generate Blog Post Image' Zap is off (confirmed by Dennis, not machine-verifiable)."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "gemini_wf": "0216c5b7-00bb-870d-a38f-2b25df57d960"
+  },
+  "notion": {
+    "blog_data_source": "1d791b07-11ac-8146-9124-000b0d6dbcc8",
+    "prompt_property": "Prompt (Optional)",
+    "cover_file_property": "Cover Image File",
+    "api_version": "2026-03-11",
+    "note": "The page cover is set as a NOTION-HOSTED file (download bytes -> file_uploads single_part -> PATCH cover), per Dennis's request — the classic Zap's custom action ae:345724 stored an external URL that rots when the Gemini link expires. The Cover Image File property is filled by the Notion upload_file_to_data_source_item action (its own hosted upload; a file_upload id can only be attached once, so the cover's upload cannot be reused). No create_database_item call in this Zap, so repo rule 5's template helper does not apply."
+  },
+  "gemini": {
+    "model": "gemini-3-pro-image-preview",
+    "api_version": "v1beta",
+    "note": "Nano Banana Pro. Image models are only offered under v1beta; the classic Zap's manual-prompt path said v1alpha and worked by accident. No aspect-ratio param exists — sizing rides in the prompt text (AI-brief path appends 'The image should be 1536x1024'; a hand-written Prompt (Optional) is passed verbatim)."
+  },
+  "ai_model": {
+    "app": "AICLIAPI get_completion (built-in credentials, authentication_id \"0\")",
+    "tier": "standard/auto",
+    "why": "Single creative-writing task: turn post markdown into one image-generation prompt. The classic Zap used the raw Anthropic app (Claude Opus 4.5, user's own billing) with a brand-guidelines PDF knowledge source; AI by Zapier has no knowledge sources, so the brand guidance is embedded in the prompt instead. Verified 2026-08-14 that standard/auto produces an on-brand, hex-correct, style-tagged brief on a real post — see the README's verified-cases table."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "replaces_classic_zap": "Generate Blog Post Image (exported 2026-08-14; webhook -> paths on Prompt (Optional) -> Anthropic/AI brief -> Gemini -> ae:345724 external cover + upload_file_to_data_source_item)"
+}

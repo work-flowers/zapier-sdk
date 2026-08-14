@@ -1,0 +1,33 @@
+{
+  "name": "blog-rss-to-slack",
+  "workflow_id": "019fffd7-a3e5-733a-b85b-57bea38537c0",
+  "current_version_id": "019fffd8-2476-7ea4-a305-efffb0027913",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQFx0S2rBXyigvvtmoxumQ",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "RSSCLIAPI@1.1.0",
+    "action": "new_feed",
+    "authentication_id": null,
+    "params": {
+      "url": "https://www.work.flowers/blog/index.xml",
+      "trigger_style": "smart"
+    },
+    "status": "active",
+    "trigger_note": "Polling trigger — no webhook URL, no backfill across disabled gaps, and no polling_interval_override (durable triggers cannot set one; the classic Zap's was 0/default anyway). Cutover done 2026-08-14: the classic 'Share new Blog Posts in Slack' Zap is off (confirmed by Dennis, not machine-verifiable) and this durable is enabled."
+  },
+  "connections": {
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74"
+  },
+  "slack": {
+    "channel": "C08GV0YNBK9",
+    "channel_name": "#marketing",
+    "note": "Posts as bot 'BlogBot' with :blogger: icon, unfurl on — identical presentation to the classic Zap."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "replaces_classic_zap": "Share new Blog Posts in Slack (exported 2026-08-14; RSS new_feed -> filter out /blog/tags & /blog/authors -> Slack channel_message)"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "blog-rss-to-slack",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+  },
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.99.0",
+    "@zapier/zapier-durable": "0.12.5",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  }
+}
