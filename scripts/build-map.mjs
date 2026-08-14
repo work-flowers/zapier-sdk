@@ -338,7 +338,7 @@ export function layout(graph, { seed = 7, iterations = 320 } = {}) {
     "finance-xero",
     "internal-ops",
   ];
-  const RING = 640;
+  const RING = 900;
   const anchors = new Map();
   clusterOrder.forEach((c, i) => {
     const a = (i / clusterOrder.length) * 2 * Math.PI - Math.PI / 2;
@@ -397,7 +397,7 @@ export function layout(graph, { seed = 7, iterations = 320 } = {}) {
         let d2 = dx * dx + dy * dy;
         if (d2 < 1) { dx = rand() - 0.5; dy = rand() - 0.5; d2 = 1; }
         const d = Math.sqrt(d2);
-        const f = (2600 / d2) * cool;
+        const f = (4200 / d2) * cool;
         dx /= d; dy /= d;
         a.vx += dx * f; a.vy += dy * f;
         b.vx -= dx * f; b.vy -= dy * f;
@@ -406,7 +406,7 @@ export function layout(graph, { seed = 7, iterations = 320 } = {}) {
     // Link springs — weak for mega-hubs so they anchor rather than collapse.
     for (const e of edges) {
       const a = byId.get(e.from), b = byId.get(e.to);
-      const rest = a.r + b.r + 70;
+      const rest = a.r + b.r + 130;
       const dx = b.x - a.x, dy = b.y - a.y;
       const d = Math.max(1, Math.hypot(dx, dy));
       const hubDegree = Math.max(a.degree, b.degree);
@@ -426,7 +426,7 @@ export function layout(graph, { seed = 7, iterations = 320 } = {}) {
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = nodes[i], b = nodes[j];
-          const min = a.r + b.r + 14;
+          const min = a.r + b.r + 24;
           let dx = b.x - a.x, dy = b.y - a.y;
           let d = Math.hypot(dx, dy);
           if (d < 1) { dx = 1; dy = 0; d = 1; }

@@ -50,7 +50,7 @@
       ]
     },
     "finance-xero": {
-      "label": "Finance & Xero",
+      "label": "Finance",
       "zaps": [
         "drive-invoice-to-xero",
         "drive-paid-receipts-to-table",
@@ -82,7 +82,7 @@
       ]
     },
     "esignatures-legal": {
-      "label": "eSignatures & Legal",
+      "label": "Legal",
       "zaps": [
         "drive-signed-agreement-to-notion",
         "esignatures-send-for-signing",
