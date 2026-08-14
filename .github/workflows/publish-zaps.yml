@@ -1,65 +1,137 @@
-# Publish Zaps — DRY RUN
+# Publish Zaps on merge
 #
-# When a pull request is merged into `main`, this workflow figures out which Zap
-# directories the PR changed and reports which deployed workflows *would* be
-# republished to Zapier. It does NOT publish anything and needs no Zapier
-# credentials — it only reads the repo and writes a report.
+# When a PR merges into `main`, this workflow:
+#   1. detect  — reports which deployed workflows the PR affects (a comment on
+#                the PR + the run Step Summary). No credentials, no side effects.
+#   2. publish — republishes each affected deployment to Zapier and syncs the new
+#                current_version_id back into zap.json (repo rule 4). This job is
+#                bound to the `production` GitHub Environment, so it PAUSES for a
+#                required-reviewer approval before it touches Zapier.
 #
-# This is the safe first stage. Once the detection is trusted, a follow-up
-# workflow can reuse the same detection script (scripts/detect-changed-zaps.mjs)
-# to actually run `publish-workflow-version`, gated behind a GitHub Environment
-# approval and authenticated with Zapier client credentials stored as secrets.
+# ┌─ ONE-TIME SETUP (required for the gate to actually gate) ───────────────────┐
+# │ Settings → Environments → New environment → name it exactly `production`,   │
+# │ then add the protection rule "Required reviewers" (add yourself).           │
+# │ THIS RULE IS THE GATE. Without it the publish job does NOT pause — it       │
+# │ publishes automatically on merge.                                           │
+# │                                                                             │
+# │ Secrets: the existing repository secrets ZAPIER_CLIENT_ID /                 │
+# │ ZAPIER_CLIENT_SECRET are read as-is here — leave them as repo secrets so    │
+# │ the verify-zapier-credentials workflow keeps working. (Optional hardening:  │
+# │ also add them as `production` environment secrets for tighter scoping.)     │
+# │                                                                             │
+# │ Also: allow the Actions bot to push the zap.json sync-back to `main`. If    │
+# │ `main` is protected, add an exception for github-actions[bot], or the       │
+# │ sync-back step fails (the publish itself still succeeds).                   │
+# └─────────────────────────────────────────────────────────────────────────────┘
 
-name: Publish Zaps (dry run)
+name: Publish Zaps
 
-# `pull_request: closed` fires when a PR closes; the job below filters to only
-# those that were actually *merged* (not just closed without merging).
 on:
   pull_request:
     types: [closed]
     branches: [main]
 
-# Least privilege: read the code, and write PR comments so the report is posted
-# back onto the merged PR. No other access is granted.
-permissions:
-  contents: read
-  pull-requests: write
+# Serialize publishes so two quick merges can't race on pushing zap.json to main.
+concurrency:
+  group: publish-zaps
+  cancel-in-progress: false
 
 jobs:
-  dry-run:
-    # Skip PRs that were closed without merging.
+  # ── 1. Detect + report (ungated, no secrets) ────────────────────────────────
+  detect:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      has_changes: ${{ steps.decide.outputs.has_changes }}
     steps:
-      - name: Check out the repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          # Full history so we can diff the PR's base commit against its head.
-          fetch-depth: 0
+          ref: main
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
-      - name: Detect affected Zaps (dry run)
-        id: detect
+      # Derive the PR's changed files from the API — correct regardless of
+      # whether the PR was merge-committed, squashed, or rebased.
+      - name: List changed files
+        id: files
         env:
-          # These two commits bracket exactly what the PR changed, regardless of
-          # whether it was merged, squashed, or rebased.
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # The script appends its Markdown report to the run's Step Summary via
-          # $GITHUB_STEP_SUMMARY, and we also capture it to a file to post as a
-          # PR comment in the next step.
-          node scripts/detect-changed-zaps.mjs --base "$BASE_SHA" --head "$HEAD_SHA" | tee report.md
+          gh pr view "$PR_NUMBER" --json files --jq '.files[].path' > changed.txt
+          echo "Changed files:"; cat changed.txt
 
-      - name: Post the dry-run report as a PR comment
-        # Never let a comment-permission hiccup fail the run — the Step Summary
-        # already carries the report regardless.
+      - name: Report affected Zaps
+        run: |
+          mapfile -t FILES < changed.txt
+          node scripts/detect-changed-zaps.mjs --files "${FILES[@]}" | tee report.md
+
+      - name: Decide whether anything needs publishing
+        id: decide
+        run: |
+          mapfile -t FILES < changed.txt
+          node scripts/detect-changed-zaps.mjs --files "${FILES[@]}" --json > detect.json
+          node -e '
+            const d = JSON.parse(require("fs").readFileSync("detect.json","utf8"));
+            const any = d.results.some(r => r.kind === "durable" && r.wouldRepublish);
+            require("fs").appendFileSync(process.env.GITHUB_OUTPUT, "has_changes=" + any + "\n");
+            console.log("has_changes =", any);
+          '
+
+      - name: Comment the report on the PR
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: gh pr comment "$PR_NUMBER" --body-file report.md
+
+  # ── 2. Publish (gated on the `production` environment) ───────────────────────
+  publish:
+    needs: detect
+    if: needs.detect.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: production   # ← the approval gate lives on this environment
+    permissions:
+      contents: write         # to push the zap.json sync-back to main
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: List changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr view "$PR_NUMBER" --json files --jq '.files[].path' > changed.txt
+
+      - name: Publish affected Zaps and sync zap.json
+        env:
+          ZAPIER_CLIENT_ID: ${{ secrets.ZAPIER_CLIENT_ID }}
+          ZAPIER_CLIENT_SECRET: ${{ secrets.ZAPIER_CLIENT_SECRET }}
+        run: |
+          mapfile -t FILES < changed.txt
+          node scripts/publish-changed-zaps.mjs --files "${FILES[@]}" --execute
+
+      - name: Commit the current_version_id sync-back
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if git diff --quiet -- '**/zap.json'; then
+            echo "No zap.json changes to sync back."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- '**/zap.json'
+          git commit -m "Sync current_version_id after publishing (PR #${PR_NUMBER}) [skip ci]"
+          git push origin HEAD:main
