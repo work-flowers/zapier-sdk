@@ -1013,7 +1013,7 @@ function flyTo(n, k = 1.4) {
 const panel = document.getElementById("panel");
 let selected = null;
 const KIND_LABEL = {
-  durable: "Durable workflow", classic: "Classic Zap", table: "Zapier Table",
+  durable: "Next Gen Zap", classic: "Classic Zap", table: "Zapier Table",
   notion_ds: "Notion data source", drive_folder: "Drive folder", external_app: "External app",
 };
 const KIND_COLOR = {
@@ -1143,7 +1143,7 @@ document.addEventListener("keydown", (ev) => {
 (() => {
   const sw = (inner) => `<svg width="26" height="18" viewBox="0 0 26 18">${inner}</svg>`;
   const rows = [
-    [sw(`<rect x="2" y="3" width="22" height="12" rx="3" fill="var(--c-node-fill)" stroke="var(--c-durable)" stroke-width="1.5"/>`), "Durable workflow"],
+    [sw(`<rect x="2" y="3" width="22" height="12" rx="3" fill="var(--c-node-fill)" stroke="var(--c-durable)" stroke-width="1.5"/>`), "Next Gen Zap"],
     [sw(`<rect x="3" y="3" width="20" height="12" rx="2" fill="var(--c-table-fill)" stroke="var(--c-table)" stroke-width="1.5"/><line x1="3" y1="3" x2="23" y2="3" stroke="var(--c-table)" stroke-width="2.5"/>`), "Zapier Table"],
     [sw(`<circle cx="13" cy="9" r="7" fill="var(--c-ds-fill)" stroke="var(--c-ds)" stroke-width="1.5"/>`), "Notion data source"],
     [sw(`<path d="M4,6 l0,-2 l6,0 l2,2 l10,0 l0,10 l-18,0 Z" fill="var(--c-folder-fill)" stroke="var(--c-folder)" stroke-width="1.5"/>`), "Drive folder"],
