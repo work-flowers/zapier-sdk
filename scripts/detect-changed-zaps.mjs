@@ -146,6 +146,9 @@ export function detectChangedZaps(files) {
           name: d.name,
           workflowId: d.workflow_id,
           enabled: d.enabled,
+          // Which repo file this deployment publishes as "workflow.ts".
+          // Single-deployment dirs and luma-style shared dirs use workflow.ts.
+          entryFile: d.entry_file || "workflow.ts",
         })),
       });
     } else if (hasCodeStep) {
