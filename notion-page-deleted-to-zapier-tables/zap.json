@@ -1,0 +1,44 @@
+{
+  "name": "notion-page-deleted-to-zapier-tables",
+  "workflow_id": "019fff93-9b7d-7cca-99aa-c8dd80e1739a",
+  "current_version_id": "019fff93-f375-7414-a661-ca066981a7b3",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AeXbTKpucg8Oun2QexY0qA",
+  "enabled": true,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "status": "active",
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/VWywrUjF4Yy49wbR/",
+    "trigger_note": "Catch hook for Notion INTEGRATION-WEBHOOK events (page.deleted / page.undeleted), the `{ type, entity: { id }, data: { parent: { data_source_id } } }` shape. `webhook_url` is what the Notion webhook subscription must POST to; `trigger_url` is Zapier-internal."
+  },
+  "connections": {},
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "meeting_notes_data_source": "19891b07-11ac-8137-9d62-000b75fab86e",
+    "setup_calls_data_source": "2d191b07-11ac-8058-97a3-000b7132e307",
+    "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "note": "No Notion connection is bound: every branch is a Zapier Tables call. `setup_calls_data_source` is '[Ernest] Internal Setup Calls DB'. Contacts deletions are deliberately skipped here — contact-emails-to-zapier-table owns them (merge hand-over vs genuine delete)."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — rows DELETED on company page deletion (f14 Notion Page ID is the key). A page.undeleted for a company is forwarded to notion-companies-to-zapier-table's catch URL so the mirror re-creates the row.",
+    "01JZCVG73MBWWB0357CEPS4903": "[Table] Meeting Note IDs — rows FLAGGED Archived (f7), never deleted, on meeting-note deletion (f2 Page ID is the key); un-flagged on page.undeleted. Same never-delete rule as gcal-event-updated-to-meeting-note.",
+    "01KEE5CTAZMJ8CR2608S2QWT5H": "[Table] Notion Setup Session Mapping — rows DELETED on setup-call page deletion (f2 Page ID is the key)."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.99.0"
+  },
+  "created_at": "2026-08-14T09:21:31.519Z",
+  "version_created_at": "2026-08-14T09:21:54.148Z",
+  "replaces_classic_zap": "Delete Contact, Company or Meeting Note Page from Zapier Table (paths B/C/D — path A, Contacts, was already retired into contact-emails-to-zapier-table on 2026-07-26)",
+  "cutover": {
+    "notion_webhook_repointed": "PENDING — repoint the Notion integration-webhook subscription that currently posts page.deleted events to the classic Zap's catch URL at this workflow's webhook_url. Notion answers the new URL with a verification ping; the token is readable in that skipped run's input.",
+    "classic_zap_disabled": "PENDING — turn the classic Zap off in the Zapier UI once repointed. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "status": "durable live and verified; Notion-side repointing outstanding"
+  },
+  "description": "Notion page.deleted webhook -> remove/flag the page's row in the matching Zapier Table (Companies deleted, Meeting Notes flagged Archived, Setup Sessions deleted). Contacts deletions are owned by contact-emails-to-zapier-table."
+}

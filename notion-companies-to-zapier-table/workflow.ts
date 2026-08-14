@@ -47,6 +47,24 @@ function normalizeInput(rawInput: unknown): unknown {
   return v;
 }
 
+/** True when the payload is an empty ping of the catch URL — no keys, or only
+ *  known wrapper keys with nothing in them. Wiring-up test clicks, browser
+ *  opens and curl checks all look like this; they must skip, never throw.
+ *  A wrapper key with content is a real event and falls through to the loud
+ *  no-page-id error below. */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper with something in it — treat as a real event
+  }
+  return true;
+}
+
 function extractPageId(raw: unknown): string {
   if (!raw) throw new Error("No input provided to workflow.");
   if (typeof raw === "string") return raw.trim();
@@ -206,6 +224,12 @@ const workflow = defineDurable({
   inputSchema: InputSchema,
   run: async (ctx, rawInput) => {
     const norm = normalizeInput(rawInput);
+
+    if (isEmptyPing(norm)) {
+      console.log("empty payload — treating as a ping of the catch URL, not an event");
+      return { skipped: "empty-payload" };
+    }
+
     const pageId = dashUuid(extractPageId(norm));
     const previewOnly = Boolean(
       norm && typeof norm === "object" && (norm as any).previewOnly,

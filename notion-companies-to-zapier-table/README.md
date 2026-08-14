@@ -8,6 +8,8 @@ Mirrors Notion **Companies** records into the company-ID Zapier Table (`01JM8PH8
 
 On any Companies-page webhook, it re-fetches the page's *current* state from Notion (never trusting the payload), then performs a guarded upsert into the table: creates on first sight (deduping racing creates deterministically on earliest ULID), updates only when the snapshot's `last_edited_time` is not older than the stored one (so a stale event can never regress a newer write), skips no-op writes, and deletes the row when the page is archived/trashed. After a 20-second wait it runs a reconcile pass — re-fetch and re-upsert — so the last-finishing run always leaves the table matching Notion.
 
+An **empty ping of the catch URL skips cleanly** (`{skipped: "empty-payload"}`) instead of throwing — added 2026-08-14 (version `019fffbb`) after editing the Notion automation produced a `{"querystring":{}}` test ping that failed a run with an error alert (run `019fffb5-6e2a`, the exact alert-fatigue failure the repo's *skip, never throw* rule exists to prevent). A payload with content but no page id still throws loudly.
+
 Mirrored columns: Company Name, Notion Company ID, Domain (from Website), and the external-ID fields (Harvest Client ID, Google Drive Folder ID, Slack Channel ID, Xero Contact ID, Linear Customer ID, Linear Team ID). "Slack Channel Is Archived" is deliberately not managed here.
 
 ## Workflow
@@ -31,9 +33,32 @@ flowchart TD
 
 Webhooks by Zapier Catch Hook (`hook_v2`) with a static hook code — a Notion database automation on the Companies DB posts to the catch URL on create/update. Input flag `previewOnly: true` returns the snapshot without writing.
 
+## Superseded classic Zaps (2026-08-14)
+
+Two classic Zaps still writing to this Table are fully superseded by this mirror
+and should be **turned off in the Zapier UI** (along with the Notion Companies
+automations that feed them, if separate from this mirror's):
+
+- **"Update Company IDs Table"** (Website updated → find-or-create by *Domain*
+  `icontains` → update Domain/ID/Name) — the `icontains` domain match can hit
+  the wrong row, and its create path mints rows this mirror then duplicates.
+- **"Update Company Name from Notion in Zapier Table"** (Company Name updated →
+  find-or-create by Page ID → update Name) — its create branch writes an
+  **empty** Company Name (`new__data__f5: ""`) before the update step fixes it.
+
+Both are unguarded racing writers against this mirror's guarded upsert. Evidence
+they carry no residual value: all **575 of 575** rows are keyed on
+`Notion Page ID` (verified 2026-08-14), so the legacy Domain-match path has
+nothing left to reach, and every column they write is in this mirror's mirrored
+set. Deletions are handled by
+[`notion-page-deleted-to-zapier-tables`](../notion-page-deleted-to-zapier-tables/),
+which also forwards company **restores** to this mirror's catch URL — a
+`page.undeleted` fires no DB automation, so the forward is how the mirror learns
+to re-create the row.
+
 ## Maintainer notes
 
 - Connection alias `notion_wf` (Notion, work.flowers workspace); Notion API version `2026-03-11` via `sdk.fetch`.
-- **History:** originally managed in the personal `denchiuten/notion-companies-hub` repo by mistake; adopted into this repo 2026-07-23. The *deployed* version's header comment and workflow description still point at the old repo — update both at the next republish (the local source here already carries the correct header).
+- **History:** originally managed in the personal `denchiuten/notion-companies-hub` repo by mistake; adopted into this repo 2026-07-23. ~~The *deployed* version's header comment and workflow description still point at the old repo~~ — both fixed at the 2026-08-14 republish (version `019fffbb`); deployed source now round-trips byte-identical with this repo.
 - Domain is a link field in the table: Zapier Tables normalizes bare domains to `https://`, so comparisons are scheme-insensitive; empty Website leaves the stored Domain untouched.
 - The reconcile pass gives the same end-state guarantee as a Delay-queue serialized on page_id, without the queue.
