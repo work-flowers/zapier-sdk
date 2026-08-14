@@ -107,6 +107,32 @@ function extractSubmission(raw: unknown): Submission | null {
   };
 }
 
+/**
+ * True when the payload carries no event at all — an empty POST or a bare GET
+ * of the catch URL.
+ *
+ * A catch hook is a public URL: pasting it into a browser, curling it, or
+ * hitting "test" while wiring up the Notion side all deliver a body like
+ * `{"querystring":{}}`. Those are pings, not events, and failing the run on
+ * them means a Zapier error alert every time someone touches the URL — which
+ * is exactly what happened on 2026-08-02 during cutover.
+ *
+ * A payload that DOES carry content but no page id is a different thing: a
+ * real event we failed to understand. That still throws, loudly.
+ */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper with something in it — treat as a real event
+  }
+  return true;
+}
+
 async function readPage(pageId: string): Promise<any | null> {
   const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
     connection: NOTION_CONNECTION,
@@ -204,6 +230,10 @@ const workflow = defineDurable<Input, unknown>(
   "contact-us-form-to-notion-contact",
   async (ctx: DurableContext, rawInput: Input) => {
     const payload = normalizeInput(InputSchema.parse(rawInput));
+    if (isEmptyPing(payload)) {
+      console.log("empty payload — treating as a ping of the hook URL, not a form submission");
+      return { skipped: "empty-payload" };
+    }
     const sub = extractSubmission(payload);
     if (!sub) {
       throw new Error(
