@@ -5,8 +5,7 @@ attaches it twice: as the page **cover** (a Notion-hosted file) and in the
 **Cover Image File** files property (what the Bullet site actually renders).
 
 Replaces the classic Zap **"Generate Blog Post Image"** (webhook → paths →
-Anthropic/Gemini → Notion). Turn that Zap off and repoint the Blog database's
-**Generate Image** button before relying on this one — see Cutover below.
+Anthropic/Gemini → Notion). Cutover done 2026-08-14 — see below.
 
 - **Workflow ID:** `019fffd7-8cfe-74dd-8b2a-db2d9519a86d` · account-visible · enabled
 - **Trigger:** Webhooks by Zapier catch hook —
@@ -71,14 +70,12 @@ Verified cases (re-run these before changing tier):
 | 2026-08-14 | "Your Zaps Finally Have an API" post body (5.3k chars markdown) | standard/auto | On-brand Style-A brief: correct hexes, halftone/ribbon signature elements, single warm accent, exclusions carried through. Judged equivalent in structure/specificity to the classic Opus output. |
 | 2026-08-14 | Scratch page, 2-paragraph body, full durable run | standard/auto | End-to-end success: brief → image → hosted cover (859 KB) → property upload. |
 
-## Cutover checklist (from the classic Zap)
+## Cutover
 
-1. In Notion, edit the Blog database's **Generate Image** button property → change its
-   webhook URL to `https://hooks.zapier.com/hooks/catch/20495893/CYY3ISPRRZdolTFm/`.
-   (If any database automation also POSTs to the old classic-Zap hook, repoint it too.)
-2. Turn **off** the classic Zap "Generate Blog Post Image" in the Zapier UI.
-3. Click the button on a draft post to confirm; the run should land in
-   [run history](https://zapier.com/durables-editor/019fffd7-8cfe-74dd-8b2a-db2d9519a86d).
+Done 2026-08-14: the Blog database's **Generate Image** button property posts to this
+durable's catch URL and the classic Zap "Generate Blog Post Image" is off (both
+confirmed by Dennis, not machine-verifiable). Runs land in
+[run history](https://zapier.com/durables-editor/019fffd7-8cfe-74dd-8b2a-db2d9519a86d).
 
 ## Tested
 

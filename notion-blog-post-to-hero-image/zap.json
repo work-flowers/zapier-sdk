@@ -12,7 +12,7 @@
     "params": {},
     "status": "active",
     "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CYY3ISPRRZdolTFm/",
-    "trigger_note": "Catch hook. The Blog database's 'Generate Image' button property must POST the page here (payload shape { data: <page object> }). `webhook_url` is the one Notion calls; `trigger_url` is Zapier-internal. Cutover from the classic 'Generate Blog Post Image' Zap requires repointing that button and turning the classic Zap off."
+    "trigger_note": "Catch hook. The Blog database's 'Generate Image' button property POSTs the page here (payload shape { data: <page object> }). `webhook_url` is the one Notion calls; `trigger_url` is Zapier-internal. Cutover done 2026-08-14: the button is repointed at this URL and the classic 'Generate Blog Post Image' Zap is off (confirmed by Dennis, not machine-verifiable)."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
