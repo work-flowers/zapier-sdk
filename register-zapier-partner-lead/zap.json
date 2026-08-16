@@ -1,7 +1,7 @@
 {
   "name": "register-zapier-partner-lead",
   "workflow_id": "019fa7a7-72b7-7378-a8de-65599cbea6ea",
-  "current_version_id": "019fda12-a071-7ecd-9222-c0bc94c1766e",
+  "current_version_id": "01a00981-60b4-75e3-a994-37e4098acd67",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZyqavdBR8zeHHJPw0XeLQ",
   "enabled": true,
   "is_private": false,
@@ -23,18 +23,18 @@
     "@zapier/zapier-sdk": "0.91.0"
   },
   "tables": {
-    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table \u2014 client id -> Notion Company page id, plus the submission log. Read by zapier-partner-lead-status-to-notion.",
-    "01JM3J9SG5X6S8GBSSC8AS28AT": "User IDs \u2014 Notion user id -> Zapier partner contact id (read-only here)."
+    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table — client id -> Notion Company page id, plus the submission log. Read by zapier-partner-lead-status-to-notion.",
+    "01JM3J9SG5X6S8GBSSC8AS28AT": "User IDs — Notion user id -> Zapier partner contact id (read-only here)."
   },
   "partner_app": {
     "app_key": "App227952CLIAPI",
     "app_version": "1.5.0",
     "action": "write/submit_client",
-    "note": "Solution Partner Operations Tool (private, invite-only). The classic Zap ran on 1.4.1; the bound connection's implementation_id still reads App227952CLIAPI@1.4.1 and resolves fine against 1.5.0 actions. submit_client is create-or-reuse on (partner account, client email) and does NOT update an existing client's details \u2014 which is why a repeat click is skipped in code rather than left to the tool."
+    "note": "Solution Partner Operations Tool (private, invite-only). The classic Zap ran on 1.4.1; the bound connection's implementation_id still reads App227952CLIAPI@1.4.1 and resolves fine against 1.5.0 actions. submit_client is create-or-reuse on (partner account, client email) and does NOT update an existing client's details — which is why a repeat click is skipped in code rather than left to the tool."
   },
   "created_at": "2026-07-28T07:36:36.844Z",
   "version_created_at": "2026-08-07T02:34:41.884Z",
   "version_note": "019fda12-… fixes the Table write that killed the first live click: 'Client Company Size' is a labeled_string column and Tables rejects '' for that type with a 400 'Labeled string must have a value key', so the key is now spread in only when non-empty. Run 019fda07-17e1-7c57-b0b2-dbb0f305eba7 died there AFTER submit_client had registered the lead; its state was repaired by hand (Table row 01KZD197ATZRSZG6TKXH38M4R5, page stamped + commented), minus the service agreement columns, which existed only in the lost response. Previous version: 019fa7ac-44ba-76eb-8489-7b2f4b3fa611.",
   "description": "Notion Companies 'Register Lead' button -> submit the company's Zapier account owner to the Zapier partner program as a managed-revenue client, index client id -> Notion page id in the lead Table, and stamp the client id + Submitted status back on the company record. Migration of the classic 'Register Zapier Lead' Zap.",
-  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes."
+  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-… / 019fa7a8-… are the discarded 0.11.0 publishes."
 }
