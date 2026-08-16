@@ -184,6 +184,30 @@ function rollupPersonId(prop: any): string {
   return "";
 }
 
+/**
+ * A catch URL is public and gets probed before it is wired up properly: pasting
+ * it into a Notion button, hitting "test", or curling it to verify it is live
+ * all deliver an empty body (`{"querystring":{}}`). These are not real events.
+ * A payload that carries content but has no usable page id is a different thing
+ * — a real event whose shape we failed to understand — and that still throws.
+ *
+ * "Empty" means no keys, or only the known webhook wrapper keys
+ * (`querystring`, `headers`, `params`, `body`, `query`) whose values are empty.
+ * A wrapper key with something in it is treated as content.
+ */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper key with content — treat as a real event
+  }
+  return true;
+}
+
 function extractCompanyData(raw: unknown): CompanyData {
   const o = (raw ?? {}) as Record<string, any>;
   // Notion webhook payloads nest the page under `data`; manual/test input may
@@ -399,6 +423,16 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
   "register-zapier-partner-lead",
   async (ctx, rawInput) => {
     const norm = normalizeInput(rawInput);
+
+    // Skip empty pings (browser hits, `curl`, uptime checks, Notion "test
+    // webhook" clicks) before any id extraction. A non-empty payload that
+    // carries no page id is a real event whose shape we failed to understand
+    // and must still throw — see isEmptyPing above.
+    if (isEmptyPing(norm)) {
+      console.log("Empty ping (probe/empty request) — skipping without error.");
+      return { skipped: true, reason: "empty-payload" };
+    }
+
     let company = extractCompanyData(norm);
 
     console.log(
