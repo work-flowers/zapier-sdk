@@ -215,17 +215,20 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
 
 // ---- zap.json sync-back --------------------------------------------------
 
-function syncBackVersionId(dir, workflowId, newVersionId) {
+// Replace ONLY the current_version_id value in place, leaving the rest of the
+// file byte-for-byte. A JSON parse→stringify round-trip would reformat the whole
+// file (e.g. re-encoding \uXXXX escapes as literal characters), producing noisy
+// diffs on every publish. Version ids are unique, so we target the exact old id
+// where it sits as a current_version_id value — which is the right deployment's
+// entry in a multi-deployment file, since each carries a distinct id.
+function syncBackVersionId(dir, oldVersionId, newVersionId) {
   const abs = join(REPO_ROOT, dir, "zap.json");
-  const zap = JSON.parse(readFileSync(abs, "utf8"));
-  if (Array.isArray(zap.deployments)) {
-    const d = zap.deployments.find((x) => x.workflow_id === workflowId);
-    if (!d) fail(`${dir}: no deployment with workflow_id ${workflowId} in zap.json to sync back`);
-    d.current_version_id = newVersionId;
-  } else {
-    zap.current_version_id = newVersionId;
+  const raw = readFileSync(abs, "utf8");
+  const re = new RegExp('("current_version_id":\\s*")' + oldVersionId + '(")');
+  if (!re.test(raw)) {
+    fail(`${dir}: could not find current_version_id "${oldVersionId}" in zap.json to sync back`);
   }
-  writeFileSync(abs, JSON.stringify(zap, null, 2) + "\n");
+  writeFileSync(abs, raw.replace(re, `$1${newVersionId}$2`));
 }
 
 // ---- main ----------------------------------------------------------------
@@ -269,7 +272,7 @@ function main() {
     const { plan, newVersionId } = publishDeployment(dir, dep, currentVersionId, args.execute);
     log(`- start mode: **${plan.startMode}**, enabled: ${plan.enabled}, files: ${plan.sourceFileKeys.join(", ")}`);
     if (args.execute) {
-      syncBackVersionId(dir, dep.workflowId, newVersionId);
+      syncBackVersionId(dir, currentVersionId, newVersionId);
       synced.push({ dir, workflowId: dep.workflowId, newVersionId });
       log(`- ✅ published new version \`${newVersionId}\`; zap.json updated`);
     } else {
