@@ -15,6 +15,11 @@ const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 const BUTTONDOWN_EMAIL_URL = "https://buttondown.com/emails/";
 
+// Opening words of the confirmation comment this Zap posts on the page when a
+// sync succeeds. Also the marker used to find the thread it started last time,
+// so repeated syncs of one issue stack in a single discussion.
+const COMMENT_MARKER = "Buttondown sync";
+
 // Zapier Table that logs the Notion page id -> Buttondown email id mapping.
 // Columns: "Page ID" (string), "Buttondown Email ID" (string), "Created at" (datetime).
 // Tables auth is automatic (no connection needed), so this works from the durable.
@@ -461,6 +466,86 @@ const workflow = defineDurable({
       }
     });
 
+    // 7. Post a confirmation comment on the Notion page — the sync is done and
+    // everything above succeeded, so this is the "it worked" signal an editor
+    // sees without leaving the page.
+    // Best-effort, like the Tables log: the email and the property write-back
+    // are the real work, and a comment that fails to post must not fail a run
+    // whose newsletter was pushed successfully. The outcome is returned so a
+    // persistent failure is visible in run history rather than silent.
+    const commentLog = await ctx.step("comment-on-notion-page", async () => {
+      const modeLine =
+        mode === "created"
+          ? "created a new Buttondown email"
+          : "updated the Buttondown email";
+      const scheduleLine = willSchedule
+        ? `Scheduled to send on ${page.sendDate}.`
+        : "Saved as a draft — no Send Date set.";
+      const richText = [
+        {
+          type: "text",
+          text: { content: `${COMMENT_MARKER} ✅ — ${modeLine}.\n${scheduleLine}\n` },
+        },
+        {
+          type: "text",
+          text: { content: "Open in Buttondown", link: { url: buttondownUrl } },
+        },
+      ];
+      try {
+        // Reply into the thread a previous sync started, so an issue that gets
+        // re-synced a few times while it is being edited collects one growing
+        // discussion instead of a pile of top-level comments. Notion only
+        // returns UNRESOLVED comments here, so resolving the thread in Notion
+        // starts a fresh one on the next sync — which is the sensible
+        // behaviour, not a bug.
+        let discussionId: string | null = null;
+        const list = await sdk.fetch(
+          `${NOTION_API}/comments?block_id=${pageId}`,
+          {
+            connection: NOTION_CONNECTION,
+            headers: { "Notion-Version": NOTION_VERSION },
+          },
+        );
+        if (list.ok) {
+          const data: any = await list.json();
+          const previous = (data.results || []).find((c: any) =>
+            plainText(c.rich_text).startsWith(COMMENT_MARKER),
+          );
+          discussionId = previous?.discussion_id ?? null;
+        }
+        const payload = discussionId
+          ? { discussion_id: discussionId, rich_text: richText }
+          : { parent: { page_id: pageId }, rich_text: richText };
+        const res = await sdk.fetch(`${NOTION_API}/comments`, {
+          connection: NOTION_CONNECTION,
+          method: "POST",
+          headers: {
+            "Notion-Version": NOTION_VERSION,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          throw new Error(
+            `Notion comment failed (${res.status}): ${await res.text()}`,
+          );
+        }
+        const comment: any = await res.json();
+        return {
+          commented: (discussionId ? "replied" : "created") as
+            | "replied"
+            | "created",
+          commentId: comment?.id ?? null,
+          discussionId: comment?.discussion_id ?? null,
+        };
+      } catch (err) {
+        return {
+          commented: "error" as const,
+          error: String((err as Error)?.message ?? err),
+        };
+      }
+    });
+
     return {
       pageId,
       mode,
@@ -475,6 +560,7 @@ const workflow = defineDurable({
       buttondownDescription: emailData?.description ?? null,
       scheduled: willSchedule,
       tableLog,
+      commentLog,
     };
   },
 });
