@@ -6,7 +6,7 @@ Turns a Notion **Newsletter Issues** page into a Buttondown draft or scheduled e
 
 ## What it does
 
-Fetches the Notion page, exports its body via Notion's **native markdown export** (structurally faithful, unlike the lossy Zapier block converter), converts Notion pseudo-tags (callouts, columns, spacers, spans) to email-safe markdown, surfaces image captions as visible lines, pulls the canonical URL and description from the related Blog post, then creates or updates the Buttondown email — scheduled when the page has a Send Date. Finally it writes the Buttondown ID/URL/Status back to the Notion page and best-effort logs the page → email mapping to a Zapier Table.
+Fetches the Notion page, exports its body via Notion's **native markdown export** (structurally faithful, unlike the lossy Zapier block converter), converts Notion pseudo-tags (callouts, columns, spacers, spans) to email-safe markdown, surfaces image captions as visible lines, pulls the canonical URL and description from the related Blog post, then creates or updates the Buttondown email — scheduled when the page has a Send Date. Finally it writes the Buttondown ID/URL/Status back to the Notion page, best-effort logs the page → email mapping to a Zapier Table, and posts a confirmation comment on the page it was triggered from.
 
 ## Workflow
 
@@ -27,7 +27,8 @@ flowchart TD
     L -- yes --> M["Email is scheduled for the Send Date"] --> N
     L -- no --> N["Write Buttondown ID / URL / Status<br/>back to the Notion page"]
     N --> O["Log page → email mapping to Zapier Table<br/>(best-effort; never fails the run)"]
-    O --> P(["Return summary"])
+    O --> Q["Comment on the Notion page:<br/>created/updated + schedule + Buttondown link<br/>(threaded; best-effort)"]
+    Q --> P(["Return summary"])
 ```
 
 ## Trigger
@@ -43,3 +44,7 @@ Webhooks by Zapier Catch Hook (`hook_v2`) — the "Send to Buttondown" button on
 - **Clickable images (link the caption).** Notion image blocks carry no link target and the export has no linked-image form, so a caption that is *nothing but* a Markdown link is how you author a clickable image. Notion nests it in the alt slot as `![[text](href)](src)`; the conversion rewrites that to `[![text](src)](href)` plus a linked italic line, so the link still works when the client blocks images. This is the supported way to present a video in an issue: a poster frame linked to the watch page, since iframes are stripped by virtually every email client. A caption that merely *contains* a link (surrounding prose, or link text with brackets) still can't be parsed unambiguously out of the alt slot and is left as-is; if that becomes common, read `caption` off the image blocks via the blocks API instead of the markdown.
 - **Code fences are preserved verbatim**, deliberately — real code samples keep their indentation. The consequence is that a Notion `html` code block used as an embed (a Supercut or YouTube iframe, say) ships as a literal code box showing the HTML source. Use a linked poster frame instead; the [Blog to Newsletter Repurposing Skill](https://app.notion.com/p/8ffabc37db284e68bfe5de4b735b8012) covers the authoring side.
 - Mapping log lives in Zapier Table `01KNJN2MSBAJVXRME6M1Y65F5B` (Page ID → Buttondown Email ID), keyed on Page ID so re-runs refresh rather than duplicate.
+- **Confirmation comment.** On success the Zap posts a comment on the page it was triggered from — whether the email was created or updated, whether it is scheduled (with the Send Date) or left as a draft, and a link to it in Buttondown. Posted via raw `POST /v1/comments` on the `notion_wf` connection (verified 2026-08-16: the connection has both read- and insert-comment capability), the same route the rest of this Zap uses for Notion.
+  - **It threads.** Before posting, the Zap lists the page's comments and replies into the discussion it started last time, identified by the `Buttondown sync` marker that opens every such comment. An issue re-synced five times while being edited therefore collects one growing thread rather than five top-level comments. Notion's list endpoint only returns *unresolved* comments, so resolving the thread in Notion makes the next sync start a fresh one — the sensible behaviour, not a bug.
+  - **Best-effort, like the Tables log.** The email and the property write-back are the real work; a comment failure must not fail a run whose newsletter was pushed. The outcome is returned as `commentLog` (`created` / `replied` / `error` with the message), so a *persistent* failure is visible in run history rather than silent.
+  - Comments are posted as the **Zapier** integration user, so they show up as bot comments and can be deleted or resolved in Notion like any other.
