@@ -68,6 +68,25 @@ function plainText(rich: any): string {
   return (Array.isArray(rich) ? rich : []).map((t) => t?.plain_text ?? "").join("");
 }
 
+/**
+ * Format a Notion date property's `start` for human eyes, for the confirmation
+ * comment. Notion returns either "2026-08-18" or a full
+ * "2026-08-18T09:00:00.000+08:00", and the offset is the one the date was
+ * authored in — so the calendar date and clock time are already the local ones
+ * and can simply be sliced out. Deliberately no `Date`: reformatting through it
+ * would re-derive the same string via UTC, and the durable's determinism guard
+ * forbids `new Date(...)` outside a `ctx.step` anyway.
+ *
+ * Midnight is how a date-only Send Date arrives once a time zone is attached, so
+ * it reads as "no time set" and only the date is shown.
+ */
+function formatSendDate(raw: string): string {
+  const [date, time] = raw.split("T");
+  if (!time) return date;
+  const hhmm = time.slice(0, 5);
+  return hhmm === "00:00" ? date : `${date} at ${hhmm}`;
+}
+
 function mapButtondownStatus(status: unknown): string | null {
   const map: Record<string, string> = {
     draft: "Draft",
@@ -479,7 +498,7 @@ const workflow = defineDurable({
           ? "created a new Buttondown email"
           : "updated the Buttondown email";
       const scheduleLine = willSchedule
-        ? `Scheduled to send on ${page.sendDate}.`
+        ? `Scheduled to send on ${formatSendDate(String(page.sendDate))}.`
         : "Saved as a draft — no Send Date set.";
       const richText = [
         {
