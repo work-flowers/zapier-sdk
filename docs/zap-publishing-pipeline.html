@@ -1,4 +1,5 @@
 <!-- Source of the published artifact https://claude.ai/code/artifact/73932175-6494-45e0-a29a-eb39fee10334
+     Also served via GitHub Pages at https://work-flowers.github.io/zapier-sdk/zap-publishing-pipeline.html
      Edit here, then republish the artifact so the two stay in sync. -->
 <title>Zap Publishing Pipeline</title>
 <style>
@@ -463,7 +464,6 @@ table.rules td:first-child { white-space: nowrap; }
 }
 .verdict.go { color: var(--good); background: var(--good-soft); }
 .verdict.no { color: var(--ink-subtle); background: var(--code-bg); }
-.verdict.hand { color: var(--ochre); background: var(--ochre-soft); }
 
 /* ---------- refusal list ---------- */
 
@@ -786,11 +786,6 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
             <td><code>scripts/</code>, <code>docs/</code>, <code>.github/</code>, root files</td>
             <td><span class="verdict no">nothing</span></td>
             <td>Not Zap directories — skipped by the detector.</td>
-          </tr>
-          <tr>
-            <td><code>email-contact-page-zap/code-step.js</code></td>
-            <td><span class="verdict hand">manual flag</span></td>
-            <td>The one classic Code-step Zap. No durable publish command exists — the report tells you to update it in the Zapier UI. Never auto-published.</td>
           </tr>
         </tbody>
       </table>
