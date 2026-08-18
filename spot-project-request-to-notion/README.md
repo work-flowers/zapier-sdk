@@ -4,16 +4,16 @@ An **accepted project request** in the Zapier **Solution Partner Operations Tool
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ✅ Published and enabled. **Trigger swapped 2026-08-18** from `new_project_request` to `updated_project_request` ("Project Request Stage Change"), with the workflow gated to file **only at stage `Accepted`** — see [Why the trigger was swapped](#why-the-trigger-was-swapped). ⚠️ **Cutover pending:** the merge pipeline carries the *deployed* trigger forward, so the swap itself needs a stated out-of-band publish with `--trigger` after this change merges — see [Trigger](#trigger).
+**Status:** ✅ Published, enabled, **trigger swap live**. Swapped 2026-08-18 from `new_project_request` to `updated_project_request` ("Project Request Stage Change"), with the workflow gated to file **only at stage `Accepted`** — see [Why the trigger was swapped](#why-the-trigger-was-swapped). Cutover completed 2026-08-18T12:14Z via the out-of-band `--trigger` publish (version `01a014cb-165c-…`, `triggers[0]` verified `active` on the new trigger). It took two attempts: the PR #113 pipeline run was approved while the first cutover publish was in flight and republished the old trigger over it thirty seconds later — if a trigger ever needs swapping again, **let the pipeline run finish first**, then publish with `--trigger`.
 
 The original trigger fired three times (2026-08-06 Doecke Electrical, 2026-08-14 USA Bath, 2026-08-18 Yanolja Cloud Solution), each at stage `Pending` with identity withheld, and each skipped — see [The first run](#the-first-run) for why the skip was the correct behaviour and what it taught. What it could never do is fire *again* when a request was accepted, which is the whole point of the workflow; the Yanolja acceptance proved that and forced the swap. Yanolja itself was filed by a manual replay on 2026-08-18 (durable run `01a014b3-ea87-…` — Company `3c091b07-11ac-812c-…`, Contact `3c091b07-11ac-8140-…`, Deal `3c091b07-11ac-810b-…`).
 
 | | |
 | --- | --- |
 | Workflow | `019fb61c-c04e-7783-90ba-37a70bc3415c` ([editor](https://zapier.com/durables-editor/019fb61c-c04e-7783-90ba-37a70bc3415c)) |
-| Version | `019fd9ab-4fa4-7ca2-a306-55f26e9f72b0` (published 2026-08-07; superseded by the pending trigger-swap publish) |
+| Version | `01a014cb-165c-78ee-84c6-84ac5a875b4b` (published 2026-08-18, the cutover publish; supersedes the two raced versions `01a014c9-…` and `019fd9ab-…`) |
 | Visibility | **account-visible** (`is_private: false`, repo rule 8) |
-| Trigger | `App227952CLIAPI@1.5.0` / `updated_project_request` (deployed: still `new_project_request` until the cutover publish) |
+| Trigger | `App227952CLIAPI@1.5.0` / `updated_project_request`, `status: active`, `error: null` |
 | Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, keyed on the **bare request id**, one row per request across all its stage events |
 
 ## Why the trigger was swapped
@@ -169,7 +169,7 @@ flowchart TD
 
 The credential belongs on the **trigger**, not in `--connections`: like `zapier-partner-lead-status-to-notion`, the workflow code never calls the partner tool back. Only `notion_wf` is bound.
 
-### Cutover runbook for the trigger swap
+### Cutover runbook for the trigger swap (executed 2026-08-18 — kept for the next swap)
 
 The [`Publish Zaps` pipeline](../.github/workflows/publish-zaps.yml) reads the trigger from the **deployed version** and carries it forward, so merging this change republishes the new *code* under the **old** trigger. That intermediate state is safe — `new_project_request` only ever delivers Pending payloads, which the stage gate skips — but the swap itself needs one deliberate out-of-band publish (this is the sanctioned exception to the merge-pipeline rule; it bypasses the approval gate, so it is documented here and in the PR):
 
