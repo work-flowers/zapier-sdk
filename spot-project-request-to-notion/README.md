@@ -1,22 +1,28 @@
 # spot-project-request-to-notion
 
-A **new project request** in the Zapier **Solution Partner Operations Tool** (SPOT) — someone filling in the brief on the [partner directory](https://zapier.com/partnerdirectory/) listing — becomes a **Contact**, a **Company** and a **Deal** in the Notion CRM, upserted rather than duplicated, with the request's raw payload preserved on the Deal page.
+An **accepted project request** in the Zapier **Solution Partner Operations Tool** (SPOT) — an inbound brief from the [partner directory](https://zapier.com/partnerdirectory/) or a Zapier Sales match that Dennis has accepted in the portal — becomes a **Contact**, a **Company** and a **Deal** in the Notion CRM, upserted rather than duplicated, with the request's raw payload preserved on the Deal page.
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ✅ **Published and enabled, trigger `active`. It has now fired — once.** The first real project request arrived **2026-08-06T16:26:47** and the trigger picked it up **57 seconds later**, vindicating the decision to claim it early (a polling trigger banks its first poll as already-seen, so claiming after the cutover risked swallowing the first real request as backlog). The cutover itself landed on **2026-08-05**, not the ~08-03 originally assumed.
+**Status:** ✅ Published and enabled. **Trigger swapped 2026-08-18** from `new_project_request` to `updated_project_request` ("Project Request Stage Change"), with the workflow gated to file **only at stage `Accepted`** — see [Why the trigger was swapped](#why-the-trigger-was-swapped). ⚠️ **Cutover pending:** the merge pipeline carries the *deployed* trigger forward, so the swap itself needs a stated out-of-band publish with `--trigger` after this change merges — see [Trigger](#trigger).
 
-That run **skipped without writing anything**, and reading why is the most useful thing in this README — see [The first run](#the-first-run). The short version: SPOT withholds client identity until a request is accepted, and it does so with *prose in the field* rather than an empty field, which is a sharper trap than it sounds.
-
-The fixes that run exposed were published **2026-08-07** as version `019fd9ab-…`, which round-trips byte-identical to this directory (54,643 bytes, `md5 85df2c45…`).
+The original trigger fired three times (2026-08-06 Doecke Electrical, 2026-08-14 USA Bath, 2026-08-18 Yanolja Cloud Solution), each at stage `Pending` with identity withheld, and each skipped — see [The first run](#the-first-run) for why the skip was the correct behaviour and what it taught. What it could never do is fire *again* when a request was accepted, which is the whole point of the workflow; the Yanolja acceptance proved that and forced the swap. Yanolja itself was filed by a manual replay on 2026-08-18 (durable run `01a014b3-ea87-…` — Company `3c091b07-11ac-812c-…`, Contact `3c091b07-11ac-8140-…`, Deal `3c091b07-11ac-810b-…`).
 
 | | |
 | --- | --- |
 | Workflow | `019fb61c-c04e-7783-90ba-37a70bc3415c` ([editor](https://zapier.com/durables-editor/019fb61c-c04e-7783-90ba-37a70bc3415c)) |
-| Version | `019fd9ab-4fa4-7ca2-a306-55f26e9f72b0` (published 2026-08-07; supersedes `019fb620-…`) |
+| Version | `019fd9ab-4fa4-7ca2-a306-55f26e9f72b0` (published 2026-08-07; superseded by the pending trigger-swap publish) |
 | Visibility | **account-visible** (`is_private: false`, repo rule 8) |
-| Trigger | `App227952CLIAPI@1.5.0` / `new_project_request`, `status: active`, `error: null` |
-| Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, created with this publish |
+| Trigger | `App227952CLIAPI@1.5.0` / `updated_project_request` (deployed: still `new_project_request` until the cutover publish) |
+| Dedupe Table | `01KYV1R8BWAZ697HQ8P1QV80AF` — *SPOT Project Requests*, keyed on the **bare request id**, one row per request across all its stage events |
+
+## Why the trigger was swapped
+
+`new_project_request` dedupes on the **bare request id**, so it fires **exactly once per request — at creation, stage `Pending`, while SPOT still withholds the client's identity** behind sentinel prose ("Please accept or secure the lead to see the email."). Every one of its three runs skipped on the sentinel, correctly. When a request later changed stage — both older ones to `Declined`, Yanolja to `Accepted` **with the real email and names revealed** — the trigger stayed silent: the record changed but was not *created*. So the one event this workflow exists for, an acceptance carrying a fileable identity, could never reach it. (An earlier revision of this README claimed a later stage-change run could pick an unfiled request up; that was wrong.)
+
+`updated_project_request` dedupes on `<request id>_<lead_stage_modified_on>` — verified by the 2026-08-07 decline experiment and again by the Yanolja acceptance — so it fires **once per stage transition**, including the request's creation (its first stage event). The workflow now gates on stage: only `Accepted` files; `Pending`, `Declined`, `Expired`, `Secured`, `Lost`, `Abandoned` skip immediately (Declined/Expired create nothing in the CRM by decision of 2026-08-07 — see `zap.json`). Post-acceptance transitions are additionally caught by the request-id dedupe, so one request files at most once.
+
+This supersedes the two-workflow split proposed in [`two-trigger-design.md`](two-trigger-design.md): the question that blocked it — does an accepted payload actually carry the contact email? — was answered **yes** by the Yanolja acceptance, and with the full record delivered on every stage event, a second workflow buys nothing a stage gate doesn't. What the swap deliberately does *not* keep from that proposal is the Pending-request **alert** (the 24-hour acceptance fuse); if that's wanted, it's a separate, small addition.
 
 ## The first run
 
@@ -38,7 +44,7 @@ Request `02700000000002800hE`, stage `Pending`, run `019fd7e6-f307-…`:
 }
 ```
 
-Result: `{"skipped": true, "reason": "payload carried no usable email address"}`, `operations: []` — **no Notion write, no dedupe row**, so the request stays unfiled and a later stage-change run can still pick it up.
+Result: `{"skipped": true, "reason": "payload carried no usable email address"}`, `operations: []` — **no Notion write, no dedupe row**, so the request stays unfiled. (This section originally concluded "a later stage-change run can still pick it up" — **false** under `new_project_request`, which never re-fires; that gap is what the 2026-08-18 trigger swap closes.)
 
 Three things it taught us, all now fixed in `workflow.ts`:
 
@@ -130,7 +136,9 @@ It also sets a hard constraint the code honours: **nothing ever writes `Status` 
 
 ```mermaid
 flowchart TD
-    A["SPOT: New Project Request<br/>(polling trigger)"] --> B{"dedupe Table<br/>configured?"}
+    A["SPOT: Project Request Stage Change<br/>(polling trigger, one run<br/>per stage transition)"] --> A1{"stage =<br/>Accepted?"}
+    A1 -- "no (Pending / Declined /<br/>Expired / Secured / Lost /<br/>Abandoned)" --> A0(["skip — only an acceptance<br/>is filed"])
+    A1 -- yes --> B{"dedupe Table<br/>configured?"}
     B -- no --> B0(["refuse — dedupe store<br/>not configured"])
     B -- yes --> C{"usable email?"}
     C -- no --> C0(["skip — nothing to key a Contact on"])
@@ -157,9 +165,19 @@ flowchart TD
 
 ## Trigger
 
-`App227952CLIAPI@1.5.0` / `new_project_request` — **New Project Request**, "Triggers when a new project request is created for your partner account." A **polling** trigger with **no input fields** (`get_trigger_fields` returns an empty schema), authenticated by connection `02a5085e-1d27-853d-89b7-115a57fc4d32` ("work.flowers").
+`App227952CLIAPI@1.5.0` / `updated_project_request` — **Project Request Stage Change**, "Triggers when a project request stage changes." A **polling** trigger with **no input fields**, authenticated by connection `02a5085e-1d27-853d-89b7-115a57fc4d32` ("work.flowers"). It delivers the **full record** (not a delta) and dedupes on `<request id>_<lead_stage_modified_on>`, so it fires once per transition — a request's creation included, which is why nothing is lost versus the old `new_project_request` trigger it replaced on 2026-08-18.
 
 The credential belongs on the **trigger**, not in `--connections`: like `zapier-partner-lead-status-to-notion`, the workflow code never calls the partner tool back. Only `notion_wf` is bound.
+
+### Cutover runbook for the trigger swap
+
+The [`Publish Zaps` pipeline](../.github/workflows/publish-zaps.yml) reads the trigger from the **deployed version** and carries it forward, so merging this change republishes the new *code* under the **old** trigger. That intermediate state is safe — `new_project_request` only ever delivers Pending payloads, which the stage gate skips — but the swap itself needs one deliberate out-of-band publish (this is the sanctioned exception to the merge-pipeline rule; it bypasses the approval gate, so it is documented here and in the PR):
+
+1. `zapier-sdk --experimental list-workflow-drafts 019fb61c-c04e-7783-90ba-37a70bc3415c` — an open draft 409s a direct publish.
+2. `zapier-sdk --experimental publish-workflow-version 019fb61c-c04e-7783-90ba-37a70bc3415c '<source_files json>' --dependencies '<from zap.json>' --zapier-durable-version 0.10.1 --connections '{"notion_wf":"02b73654-15c8-85c3-b16a-07304d2beb17"}' --trigger '<the trigger object from zap.json, updated_project_request>'` — kebab-case flags.
+3. Verify `get-workflow` shows `triggers[0]` on `updated_project_request` and the Zap is still enabled; sync `current_version_id` in `zap.json` by hand.
+
+Claiming the new trigger banks its first poll as already-seen — the three historic stage events (including Yanolja's acceptance) will **not** replay. That backlog is already settled: Yanolja was filed manually on 2026-08-18; the two Declined requests create nothing by policy.
 
 ## What gets written
 
@@ -173,6 +191,7 @@ The credential belongs on the **trigger**, not in `--connections`: like `zapier-
 | `Country` (select) | the request, **mapped to alpha-2** | `United States` → `US`. Eight options only; an unmapped country is dropped, never minted |
 | `Industry` (select) | the request | **Exact option match only** — `Tech` does not become `Technology`, it becomes nothing |
 | `Account Owner Email Override` (email) | the request's **Zapier account email** | **On create only.** Makes the new company immediately registerable via the Notion `Register Lead` button, which feeds [`register-zapier-partner-lead`](../register-zapier-partner-lead/). An existing company's override is left alone — it may have been set deliberately, and the value is on the Deal page either way |
+| `Zapier Client Id` (rich_text) | the request's `client_id` | On create, and filled in on an **existing** company **only where empty** (a value already there was stamped by `register-zapier-partner-lead` and wins). Never observed non-empty yet (2026-08-18), but it's the join key [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) resolves companies by, so it's carried the moment SPOT supplies it. The request id itself is deliberately **not** written to the Company — a company can file many requests; it lives on the Deal (raw payload) and in the dedupe Table |
 
 **Contacts** (`21991b07-11ac-81a6-a894-000be4a09a67`) — found by email, else created:
 
@@ -276,7 +295,7 @@ To republish after a change, the CLI path in the sibling READMEs applies unchang
 ## Open questions
 
 - **Confirm the cutover actually happened.** From ~2026-08-03 requests should arrive via SPOT. Poll `new_project_request` after that date; if it is still empty while directory requests are still landing as PartnerPage emails, the cutover slipped and the trigger has nothing to claim.
-- **What are the request's stages?** `updated_project_request` ("Triggers when a project request stage changes") is the natural sibling — it would move the Deal's `Status` along the pipeline. It needs the stage vocabulary, unknowable until a real request exists. Out of scope here; the request Table already carries a `Stage` column for it. Note it would be the *only* thing allowed to write `Status` on an existing Deal, and it must not undo a human's `Declined`.
+- ~~**What are the request's stages?**~~ **Answered, and the trigger swap acted on it** (2026-08-18): Pending → Accepted/Declined → Expired (24h) → Secured/Lost/Abandoned. `updated_project_request` is now this workflow's own trigger, gated to file at `Accepted` only. Moving an existing Deal's `Status` along later transitions (Secured/Lost) remains deliberately unbuilt — nothing here writes `Status` on an existing Deal, so a human's `Declined` can't be undone.
 - **What does the classic Zap do that this does not?** `Add Zapier Directory Leads to Contacts DB` has not been read (see above — classic Zaps are invisible to this repo's tooling). Before turning it off, someone should open it in the Zapier UI and check nothing it does is missing here.
 - **Should the ~14 historical PartnerPage requests be backfilled?** They are all still in Gmail under `Zapier Partner Leads`, and the broken Zap means some number of them never reached the CRM. Not attempted: they are stale, and a backfill would need an email parser this workflow does not have now that the intake path is SPOT.
 

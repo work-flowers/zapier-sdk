@@ -1,6 +1,16 @@
 # Two-trigger design: `new_project_request` + `updated_project_request`
 
-Status: **proposal, nothing built.** Written 2026-08-06 after `spot-project-request-to-notion`
+Status: **superseded, 2026-08-18 — kept as the evidence record.** Question 4 below (does an
+accepted payload carry the real contact email?) was answered **YES** by the Yanolja Cloud
+Solution acceptance (`02700000000002X00hE`, accepted 2026-08-18T11:40: `email`, `first_name`
+and `last_name` all resolved to real values). With that settled — and with
+`updated_project_request` confirmed to deliver the **full record** on every stage event —
+workflow B buys nothing a stage gate doesn't, so the adopted design is simpler than proposed
+here: `spot-project-request-to-notion` itself swapped its trigger to `updated_project_request`
+and files **only at stage `Accepted`** (see its README → "Why the trigger was swapped").
+The one thing this proposal had that the adopted design does not is the **Pending-request
+alert** (the 24-hour acceptance fuse); that remains unbuilt and is worth its own small change
+if wanted. Original text follows, written 2026-08-06 after `spot-project-request-to-notion`
 sat at zero runs through the Partner Deal Exchange cutover.
 
 ## Why this exists

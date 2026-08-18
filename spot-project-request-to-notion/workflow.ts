@@ -505,6 +505,11 @@ interface RequestData {
   /** The Zapier account the requester wants worked on — distinct from their
    *  contact address, and the input `submit_client` needs. */
   zapierAccountEmail: string;
+  /** SPOT's client id (`028…`), when it supplies one — the same namespace as
+   *  the Companies `Zapier Client Id` property and the join key
+   *  `zapier-partner-lead-status-to-notion` resolves companies by. Empty on
+   *  every payload observed so far (2026-08-18). */
+  clientId: string;
   stage: string;
   createdOn: string;
   /** The payload as delivered, for the page body and the Table row. */
@@ -530,8 +535,14 @@ function extractRequest(raw: unknown): RequestData {
     firstRealString(r.website, r.company_website, r.domain, r.url) ?? "";
 
   return {
+    // NOT `r.id` first: the `updated_project_request` trigger's `id` is its
+    // dedupe key, `<request id>_<modified-on timestamp>` — one per stage
+    // CHANGE, not per request. Keying the dedupe Table on it would make every
+    // stage event look like a fresh request and mint duplicate Deals. The
+    // suffix-strip fallback keeps a hand-fed payload with only `id` safe too.
     requestId:
-      firstString(r.id, r.project_request_id, r.request_id, r.project_id) ?? "",
+      firstString(r.project_request_id, r.request_id, r.project_id) ??
+      (firstString(r.id) ?? "").split("_")[0]!,
     email: cleanEmail(
       firstRealString(r.email, r.contact_email, r.requester_email),
     ),
@@ -597,6 +608,7 @@ function extractRequest(raw: unknown): RequestData {
     zapierAccountEmail: cleanEmail(
       firstRealString(r.zapier_account_email, r.account_email),
     ),
+    clientId: firstRealString(r.client_id) ?? "",
     // SPOT: `lead_stage` — Pending / Accepted / Declined / Expired /
     // Secured / Lost / Abandoned.
     stage: firstString(r.lead_stage, r.stage, r.status) ?? "",
@@ -917,6 +929,13 @@ async function resolveCompany(
   if (req.zapierAccountEmail) {
     props["properties|||Account Owner Email Override|||email"] =
       req.zapierAccountEmail;
+  }
+  // The SPOT client id, when the payload carries one, is the join key the
+  // referral-lead pipeline resolves companies by (`zapier-partner-lead-
+  // status-to-notion`, path 2). Never observed non-empty yet, but free to
+  // carry when it arrives.
+  if (req.clientId) {
+    props["properties|||Zapier Client Id|||rich_text"] = req.clientId;
   }
 
   const created = await createItemWithTemplate(
@@ -1243,6 +1262,26 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         `(${req.companyName || "no company"})`,
     );
 
+    // Only an acceptance is filed. The trigger (`updated_project_request`)
+    // fires on EVERY stage change — Pending (identity still withheld behind
+    // sentinel prose), Declined, Expired, Secured, Lost, Abandoned — and
+    // `Accepted` is the one moment SPOT reveals the client's identity and the
+    // enquiry is ours to pursue. A declined-in-SPOT request leaves no CRM
+    // trace by design: declining happens in the directory, and nothing worth
+    // a Deal ever existed. Stage changes AFTER acceptance are also caught by
+    // the request-id dedupe below; this gate just makes the skip explicit and
+    // free. A payload with no stage at all (a hand-fed replay of an older
+    // shape) is let through — the email gate below still applies.
+    if (req.stage && req.stage.toLowerCase() !== "accepted") {
+      console.log(`Stage is ${req.stage} — not an acceptance, nothing to file`);
+      return {
+        skipped: true,
+        reason: `stage is ${req.stage} — only Accepted requests are filed`,
+        requestId: req.requestId,
+        raw: req.raw,
+      };
+    }
+
     // The dedupe store is what makes this workflow safe to retry. Without it,
     // refuse — see REQUEST_TABLE.
     if (!REQUEST_TABLE) {
@@ -1347,6 +1386,35 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       domain,
       knownContactPageId,
     );
+
+    // A client id on the payload links the company into the referral-lead
+    // pipeline (`Zapier Client Id` is how `zapier-partner-lead-status-to-notion`
+    // resolves a company). A created company gets it in its create props; an
+    // EXISTING company is only filled in where the property is empty — a value
+    // already there was stamped by `register-zapier-partner-lead` and wins.
+    // Best-effort: a failure here must not cost the Deal, so it logs and moves on.
+    if (req.clientId && company.pageId && company.via !== "created") {
+      await ctx.step("fill-company-client-id", async () => {
+        try {
+          const page = await readPage(company.pageId!);
+          const existing = plainText(
+            page?.properties?.["Zapier Client Id"]?.rich_text,
+          );
+          if (existing) return `kept existing ${existing}`;
+          await patchPage(company.pageId!, {
+            "Zapier Client Id": {
+              rich_text: [{ text: { content: req.clientId } }],
+            },
+          });
+          return `stamped ${req.clientId}`;
+        } catch (err) {
+          console.log(
+            `Zapier Client Id fill-in failed: ${String((err as Error)?.message ?? err)}`,
+          );
+          return "failed";
+        }
+      });
+    }
 
     // 3. Contact — found or created, and linked to the company.
     const contact = await resolveContact(ctx, req, company.pageId);
