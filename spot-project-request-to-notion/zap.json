@@ -7,12 +7,12 @@
   "is_private": false,
   "trigger": {
     "selected_api": "App227952CLIAPI@1.5.0",
-    "action": "new_project_request",
+    "action": "updated_project_request",
     "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
     "params": {},
     "status": "active",
     "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger — the workflow code never calls the partner tool, so it is not in --connections.",
-    "trigger_note": "Polling trigger, one run per new project request. Claimed 2026-07-31, DELIBERATELY ahead of Zapier's cutover of lead delivery onto SPOT — a polling trigger banks its first poll after being claimed as already-seen rather than firing it, so claiming after the cutover risked swallowing the first real request as backlog. VINDICATED: the cutover actually landed 2026-08-05 (not the ~08-03 assumed here), the first real request arrived 2026-08-06T16:26:47, and the trigger caught it 57 seconds later. Between claim and that request it sat at zero runs because SPOT genuinely held no project requests — verified repeatedly via find_project_request, which returned an empty list every time until 2026-08-06."
+    "trigger_note": "Polling trigger, one run per STAGE CHANGE (dedupe id is <project_request_id>_<lead_stage_modified_on>, so it re-fires per transition — verified by the 2026-08-07 decline experiment and the 2026-08-18 Yanolja acceptance). Swapped from new_project_request 2026-08-18 after that request proved the old trigger fires exactly once per request, at Pending, while identity is still sentinel-withheld — so an acceptance could never be filed automatically (3/3 requests skipped, 0 re-fires across 3 later stage changes). A request's creation is its first stage event, so new Pending requests still produce a run (which the code skips at the stage gate). CUTOVER: the merge pipeline carries the DEPLOYED trigger forward, so this swap needs a stated out-of-band publish with --trigger after the PR merges; claiming banks the first poll as already-seen, which is fine (the backlog is already handled — Yanolja was filed by manual replay 2026-08-18)."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
@@ -35,12 +35,12 @@
   "partner_app": {
     "app_key": "App227952CLIAPI",
     "app_version": "1.5.0",
-    "trigger": "read/new_project_request",
-    "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and updated_project_request (unclaimed — see stage_change_trigger; it is the basis of the two-workflow split in two-trigger-design.md). Also exposes a find_project_request SEARCH action: filter by id or email, or leave both blank to return every project request. That call is the cheapest way to see the account's real state and answered why this Zap sat at zero runs."
+    "trigger": "read/updated_project_request",
+    "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and new_project_request (this Zap's ORIGINAL trigger, abandoned 2026-08-18 — it fires once per request at Pending, before identity is revealed, and never again; see stage_change_trigger). Also exposes a find_project_request SEARCH action: filter by id or email, or leave both blank to return every project request. That call is the cheapest way to see the account's real state and answered why this Zap sat at zero runs."
   },
   "created_at": "2026-07-31T02:59:25.394Z",
   "version_created_at": "2026-08-07T00:41:50.890Z",
-  "description": "New Zapier Solution Partner project request -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
+  "description": "Zapier Solution Partner project request ACCEPTED (stage-change trigger, gated to Accepted — Pending arrives identity-withheld, Declined/Expired are deliberately not filed) -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
   "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three. FLAG NAMING (2026-08-07, CLI 0.71.1): publishing with `--zapier_durable_version` emits 'DEPRECATION WARNING - `zapier_durable_version` is deprecated and may be removed in a future release'. That is a RENAME, not a removal of version pinning — the canonical CLI flag is kebab-case `--zapier-durable-version` (likewise `--app-versions`), and the MCP publish tool takes camelCase `zapierDurableVersion`. Use those spellings and the warning goes away. The vendored workflow skills documented the snake_case forms until 2026-08-07, which is why a publish here went out with a deprecated flag; `npx skills update` on the bundle moved them to sdk_cli_min 0.67.4 / sdk_cli_validated 0.67.5 and the kebab-case spellings.",
   "first_run": {
     "run_id": "019fd7e6-f307-7c32-bd2d-0f55396f11ef",
@@ -84,19 +84,24 @@
       "This request came from `source: \"Zapier Sales\"` with `type: \"match\"` — an internal sales referral competing against other partners, NOT a directory lead. The PartnerPage-derived candidate spellings are therefore still worth keeping for a directory-sourced request."
     ],
     "still_unproven": [
-      "Whether an ACCEPTED payload resolves the email sentinel to a real address. THE one open question blocking workflow B — declining did not resolve it, consistent with 'accept or secure'. If it never resolves, the Contact must come from the client-introduction email to leads@work.flowers and B becomes a state-tracker rather than a CRM writer.",
-      "Pending -> ACCEPTED specifically. The decline experiment proved updated_project_request tracks Pending -> Declined; Accepted is assumed identical (same field, same mechanism) but unobserved.",
+      "ANSWERED 2026-08-18 (Yanolja acceptance): an ACCEPTED payload DOES resolve the sentinels to the real email and names. See accepted_request_2026_08_18.",
+      "ANSWERED 2026-08-18: Pending -> Accepted advances updated_project_request's composite id exactly like Pending -> Declined did (02700000000002X00hE_2026-08-18T11:40:21).",
       "Keys absent from any real payload and so still guessed: phone_number, job_title, project_name, timeline, zapier_account_email. The last matters — register-zapier-partner-lead needs it — and SPOT may simply not carry it.",
       "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). No run has yet written to Notion, so they remain unexercised."
     ]
   },
+  "accepted_request_2026_08_18": {
+    "request_id": "02700000000002X00hE",
+    "company": "Yanolja Cloud Solution",
+    "what_happened": "Request arrived 09:50 UTC (Pending, sentinels) — run 01a01448-… fired in ~1 min and correctly skipped. Dennis accepted at 11:40 UTC; SPOT revealed the REAL identity (anisur@yanoljacloudsolution.com, Anis Rahaman) — answering the design doc's blocking question 4 with YES — but new_project_request never re-fired, confirming its dedupe is the bare request id. Filed by MANUAL REPLAY (trigger-workflow --input with the post-acceptance payload): durable run 01a014b3-ea87-7bb9-a9c8-68145064095a created Company 3c091b07-11ac-812c-…, Contact 3c091b07-11ac-8140-…, Deal 3c091b07-11ac-810b-…, plus the dedupe Table row. This event is what motivated the trigger swap and the Accepted stage gate."
+  },
   "stage_change_trigger": {
     "action": "updated_project_request",
-    "status": "NOT claimed — no workflow subscribes to it yet. Everything below was observed by polling it as a read action.",
+    "status": "CLAIMED by this workflow as of the 2026-08-18 trigger swap (see trigger above). This block predates the swap; kept because its observations are the evidence base. The two-workflow split it anticipated (two-trigger-design.md) was superseded by the swap + an Accepted-only stage gate in this workflow.",
     "observed": "2026-08-07T00:49:43, when request 02700000000002800hE was declined in the portal as a deliberate test.",
     "delivers": "The FULL record — every field new_project_request sends — plus `lead_stage_modified_on`. Not a delta.",
     "id_is_composite": "`id` is `<project_request_id>_<lead_stage_modified_on>`, e.g. 02700000000002800hE_2026-08-07T00:49:43, and it ADVANCED with the stage change (was ..._2026-08-06T16:26:47 at Pending). Same shape referral_lead_status_change uses. A polling trigger dedupes on `id`, so a new id is a new item is a run — which is the evidence that this trigger fires per transition.",
-    "WARNING_extractRequest": "extractRequest reads `firstString(r.id, r.project_request_id, ...)`. On new_project_request `r.id` is the plain request id and that order is CORRECT. On updated_project_request `r.id` is the COMPOSITE — so a workflow B reusing this function unchanged would key dedupe on the composite, never match the requests Table's `Request Id` column, and mint a duplicate Deal per stage change. B must read `project_request_id` first and use `id`/`lead_stage_modified_on` as the transition key. Do NOT change this in workflow A: the order is right there, and editing it would re-diverge the repo from deployed version 019fd9ab for no benefit.",
+    "WARNING_extractRequest": "RESOLVED by the 2026-08-18 swap: on updated_project_request `r.id` is the COMPOSITE <request id>_<timestamp>, so keying dedupe on it would mint a duplicate Deal per stage change. extractRequest now reads `project_request_id` FIRST and only falls back to `r.id` with its `_` suffix stripped.",
     "declining_reveals_nothing": "After Declined, email/first_name/last_name were STILL the sentinel sentences — consistent with 'accept or secure the lead'. So a Declined transition carries nothing to build a Contact from.",
     "record_survives_decline": "find_project_request still returns the declined record, so declined requests stay queryable and win-rate data is available from the API rather than only from email.",
     "policy": "DECIDED (Dennis, 2026-08-07): a declined or expired request creates NOTHING in the CRM — the records would be largely useless. A Table row is still written so the decline is countable.",
