@@ -4,20 +4,16 @@
 #   1. detect  — reports which deployed workflows the PR affects (a comment on
 #                the PR + the run Step Summary). No credentials, no side effects.
 #   2. publish — republishes each affected deployment to Zapier and syncs the new
-#                current_version_id back into zap.json (repo rule 4). This job is
-#                bound to the `production` GitHub Environment, so it PAUSES for a
-#                required-reviewer approval before it touches Zapier.
+#                current_version_id back into zap.json (repo rule 4). Merging the
+#                PR is the approval: this job runs automatically on merge, with
+#                no separate environment gate. (There used to be a `production`
+#                environment with a required-reviewer rule here; it was removed
+#                2026-08-18 as redundant with the deliberate act of merging.)
 #
-# ┌─ ONE-TIME SETUP (required for the gate to actually gate) ───────────────────┐
-# │ Settings → Environments → New environment → name it exactly `production`,   │
-# │ then add the protection rule "Required reviewers" (add yourself).           │
-# │ THIS RULE IS THE GATE. Without it the publish job does NOT pause — it       │
-# │ publishes automatically on merge.                                           │
-# │                                                                             │
+# ┌─ SETUP NOTES ───────────────────────────────────────────────────────────────┐
 # │ Secrets: the existing repository secrets ZAPIER_CLIENT_ID /                 │
 # │ ZAPIER_CLIENT_SECRET are read as-is here — leave them as repo secrets so    │
-# │ the verify-zapier-credentials workflow keeps working. (Optional hardening:  │
-# │ also add them as `production` environment secrets for tighter scoping.)     │
+# │ the verify-zapier-credentials workflow keeps working.                       │
 # │                                                                             │
 # │ Also: allow the Actions bot to push the zap.json sync-back to `main`. If    │
 # │ `main` is protected, add an exception for github-actions[bot], or the       │
@@ -90,12 +86,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: gh pr comment "$PR_NUMBER" --body-file report.md
 
-  # ── 2. Publish (gated on the `production` environment) ───────────────────────
+  # ── 2. Publish (runs automatically — merging the PR is the approval) ─────────
   publish:
     needs: detect
     if: needs.detect.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
-    environment: production   # ← the approval gate lives on this environment
     permissions:
       contents: write         # to push the zap.json sync-back to main
     steps:

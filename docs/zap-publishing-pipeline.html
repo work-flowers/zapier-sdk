@@ -642,15 +642,15 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <h1>Zap Publishing Pipeline</h1>
     <p class="lede">
       Merge a PR into <code>main</code> and the affected Zaps republish to Zapier —
-      with exactly <strong>one human click</strong> in between. Stop publishing Zaps by hand. Like an animal.
+      <strong>merging is the approval</strong>. Stop publishing Zaps by hand. Like an animal.
     </p>
     <div class="tldr">
       <span class="tag">TL;DR</span>
       <p>Every merged PR is scanned for real source changes to deployed durables. If there are any,
-      a publish job pauses on the <code>production</code> environment until someone approves it,
-      then republishes each affected deployment exactly as it runs today
+      a publish job republishes each affected deployment exactly as it runs today
       and commits the new <code>current_version_id</code> straight
-      back to <code>main</code>. The repo always matches what's deployed.</p>
+      back to <code>main</code>. The deliberate act of merging the PR is the human sign-off —
+      there is no second approval step. The repo always matches what's deployed.</p>
     </div>
   </header>
 
@@ -700,7 +700,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
   </section>
 
   <!-- ================= PIPELINE DIAGRAM ================= -->
-  <div class="pipeline" role="img" aria-label="Five-stage pipeline: merge, detect, gate, publish, sync-back. The gate stage pauses for human approval.">
+  <div class="pipeline" role="img" aria-label="Four-stage pipeline: merge, detect, publish, sync-back. Merging the PR is the approval; every stage after it runs automatically.">
     <p class="pipe-title">
       <span>merge &rarr; publish, end to end</span>
       <span class="file">.github/workflows/publish-zaps.yml</span>
@@ -709,37 +709,29 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       <div class="stage">
         <span class="num">1</span>
         <span class="name">merge</span>
-        <span class="desc">A PR lands on <span class="m">main</span>. Every merge fires the workflow — no path filter.</span>
+        <span class="desc">A PR lands on <span class="m">main</span>. Every merge fires the workflow — no path filter. <strong>This is the approval.</strong></span>
       </div>
       <div class="arrow" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 11h12m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="stage">
         <span class="num">2</span>
         <span class="name">detect</span>
-        <span class="desc">Ungated, no secrets. Lists the PR's files, classifies them, reports on the PR + Step Summary.</span>
-      </div>
-      <div class="arrow" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 11h12m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-      <div class="stage gate">
-        <span class="badge-pause">&#10074;&#10074; pauses</span>
-        <span class="num">3</span>
-        <span class="name">gate</span>
-        <span class="desc">The <span class="m">production</span> environment's required-reviewer rule holds the job for your one-click approval.</span>
+        <span class="desc">No secrets. Lists the PR's files, classifies them, reports on the PR + Step Summary.</span>
       </div>
       <div class="arrow" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 11h12m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="stage">
-        <span class="num">4</span>
+        <span class="num">3</span>
         <span class="name">publish</span>
         <span class="desc">Fetches each deployment's live metadata and republishes carrying it all forward. Refuses on anything ambiguous.</span>
       </div>
       <div class="arrow" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 11h12m0 0-5-5m5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="stage">
-        <span class="num">5</span>
+        <span class="num">4</span>
         <span class="name">sync-back</span>
         <span class="desc">The new <span class="m">current_version_id</span> is committed to <span class="m">main</span> as <span class="m">[skip ci]</span>. One commit, no second PR.</span>
       </div>
     </div>
     <div class="pipe-foot">
-      <span class="key"><span class="swatch s-run"></span> runs automatically</span>
-      <span class="key"><span class="swatch s-gate"></span> waits for a human</span>
+      <span class="key"><span class="swatch s-run"></span> runs automatically after merge</span>
       <span class="key">two quick merges can't race — publishes are serialised (<span class="m">concurrency: publish-zaps</span>)</span>
     </div>
   </div>
@@ -793,30 +785,21 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <p>
       The job posts the full report as a PR comment and a run Step Summary, and outputs a single
       boolean, <code>has_changes</code>. If nothing needs republishing, the pipeline ends here —
-      quietly, with no approval request.
-    </p>
-  </section>
-
-  <!-- ================= GATE ================= -->
-  <section id="gate">
-    <p class="kicker">stage 3 &middot; the production environment</p>
-    <h2>The Approval Gate</h2>
-    <p>
-      The <code>publish</code> job runs only when <code>has_changes == 'true'</code>, and it is
-      bound to the <code>production</code> GitHub Environment. That environment's
-      <strong>Required reviewers</strong> rule <em>is</em> the gate: the job pauses before its
-      first step, and nothing reaches Zapier until a reviewer clicks approve. You review the
-      detect report on the PR, click once, and walk away.
+      quietly.
     </p>
     <p>
-      Worth knowing: the rule is configuration, not code. Without it, the job would publish
-      automatically on merge — the workflow file says so itself, in a box, at the top.
+      <strong>Merging is the approval.</strong> The <code>publish</code> job runs automatically
+      when <code>has_changes == 'true'</code> — there is no separate sign-off after merge. The
+      pipeline originally paused on a <code>production</code> GitHub Environment with a
+      required-reviewer rule, but that second click was redundant with the deliberate act of
+      merging the PR, so it was removed on 2026-08-18. The consequence to internalise: review
+      happens <em>on the PR</em>, and a merge of Zap source is a production deploy.
     </p>
   </section>
 
   <!-- ================= PUBLISH ================= -->
   <section id="publish">
-    <p class="kicker">stage 4 &middot; scripts/publish-changed-zaps.mjs --execute</p>
+    <p class="kicker">stage 3 &middot; scripts/publish-changed-zaps.mjs --execute</p>
     <h2>The Publisher</h2>
     <p>
       For each affected deployment, the publisher mirrors the <code>workflows-modify</code>
@@ -843,7 +826,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
 
   <!-- ================= SYNC-BACK ================= -->
   <section id="syncback">
-    <p class="kicker">stage 5 &middot; repo rule 4</p>
+    <p class="kicker">stage 4 &middot; repo rule 4</p>
     <h2>The Sync-Back</h2>
     <p>
       After each successful publish, the script rewrites <strong>only</strong> the
@@ -902,8 +885,8 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <h2>The Safety Guarantees</h2>
     <div class="guarantees">
       <div class="guarantee accent">
-        <h3>A human approves every publish</h3>
-        <p>The <code>production</code> environment's required-reviewer rule pauses the job before anything reaches Zapier. Detection runs first, ungated, so you approve with the report in front of you.</p>
+        <h3>A human approves every publish — by merging</h3>
+        <p>Nothing publishes without a PR being deliberately merged into <code>main</code>. That merge is the approval; there is no second gate after it (the former <code>production</code>-environment required-reviewer pause was removed 2026-08-18 as redundant).</p>
       </div>
       <div class="guarantee">
         <h3>Deployed metadata is fetched, never assumed</h3>
@@ -925,8 +908,9 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <div class="proof">
       <span class="check">&#10003; verified end-to-end</span>
       <p>The first real publish through the pipeline was <code>register-zapier-partner-lead</code> —
-      a webhook-trigger durable. The gate paused, the run was approved, the Zap published with its
-      trigger preserved, and the sync-back landed as commit <code>d0405c5</code> (PR&nbsp;#94).</p>
+      a webhook-trigger durable. The (since-removed) approval gate paused, the run was approved, the
+      Zap published with its trigger preserved, and the sync-back landed as commit
+      <code>d0405c5</code> (PR&nbsp;#94).</p>
     </div>
   </section>
 
@@ -939,7 +923,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       <code>create-client-credentials</code>), stored as the repository secrets
       <code>ZAPIER_CLIENT_ID</code> / <code>ZAPIER_CLIENT_SECRET</code> and passed to the CLI via
       <code>--credentials-client-id</code> / <code>--credentials-client-secret</code>. Only the
-      gated publish job ever sees them — the detect job runs with no secrets at all.
+      publish job ever sees them — the detect job runs with no secrets at all.
     </p>
     <p>
       To check the credentials without publishing anything, run the
@@ -957,7 +941,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <div class="files">
       <div class="file-row">
         <span class="path">.github/workflows/publish-zaps.yml</span>
-        <span class="what">The two-job workflow: <code>detect</code> (ungated report) and <code>publish</code> (gated on <code>production</code>).</span>
+        <span class="what">The two-job workflow: <code>detect</code> (secret-free report) and <code>publish</code> (runs automatically on merge).</span>
       </div>
       <div class="file-row">
         <span class="path">scripts/detect-changed-zaps.mjs</span>
