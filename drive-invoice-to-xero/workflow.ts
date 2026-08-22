@@ -2167,39 +2167,75 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           : "NoTax";
     const taxType = header.taxApplied ? TAX_TYPE_STANDARD : TAX_TYPE_NONE;
 
-    const bill = await ctx.step("create-xero-bill", async () =>
-      sdk.runAction({
-        appKey: XERO_APP_KEY,
-        actionType: "write",
-        actionKey: "new_bill",
-        connection: XERO_CONNECTION,
-        inputs: {
-          organization: XERO_ORGANIZATION,
-          // The RESOLVED contact's name, not the invoice's spelling of it —
-          // this is what stops Xero minting a near-duplicate contact.
-          contact_name: billContactName,
-          // Only offered when the contact wasn't resolved above. `new_bill`
-          // writes this onto the contact, and an existing contact's address
-          // must not be overwritten from an invoice.
-          email_address: resolution.tier === "matched" ? "" : (header.vendorEmail ?? ""),
-          status: BILL_STATUS,
-          date: header.invoiceDate,
-          due_date: header.dueDate,
-          currency: header.currency,
-          number: header.invoiceNumber ?? "",
-          attachment: file.fileRef,
-          line_items: lines.map((l) => ({
-            line_description: l.description || header.vendor,
-            line_quantity: l.quantity,
-            line_unit_amount: l.unitPrice,
-            line_items_type: effectiveBasis,
-            line_tax_type: taxType,
-          })),
-        },
-      }),
-    );
+    const bill = await ctx.step("create-xero-bill", async () => {
+      try {
+        const result = await sdk.runAction({
+          appKey: XERO_APP_KEY,
+          actionType: "write",
+          actionKey: "new_bill",
+          connection: XERO_CONNECTION,
+          inputs: {
+            organization: XERO_ORGANIZATION,
+            // The RESOLVED contact's name, not the invoice's spelling of it —
+            // this is what stops Xero minting a near-duplicate contact.
+            contact_name: billContactName,
+            // Only offered when the contact wasn't resolved above. `new_bill`
+            // writes this onto the contact, and an existing contact's address
+            // must not be overwritten from an invoice.
+            email_address: resolution.tier === "matched" ? "" : (header.vendorEmail ?? ""),
+            status: BILL_STATUS,
+            date: header.invoiceDate,
+            due_date: header.dueDate,
+            currency: header.currency,
+            number: header.invoiceNumber ?? "",
+            attachment: file.fileRef,
+            line_items: lines.map((l) => ({
+              line_description: l.description || header.vendor,
+              line_quantity: l.quantity,
+              line_unit_amount: l.unitPrice,
+              line_items_type: effectiveBasis,
+              line_tax_type: taxType,
+            })),
+          },
+        });
+        return { ok: true as const, result };
+      } catch (err) {
+        // Xero rejects a bill whose currency the organisation isn't subscribed
+        // to ("Organisation is not subscribed to currency INR"). This is
+        // DETERMINISTIC — the same payload fails identically on every retry, so
+        // letting it throw burns all 5 attempts and dies as StepExhaustedError,
+        // filing a triage ticket for something no code change can fix. We don't
+        // raise bills in currencies the org doesn't hold, so catch this one case
+        // here and exit the step cleanly; any other failure still throws and
+        // retries as before.
+        const message = String((err as Error)?.message ?? err);
+        if (/not subscribed to currency/i.test(message)) {
+          return { ok: false as const, reason: "currency-not-supported" as const, message };
+        }
+        throw err;
+      }
+    });
 
-    const created = firstResult(bill);
+    // Currency the org can't hold: leave the (already renamed) file in Drive for
+    // a human, notify via the run log, and finish without an error.
+    if (!bill.ok) {
+      console.log(
+        `WARNING: not raising a draft bill for ${header.vendor}` +
+          `${header.invoiceNumber ? ` invoice ${header.invoiceNumber}` : ""} — the Xero organisation is not ` +
+          `subscribed to ${header.currency}, so this ${header.currency} invoice cannot become a bill. ` +
+          `The file has been renamed to "${newName}" and left in Drive; handle it manually. ` +
+          `(Xero: ${bill.message})`,
+      );
+      return {
+        ...base,
+        contact: contactReport,
+        vendorPaymentRow: vendorRow,
+        outcome: "currency-not-supported",
+        unsupportedCurrency: header.currency,
+      };
+    }
+
+    const created = firstResult(bill.result);
     console.log(
       `created draft bill for ${billContactName} ${header.currency} ${header.total} ` +
         `(${lines.length} line(s), ${lineSource}, ${effectiveBasis}/${taxType})`,
