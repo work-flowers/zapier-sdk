@@ -1,0 +1,77 @@
+# Check the workflow map is in sync
+#
+# `docs/map.html` carries a generated data block built from the repo's zap.json /
+# workflow sources merged with the curated semantics in `docs/map-overlay.json`
+# (see scripts/build-map.mjs). Nothing regenerates it automatically, and GitHub
+# Pages publishes whatever bytes are committed — so a PR that adds a Zap, changes
+# a Table relationship or re-statuses a deployment without running the generator
+# publishes a stale public map, silently.
+#
+# This is the gate for that. `--check` never writes; it fails when the repo, the
+# overlay and the committed map disagree (unregistered asset ids, a zap dir in no
+# cluster, a zap touching an asset with no curated edge, a stale data block).
+#
+# It runs on PULL REQUESTS, deliberately: `publish-zaps.yml` only fires on PR
+# *close*, which is after the map has already published. This has to block before
+# the merge, not report after it.
+#
+# No secrets, no network, no permissions beyond reading the repo — build-map.mjs
+# is pure filesystem reads. Safe to make a required status check.
+
+name: Check map
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # No path filter on purpose: drift can be introduced by adding a Zap
+      # directory, editing an overlay entry, or changing a zap.json's enabled
+      # state — filtering paths would let some of those through. The script
+      # takes a couple of seconds, so it just always runs.
+      - name: Verify docs/map.html matches the repo
+        id: check
+        run: |
+          set -o pipefail
+          node scripts/build-map.mjs --check 2>&1 | tee map-check.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## Workflow map"
+            echo ""
+            if [ "${{ steps.check.outcome }}" = "success" ]; then
+              echo "✅ \`docs/map.html\` matches the repo."
+            else
+              echo "❌ **The map is out of sync.** Regenerate it and commit the result:"
+              echo ""
+              echo '```bash'
+              echo "node scripts/build-map.mjs"
+              echo '```'
+              echo ""
+              echo "If the failure names an unregistered asset id, a zap in no cluster, or a"
+              echo "missing edge, that is curation rather than regeneration — update"
+              echo "\`docs/map-overlay.json\` first, then run the generator. See the \`zap-map\` skill."
+              echo ""
+              echo "<details><summary>Checker output</summary>"
+              echo ""
+              echo '```'
+              cat map-check.txt 2>/dev/null || echo "(no output captured)"
+              echo '```'
+              echo ""
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

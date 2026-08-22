@@ -6,13 +6,14 @@ Google Drive polling trigger (file or folder updated) → keep that object's
 Migration of the classic Zap **"Update Google Drive File Names in Zapier
 Table"**.
 
-- **Workflow ID:** _pending first publish_ (account-visible)
+- **Workflow ID:** `01a028c7-2386-7fa5-8f14-48ffb2bfdbb8` (account-visible)
 - **Trigger:** Google Drive `updated_file`, unscoped (no drive/folder filter,
   same as the classic Zap), deleted excluded — a polling trigger, no external
   URL to cut over. Durable triggers have no polling-interval field; the classic
   Zap ran at the account default too (`polling_interval_override: 0`).
 - **Table:** `01K5ZN0AGNDHS4C424XEDCWJZY` — rows are **created** by
   [`drive-files-to-zapier-table`](../drive-files-to-zapier-table/), never here.
+- **Editor:** <https://zapier.com/durables-editor/01a028c7-2386-7fa5-8f14-48ffb2bfdbb8>
 
 ## Workflow
 
@@ -56,15 +57,12 @@ field-verified against the live connection with `list-trigger-input-fields`
 
 ## Cutover
 
-**Pending.** The durable is published but **disabled**. To cut over:
-
-1. Disable the classic Zap **"Update Google Drive File Names in Zapier Table"**
-   in the Zapier UI.
-2. `zapier-sdk --experimental enable-workflow <workflow_id>`
-3. Record the date in `zap.json` under `cutover.classic_zap_disabled`.
-
-An overlap is harmless — both sides write the same name to the same row — but
-the classic Zap keeps generating error alerts until it is off.
+**Complete as of 2026-08-22.** The classic Zap **"Update Google Drive File
+Names in Zapier Table"** was disabled and this durable enabled the same day.
+The disable is **not machine-verifiable** — classic Zaps are exposed by
+neither the SDK CLI nor the MCP connector — so it rests on Dennis's
+confirmation. Verified on this side: `enabled: true` with the trigger `status:
+active` and no trigger error.
 
 ## Maintainer notes
 

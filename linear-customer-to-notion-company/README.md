@@ -7,12 +7,13 @@ mirrors the id into **[Table] Company IDs**.
 
 Migration of the classic Zap **"Update New Linear Customer in Zapier Table"**.
 
-- **Workflow ID:** _pending first publish_ (account-visible)
+- **Workflow ID:** `01a028c7-6f79-7734-bf5a-5c4877e83831` (account-visible)
 - **Trigger:** Linear `newCustomerInstant` — an instant trigger with no input
   fields. Zapier registers the Linear-side subscription itself; there is no
   external URL to hand out or repoint.
 - **Notion:** Companies data source `21991b07-11ac-80b0-b787-000b3d3995f6`;
   match on `Website` (url), write `Linear Customer ID` (rich_text).
+- **Editor:** <https://zapier.com/durables-editor/01a028c7-6f79-7734-bf5a-5c4877e83831>
 
 ## Workflow
 
@@ -93,18 +94,16 @@ do not remove it.
 
 ## Cutover
 
-**Pending.** The durable is published but **disabled**. This is the one
-migration where the overlap window is genuinely unsafe — the classic Zap and the
-durable resolve companies differently, so both running can create **duplicate
-Notion Companies**. To cut over:
+**Complete as of 2026-08-22.** The classic Zap **"Update New Linear Customer
+in Zapier Table"** was disabled and this durable enabled the same day. The
+disable is **not machine-verifiable** — classic Zaps are exposed by neither
+the SDK CLI nor the MCP connector — so it rests on Dennis's confirmation.
+Verified on this side: `enabled: true` with the trigger `status: active` and
+no trigger error.
 
-1. Disable the classic Zap **"Update New Linear Customer in Zapier Table"** in
-   the Zapier UI — **first**.
-2. `zapier-sdk --experimental enable-workflow <workflow_id>`
-3. Record the date in `zap.json` under `cutover.classic_zap_disabled`.
-
-If duplicates do appear, [`merge-duplicate-contacts`](../merge-duplicate-contacts/)
-is the Contacts backstop only — Companies duplicates need merging by hand.
+The classic Zap was disabled **first**, which mattered here: the two resolve
+companies differently, so an overlap could have created duplicate Notion
+Companies. That risk is now moot.
 
 ## Testing
 

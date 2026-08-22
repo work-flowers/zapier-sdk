@@ -3,14 +3,14 @@
   "workflow_id": "01a028c6-fd9e-7720-bb75-e2acd7ffc4dc",
   "current_version_id": "01a028c7-0af3-7b8c-94a4-1a967e2bd19b",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXQm4p69Og15gqEpzbe2tg",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
     "workflow_name": "company-ids-table-to-fivetran-sheet",
     "description": "Weekly full refresh of the 'Company IDs' tab of the Fivetran Sync Jobs spreadsheet from [Table] Company IDs. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/company-ids-table-to-fivetran-sheet",
     "enable_on_publish": false,
-    "enable_on_publish_note": "Parked at first publish so it cannot race the still-live classic Zap on the same tab. Cutover: disable the classic 'Refresh Company IDs Table in Fivetran Sheet', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+    "enable_on_publish_note": "Parked at first publish so it could not double-write alongside the then-live classic Zap. Cutover done 2026-08-22; kept as the record of why v1 shipped disabled. A republish carries the CURRENT enabled state forward (read off Zapier), so this no longer affects anything."
   },
   "trigger": {
     "selected_api": "ScheduleCLIAPI@1.7.0",
@@ -47,8 +47,8 @@
   "version_created_at": null,
   "replaces_classic_zap": "Refresh Company IDs Table in Fivetran Sheet",
   "cutover": {
-    "classic_zap_disabled": null,
-    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+    "classic_zap_disabled": "2026-08-22 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "status": "complete — this durable is the only thing rewriting the Fivetran sheet's 'Company IDs' tab. First scheduled run is the coming Sunday at 00:00 Asia/Singapore."
   },
   "behaviour_changes": [
     "The classic Zap deleted rows 2..(N+1) where N was the count of the NEW data, then appended. When the Table shrank it left orphan rows behind; when it grew it deleted rows it was about to rewrite anyway. The durable clears A2:L outright and appends the full set, so the tab always matches the Table.",

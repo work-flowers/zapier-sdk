@@ -20,6 +20,24 @@ folder, the one zap→zap HTTP edge), update the curated semantics in
 the overlay and the map disagree (new asset ids must be registered or explicitly
 ignored; every zap dir must sit in exactly one cluster).
 
+**That gate runs on every PR** ([`check-map.yml`](../../../.github/workflows/check-map.yml)),
+so forgetting to regenerate fails the PR rather than publishing a stale map. It
+does not regenerate for you — CI only refuses the drift; running the generator
+and committing the result is still yours to do.
+
+## A publish drifts the map, and the pipeline handles that itself
+
+The map's data block is derived from `zap.json` — including `workflow_id` and
+`enabled`. A **first publish** is the sharp case: a Zap awaiting creation has
+`workflow_id: null`, which the extractor reads as "not deployed", so when the
+publish pipeline fills the ids in, the committed map silently goes stale. The
+sync-back commit is `[skip ci]`, so the PR gate above never sees it.
+
+[`publish-zaps.yml`](../../../.github/workflows/publish-zaps.yml) therefore runs
+`build-map.mjs` and commits `docs/map.html` alongside the `zap.json` changes that
+caused the drift. **Don't hand-fix that kind of drift after a merge** — if `main`
+is stale following a publish, the pipeline step is what's broken.
+
 ## The map is published, so a merge to `main` is a deploy
 
 GitHub Pages serves `/docs` from `main` at
