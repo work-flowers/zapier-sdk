@@ -1,0 +1,59 @@
+{
+  "name": "linear-customer-to-notion-company",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "linear-customer-to-notion-company",
+    "description": "When a customer is created in Linear, match it to a Notion Companies record by domain (creating the company if there is none) and write the Linear customer id onto that page. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/linear-customer-to-notion-company",
+    "enable_on_publish": false,
+    "enable_on_publish_note": "Parked at first publish. This is the one migration where an overlap window is genuinely unsafe: the classic Zap and the durable resolve companies differently, so both running could create duplicate Notion Companies. Cutover: disable the classic 'Update New Linear Customer in Zapier Table' FIRST, then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+  },
+  "trigger": {
+    "selected_api": "LinearCLIAPI@4.15.0",
+    "action": "newCustomerInstant",
+    "authentication_id": "02657f6e-5360-8418-ba05-cb02eb2b95f5",
+    "params": {},
+    "status": "pending-first-publish",
+    "trigger_note": "Linear INSTANT trigger on new customers, same as the classic Zap. `list-trigger-input-fields` reports no input fields, so params is empty. Zapier registers the Linear-side subscription itself — there is no external URL to hand out or repoint."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connections_note": "Only Notion is used by a step. The Linear connection is bound to the TRIGGER (trigger.authentication_id): the workflow reads the customer off the trigger payload and never calls back into Linear.",
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "companies_database_id": "21991b07-11ac-806d-99e8-f151552c7d3c",
+    "api_version": "2026-03-11",
+    "note": "Match property: 'Website' (url). Write-back property: 'Linear Customer ID' (rich_text). Notion's url filter has no host-aware operator, so the `contains` query is a coarse prefilter and the hostname comparison is redone exactly in code — 'acme.com' must not match 'notacme.com'. Creation goes through NotionCLIAPI write create_database_item with template_mode 'default' (repo rule 5), falling back to a plain create when the data source has no default template."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT written by this workflow. The classic Zap wrote f7/f5/f9/f11 directly; the durable writes the Linear customer id to the Notion page and lets notion-companies-to-zapier-table mirror it into the Table, the same division of labour as notion-company-to-linear-customer."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-22",
+  "version_created_at": null,
+  "replaces_classic_zap": "Update New Linear Customer in Zapier Table",
+  "cutover": {
+    "classic_zap_disabled": null,
+    "status": "pending — durable is published but DISABLED. Disable the classic Zap BEFORE enabling this one; an overlap can create duplicate Notion Companies."
+  },
+  "behaviour_changes": [
+    "BUG FIX: the classic Zap's fallback path wrote {{1__domains}} into f7 'Linear Customer ID', so existing rows carry hostnames (e.g. tanninroad.com.au) where a Linear customer UUID belongs — the same defect already noted in notion-company-to-linear-customer's zap.json. The durable writes the real customer id. Existing bad values are left as they are; they are corrected the next time that customer fires.",
+    "The Table is no longer written directly. Writing the id to the Notion page and letting notion-companies-to-zapier-table mirror it keeps one owner for the mirror instead of two writers racing on the same row.",
+    "Domain matching is now exact on the hostname. The classic Zap used an `icontains` filter on f9 Domain, so a customer at 'acme.com' could match a stored 'notacme.com'.",
+    "A customer with no domain, and a domainless customer with no name, now skip with a reason instead of creating a Notion company with a blank Website that the next domainless customer would collide with.",
+    "The write is guarded on the id already present, so the echo of notion-company-to-linear-customer (which creates Linear customers FROM Notion companies and writes the id back) converges instead of the two workflows writing at each other."
+  ],
+  "related": {
+    "notion-company-to-linear-customer": "The opposite direction: Notion company linked to a deal -> create the Linear customer, write the id back to the page. Together the two form a loop that terminates on the 'already-linked' guard in this workflow."
+  },
+  "description": "Linear instant trigger (new customer) -> find or create the matching Notion Companies record by domain and write the Linear customer id onto it; the Companies mirror carries it into [Table] Company IDs."
+}

@@ -1,0 +1,68 @@
+{
+  "name": "notion-company-renamed-to-xero-harvest-drive",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "notion-company-renamed-to-xero-harvest-drive",
+    "description": "When a Notion Companies record is renamed, push the new name to its Xero contact, Harvest client, Google Drive client folder and its [Table] Company IDs row. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/notion-company-renamed-to-xero-harvest-drive",
+    "enable_on_publish": false,
+    "enable_on_publish_note": "Parked at first publish so it cannot double-rename alongside the still-live classic Zap. Cutover: disable the classic 'Sync Company Name Updates to Xero, Harvest, and Zapier Table', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+  },
+  "trigger": {
+    "selected_api": "NotionCLIAPI@2.39.1",
+    "action": "updated_data_source_item_properties",
+    "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "params": {
+      "datasource": "21991b07-11ac-80b0-b787-000b3d3995f6",
+      "watched_properties": ["title"]
+    },
+    "status": "pending-first-publish",
+    "trigger_note": "Notion POLLING trigger on Companies watching the title property (Company Name), same as the classic Zap. `title` is a real choice key for that data source — verified with `list-trigger-input-field-choices`. Durable triggers have no polling-interval field, so it polls at the account default — matching the classic Zap's polling_interval_override of 0. No external URL to cut over."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "harvest_wf": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362",
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f"
+  },
+  "notion": {
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "api_version": "2026-03-11",
+    "note": "Read (never written) off the Company page: 'Company Name' (title) plus the three id properties that decide which systems get the rename — 'Xero Contact ID', 'Harvest Client ID', 'Google Drive Folder ID' (all rich_text). The page is re-fetched rather than trusted from the trigger payload, because every downstream write is a rename."
+  },
+  "xero": {
+    "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+    "action": "XeroCLIAPI write `ae:515080` (Update Contact Name, custom action) with contactId / newName / xeroTenantId — the same custom action the classic Zap called. The classic pulled the tenant from a Zap component variable; it is a constant in the source here, matching the other Xero Zaps in this repo."
+  },
+  "harvest": {
+    "action": "HarvestCLIAPI write `ae:541562` (Update Client Name, custom action) with clientId / newName — the same custom action the classic Zap called."
+  },
+  "google_drive": {
+    "action": "GoogleDriveCLIAPI write `update_file_name` with rename_folder=true, matching the classic Zap (which also passed no `drive`; folder ids are global)."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — f5 Company Name updated here, keyed on f14 Notion Page ID. Owned by notion-companies-to-zapier-table, which mirrors the same value from Notion on its own webhook; this write just makes the rename land immediately, and is free (Tables API). 'Notion Last Edited' is deliberately NOT touched, so the mirror's staleness guard still works."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-22",
+  "version_created_at": null,
+  "replaces_classic_zap": "Sync Company Name Updates to Xero, Harvest, and Zapier Table",
+  "cutover": {
+    "classic_zap_disabled": null,
+    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+  },
+  "behaviour_changes": [
+    "The classic Zap read the four ids out of [Table] Company IDs and halted the whole run when the company had no row there. The durable reads them off the Notion page it already has to fetch — fresher, one fewer lookup, and no dependency on the mirror having caught up. Same precedent as xero-contact-from-notion-deal and deal-to-client-drive-folder.",
+    "The four writes run as independent steps under Promise.allSettled, preserving the classic Zap's four-parallel-paths behaviour: a Xero failure no longer stops the Harvest, Drive and Table renames. Any failure still fails the run loudly, with a message naming which targets succeeded and which did not.",
+    "A blank Company Name now skips instead of propagating: renaming a Xero contact, Harvest client or Drive folder to \"\" is destructive, and a blank title is a real state for a freshly created row."
+  ],
+  "description": "Notion Companies polling trigger (Company Name changed) -> rename that company in Xero, Harvest, Google Drive and [Table] Company IDs, each only where that system's id is recorded on the page."
+}

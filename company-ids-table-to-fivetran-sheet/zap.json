@@ -1,0 +1,60 @@
+{
+  "name": "company-ids-table-to-fivetran-sheet",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "company-ids-table-to-fivetran-sheet",
+    "description": "Weekly full refresh of the 'Company IDs' tab of the Fivetran Sync Jobs spreadsheet from [Table] Company IDs. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/company-ids-table-to-fivetran-sheet",
+    "enable_on_publish": false,
+    "enable_on_publish_note": "Parked at first publish so it cannot race the still-live classic Zap on the same tab. Cutover: disable the classic 'Refresh Company IDs Table in Fivetran Sheet', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+  },
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyWeek",
+    "authentication_id": null,
+    "params": {
+      "dow": ["0"],
+      "hod": "12:00 AM"
+    },
+    "status": "pending-first-publish",
+    "trigger_note": "Schedule by Zapier, Sundays at 12:00 AM, same as the classic Zap. `dow` is ARRAY and `hod` STRING per `list-trigger-input-fields`. No `timezone_override`: the account timezone is already Asia/Singapore, which is what the classic Zap ran on. No connection and no external URL."
+  },
+  "connections": {
+    "gsheets": "02e2fe3a-b556-83ad-8540-cbc73658773f"
+  },
+  "google_sheets": {
+    "spreadsheet_id": "1PzAG_XWwwmxFKo2LW9S8sJAnp8QVGndsnVhrSL8iQbo",
+    "spreadsheet_name": "Fivetran Sync Jobs",
+    "worksheet_gid": "288457717",
+    "worksheet_title": "Company IDs",
+    "drive": "0AHY_MJFjT0WtUk9PVA (Work.Flowers HQ shared drive)",
+    "note": "The workflow addresses the tab by TITLE, not gid: the Sheets values API only takes A1 notation. Renaming the tab breaks this workflow — and Fivetran's own config — so the title is a contract. Columns A-L must stay in the header order recorded in COLUMNS in workflow.ts; Fivetran keys on column A (tables_record_id).",
+    "api_route": "GoogleSheetsV2CLIAPI write `_zap_raw_request` (API Request (Beta)) against sheets.googleapis.com, so the calls keep the connection's auth and Zapier's audit trail. Two calls per run: values:clear on 'Company IDs'!A2:L, then values:append on 'Company IDs'!A1."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — READ ONLY here (every row whose f14 Notion Page ID is set, the classic Zap's filter). Owned by notion-companies-to-zapier-table. Table reads consume no Zapier tasks."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-22",
+  "version_created_at": null,
+  "replaces_classic_zap": "Refresh Company IDs Table in Fivetran Sheet",
+  "cutover": {
+    "classic_zap_disabled": null,
+    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+  },
+  "behaviour_changes": [
+    "The classic Zap deleted rows 2..(N+1) where N was the count of the NEW data, then appended. When the Table shrank it left orphan rows behind; when it grew it deleted rows it was about to rewrite anyway. The durable clears A2:L outright and appends the full set, so the tab always matches the Table.",
+    "`values:append` grows the grid when the Table has outgrown the sheet; the classic Zap's row-add path did not, and a plain values.update would reject the write.",
+    "An empty Table read now ABORTS the run instead of clearing the tab: the mirror is never legitimately empty, so a read failure must not blank Fivetran's source.",
+    "Reading the Table is free (Tables API), so the run costs 2 Zapier tasks instead of the classic Zap's 4 steps."
+  ],
+  "description": "Schedule trigger (Sundays 00:00 Asia/Singapore) -> clear and rewrite the 'Company IDs' tab of the Fivetran Sync Jobs spreadsheet from every row of [Table] Company IDs."
+}
