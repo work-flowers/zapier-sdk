@@ -1,7 +1,7 @@
 {
   "name": "drive-invoice-to-xero",
   "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
-  "current_version_id": "019fb0f6-64cf-78bd-8222-c052edaf9aea",
+  "current_version_id": "01a027dc-4ed1-7233-80ec-8de8f00a02df",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
   "enabled": true,
   "is_private": false,
