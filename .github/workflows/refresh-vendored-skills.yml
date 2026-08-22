@@ -8,7 +8,10 @@
 # stale unless somebody refreshes it — which is exactly what happened between
 # the manual refresh in b1c8574 (2026-08-10) and this workflow existing.
 #
-# This job runs `npx skills update` weekly and opens a PR when anything moved.
+# This job runs `npx skills update` daily and opens a PR when anything moved.
+# Daily doesn't mean a PR a day: `create-pull-request` reuses the fixed branch
+# `chore/refresh-vendored-skills`, so a run with new changes UPDATES the open PR
+# rather than opening another. A quiet day exits before that step entirely.
 #
 # ┌─ WHY A PR AND NOT AN AUTO-COMMIT ───────────────────────────────────────────┐
 # │ These skills are not passive docs — `workflows-modify` governs republishing │
@@ -25,9 +28,9 @@ name: Refresh vendored skills
 
 on:
   schedule:
-    # Mondays 02:00 UTC (10:00 Singapore) — a fresh diff waiting at the start of
-    # the week rather than mid-task.
-    - cron: "0 2 * * 1"
+    # Daily at 02:00 UTC (10:00 Singapore) — Zapier iterates on these skills
+    # fast, so a day is the most staleness worth carrying.
+    - cron: "0 2 * * *"
   workflow_dispatch: {}
 
 # One refresh at a time, so a manual run can't race the scheduled one into two
@@ -98,7 +101,7 @@ jobs:
           labels: skills
           delete-branch: true
           body: |
-            Automated weekly refresh of the vendored skills in `.agents/skills/`
+            Automated daily refresh of the vendored skills in `.agents/skills/`
             from their upstream source, `zapier/agent-skills`.
 
             **Read the diff before merging.** `workflows-modify` and
