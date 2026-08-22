@@ -3,14 +3,14 @@
   "workflow_id": "01a028c7-92f0-747d-939f-2b147b4b3e18",
   "current_version_id": "01a028c7-a046-7c04-afd9-7ce944d2a6a3",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXMyAdFXJubf-FKMAytR-w",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
     "workflow_name": "notion-company-renamed-to-xero-harvest-drive",
     "description": "When a Notion Companies record is renamed, push the new name to its Xero contact, Harvest client, Google Drive client folder and its [Table] Company IDs row. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/notion-company-renamed-to-xero-harvest-drive",
     "enable_on_publish": false,
-    "enable_on_publish_note": "Parked at first publish so it cannot double-rename alongside the still-live classic Zap. Cutover: disable the classic 'Sync Company Name Updates to Xero, Harvest, and Zapier Table', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+    "enable_on_publish_note": "Parked at first publish so it could not double-write alongside the then-live classic Zap. Cutover done 2026-08-22; kept as the record of why v1 shipped disabled. A republish carries the CURRENT enabled state forward (read off Zapier), so this no longer affects anything."
   },
   "trigger": {
     "selected_api": "NotionCLIAPI@2.39.1",
@@ -56,8 +56,8 @@
   "version_created_at": null,
   "replaces_classic_zap": "Sync Company Name Updates to Xero, Harvest, and Zapier Table",
   "cutover": {
-    "classic_zap_disabled": null,
-    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+    "classic_zap_disabled": "2026-08-22 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "status": "complete — this durable is the only thing propagating a Notion company rename to Xero, Harvest, Drive and the Table."
   },
   "behaviour_changes": [
     "The classic Zap read the four ids out of [Table] Company IDs and halted the whole run when the company had no row there. The durable reads them off the Notion page it already has to fetch — fresher, one fewer lookup, and no dependency on the mirror having caught up. Same precedent as xero-contact-from-notion-deal and deal-to-client-drive-folder.",

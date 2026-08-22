@@ -7,13 +7,14 @@ keyed on the Drive object id.
 Migration of the classic Zap **"Log New Google Drive Files and Folders in
 Zapier Table"**.
 
-- **Workflow ID:** _pending first publish_ (account-visible)
+- **Workflow ID:** `01a028c7-47d4-713a-8b25-3b57f08ca8d3` (account-visible)
 - **Trigger:** Google Drive `file_in_folder_v2` over the whole shared drive
   (`0AHY_MJFjT0WtUk9PVA`), subfolders on, 4 levels deep, deleted excluded — a
   polling trigger, no external URL to cut over. Durable triggers have no
   polling-interval field; the classic Zap ran at the account default too
   (`polling_interval_override: 0`).
 - **Table:** `01K5ZN0AGNDHS4C424XEDCWJZY` — this workflow **owns** row creation.
+- **Editor:** <https://zapier.com/durables-editor/01a028c7-47d4-713a-8b25-3b57f08ca8d3>
 
 ## Workflow
 
@@ -56,17 +57,12 @@ against the live connection with `list-trigger-input-fields`.
 
 ## Cutover
 
-**Pending.** The durable is published but **disabled**. To cut over:
-
-1. Disable the classic Zap **"Log New Google Drive Files and Folders in Zapier
-   Table"** in the Zapier UI (classic Zaps are exposed by neither the SDK CLI
-   nor the MCP connector).
-2. `zapier-sdk --experimental enable-workflow <workflow_id>`
-3. Record the date in `zap.json` under `cutover.classic_zap_disabled`.
-
-Order is not critical here — both sides upsert-or-create the same row, and the
-durable's dedupe absorbs an overlap — but leaving both enabled reintroduces the
-duplicate rows the durable exists to stop.
+**Complete as of 2026-08-22.** The classic Zap **"Log New Google Drive Files
+and Folders in Zapier Table"** was disabled and this durable enabled the same
+day. The disable is **not machine-verifiable** — classic Zaps are exposed by
+neither the SDK CLI nor the MCP connector — so it rests on Dennis's
+confirmation. Verified on this side: `enabled: true` with the trigger `status:
+active` and no trigger error.
 
 ## Maintainer notes
 

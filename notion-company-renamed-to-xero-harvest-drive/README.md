@@ -7,12 +7,13 @@ each only where that system's id is recorded on the page.
 Migration of the classic Zap **"Sync Company Name Updates to Xero, Harvest, and
 Zapier Table"**.
 
-- **Workflow ID:** _pending first publish_ (account-visible)
+- **Workflow ID:** `01a028c7-92f0-747d-939f-2b147b4b3e18` (account-visible)
 - **Trigger:** Notion `updated_data_source_item_properties` on Companies
   (`21991b07-11ac-80b0-b787-000b3d3995f6`), watching `title` (Company Name) — a
   polling trigger, no external URL to cut over. Durable triggers have no
   polling-interval field; the classic Zap ran at the account default too
   (`polling_interval_override: 0`).
+- **Editor:** <https://zapier.com/durables-editor/01a028c7-92f0-747d-939f-2b147b4b3e18>
 
 ## Workflow
 
@@ -80,15 +81,12 @@ flowchart TD
 
 ## Cutover
 
-**Pending.** The durable is published but **disabled**. To cut over:
-
-1. Disable the classic Zap **"Sync Company Name Updates to Xero, Harvest, and
-   Zapier Table"** in the Zapier UI.
-2. `zapier-sdk --experimental enable-workflow <workflow_id>`
-3. Record the date in `zap.json` under `cutover.classic_zap_disabled`.
-
-An overlap is benign — both sides write the same name to the same four
-places — so order does not matter here.
+**Complete as of 2026-08-22.** The classic Zap **"Sync Company Name Updates to
+Xero, Harvest, and Zapier Table"** was disabled and this durable enabled the
+same day. The disable is **not machine-verifiable** — classic Zaps are exposed
+by neither the SDK CLI nor the MCP connector — so it rests on Dennis's
+confirmation. Verified on this side: `enabled: true` with the trigger `status:
+active` and no trigger error.
 
 ## Testing
 

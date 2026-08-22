@@ -3,14 +3,14 @@
   "workflow_id": "01a028c7-47d4-713a-8b25-3b57f08ca8d3",
   "current_version_id": "01a028c7-5620-7ea2-8426-fb887c5c7d09",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcN51XndfE3ZxN07Pw-MiA",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
     "workflow_name": "drive-files-to-zapier-table",
     "description": "Log every new file and folder on the Work.Flowers HQ shared drive into [Table] Google Drive Files and Folders, keyed on the Drive object id. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/drive-files-to-zapier-table",
     "enable_on_publish": false,
-    "enable_on_publish_note": "Parked at first publish so it cannot double-write alongside the still-live classic Zap. Cutover: disable the classic 'Log New Google Drive Files and Folders in Zapier Table', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+    "enable_on_publish_note": "Parked at first publish so it could not double-write alongside the then-live classic Zap. Cutover done 2026-08-22; kept as the record of why v1 shipped disabled. A republish carries the CURRENT enabled state forward (read off Zapier), so this no longer affects anything."
   },
   "trigger": {
     "selected_api": "GoogleDriveCLIAPI@1.23.2",
@@ -39,8 +39,8 @@
   "version_created_at": null,
   "replaces_classic_zap": "Log New Google Drive Files and Folders in Zapier Table",
   "cutover": {
-    "classic_zap_disabled": null,
-    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+    "classic_zap_disabled": "2026-08-22 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "status": "complete — this durable is the only thing logging Drive objects into [Table] Google Drive Files and Folders."
   },
   "behaviour_changes": [
     "The classic Zap created a row unconditionally, so a re-trigger on the same Drive object duplicated it. The durable upserts on the Drive id: unseen ids are created, a known id is left alone, and a known id whose name or parent drifted is repaired."

@@ -605,27 +605,7 @@
     },
     "contact-us-form-to-notion-contact": { "status": "cutover-pending" },
     "notion-page-deleted-to-zapier-tables": { "status": "cutover-pending" },
-    "sow-signed-to-deal-won": { "status": "cutover-pending" },
-    "drive-files-to-zapier-table": {
-      "status": "cutover-pending",
-      "note": "Published but parked disabled until the classic \u201cLog New Google Drive Files and Folders in Zapier Table\u201d is turned off."
-    },
-    "drive-file-renamed-to-zapier-table": {
-      "status": "cutover-pending",
-      "note": "Published but parked disabled until the classic \u201cUpdate Google Drive File Names in Zapier Table\u201d is turned off."
-    },
-    "company-ids-table-to-fivetran-sheet": {
-      "status": "cutover-pending",
-      "note": "Published but parked disabled until the classic \u201cRefresh Company IDs Table in Fivetran Sheet\u201d is turned off \u2014 two runs rewriting the same tab concurrently is the one way to mangle it."
-    },
-    "notion-company-renamed-to-xero-harvest-drive": {
-      "status": "cutover-pending",
-      "note": "Published but parked disabled until the classic \u201cSync Company Name Updates to Xero, Harvest, and Zapier Table\u201d is turned off."
-    },
-    "linear-customer-to-notion-company": {
-      "status": "cutover-pending",
-      "note": "Published but parked disabled. Disable the classic \u201cUpdate New Linear Customer in Zapier Table\u201d FIRST \u2014 the two resolve companies differently, so an overlap can create duplicate Notion Companies."
-    }
+    "sow-signed-to-deal-won": { "status": "cutover-pending" }
   },
   "blurbs": {
     "blog-rss-to-slack": "New work.flowers blog post in the RSS feed → announcement in Slack #marketing as BlogBot; tag/author index pages filtered out.",

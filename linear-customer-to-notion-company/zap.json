@@ -3,14 +3,14 @@
   "workflow_id": "01a028c7-6f79-7734-bf5a-5c4877e83831",
   "current_version_id": "01a028c7-7a4a-7f77-bd2c-c9045fdb374a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbQSGfJ83dQvIPKPhANUwQ",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
     "workflow_name": "linear-customer-to-notion-company",
     "description": "When a customer is created in Linear, match it to a Notion Companies record by domain (creating the company if there is none) and write the Linear customer id onto that page. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/linear-customer-to-notion-company",
     "enable_on_publish": false,
-    "enable_on_publish_note": "Parked at first publish. This is the one migration where an overlap window is genuinely unsafe: the classic Zap and the durable resolve companies differently, so both running could create duplicate Notion Companies. Cutover: disable the classic 'Update New Linear Customer in Zapier Table' FIRST, then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+    "enable_on_publish_note": "Parked at first publish so it could not double-write alongside the then-live classic Zap. Cutover done 2026-08-22; kept as the record of why v1 shipped disabled. A republish carries the CURRENT enabled state forward (read off Zapier), so this no longer affects anything."
   },
   "trigger": {
     "selected_api": "LinearCLIAPI@4.15.0",
@@ -42,8 +42,8 @@
   "version_created_at": null,
   "replaces_classic_zap": "Update New Linear Customer in Zapier Table",
   "cutover": {
-    "classic_zap_disabled": null,
-    "status": "pending — durable is published but DISABLED. Disable the classic Zap BEFORE enabling this one; an overlap can create duplicate Notion Companies."
+    "classic_zap_disabled": "2026-08-22 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector.",
+    "status": "complete — this durable is the only thing resolving new Linear customers to Notion Companies. The duplicate-company risk from an overlap is now moot."
   },
   "behaviour_changes": [
     "BUG FIX: the classic Zap's fallback path wrote {{1__domains}} into f7 'Linear Customer ID', so existing rows carry hostnames (e.g. tanninroad.com.au) where a Linear customer UUID belongs — the same defect already noted in notion-company-to-linear-customer's zap.json. The durable writes the real customer id. Existing bad values are left as they are; they are corrected the next time that customer fires.",

@@ -6,7 +6,7 @@ That tab is what Fivetran syncs into the warehouse.
 
 Migration of the classic Zap **"Refresh Company IDs Table in Fivetran Sheet"**.
 
-- **Workflow ID:** _pending first publish_ (account-visible)
+- **Workflow ID:** `01a028c6-fd9e-7720-bb75-e2acd7ffc4dc` (account-visible)
 - **Trigger:** Schedule by Zapier `everyWeek`, Sundays at 12:00 AM
   Asia/Singapore (the account timezone — no override needed). No connection, no
   external URL.
@@ -14,6 +14,7 @@ Migration of the classic Zap **"Refresh Company IDs Table in Fivetran Sheet"**.
   **"Company IDs"** (gid `288457717`), on the Work.Flowers HQ shared drive.
 - **Table:** `01JM8PH8YM93A482M8BFZ6WKW6` — **read only**, owned by
   [`notion-companies-to-zapier-table`](../notion-companies-to-zapier-table/).
+- **Editor:** <https://zapier.com/durables-editor/01a028c6-fd9e-7720-bb75-e2acd7ffc4dc>
 
 ## Workflow
 
@@ -72,15 +73,16 @@ Company ID, Linear Team ID, Notion Page ID, Xero Contact ID.
 
 ## Cutover
 
-**Pending.** The durable is published but **disabled**. To cut over:
+**Complete as of 2026-08-22.** The classic Zap **"Refresh Company IDs Table in
+Fivetran Sheet"** was disabled and this durable enabled the same day. The
+disable is **not machine-verifiable** — classic Zaps are exposed by neither
+the SDK CLI nor the MCP connector — so it rests on Dennis's confirmation.
+Verified on this side: `enabled: true` with the trigger `status: active` and
+no trigger error.
 
-1. Disable the classic Zap **"Refresh Company IDs Table in Fivetran Sheet"** in
-   the Zapier UI.
-2. `zapier-sdk --experimental enable-workflow <workflow_id>`
-3. Record the date in `zap.json` under `cutover.classic_zap_disabled`.
-
-Disable the classic Zap first if the two could fire in the same window — both
-rewriting the same tab concurrently is the one way to get a mangled sheet.
+The first scheduled run is the coming **Sunday at 00:00 Asia/Singapore**.
+Nothing happens before then — if the tab needs refreshing sooner, `trigger-
+workflow` it by hand; the refresh is idempotent.
 
 ## Testing
 
