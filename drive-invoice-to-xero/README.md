@@ -44,6 +44,15 @@ which is what files invoice PDFs into that folder in the first place.
 Both finishing paths write the [Vendor Payment Details](#vendor-payment-details) row — a settled
 invoice still tells you where that vendor banks, which is what the *next* one gets paid into.
 
+> **Unsupported currency is a graceful skip, not an error.** The work.flowers Xero org is only
+> subscribed to a handful of currencies, and `new_bill` rejects any other with a *deterministic*
+> `Organisation is not subscribed to currency <CODE>` — which, left to throw, exhausts all five step
+> retries and dies as `StepExhaustedError` (this is ZAP-29, an INR invoice on 2026-08-21). We don't
+> raise bills in currencies the org doesn't hold, so `create-xero-bill` catches exactly that message,
+> logs a `WARNING`, and finishes with `outcome: "currency-not-supported"`. The file has already been
+> renamed and is left in Drive for someone to handle by hand; nothing is thrown and no triage ticket
+> is filed. Any *other* Xero failure still throws and retries as before.
+
 ```mermaid
 flowchart TD
     T["📄 Google Drive: New File in Folder<br/><i>Invoices · one run per file</i>"] --> G{"PDF?<br/>not trashed?"}
@@ -73,6 +82,10 @@ flowchart TD
     VP2 --> L{"line items reconcile<br/>to the invoice total?"}
     L -- yes --> B["🧾 Xero · new_bill (draft)<br/>extracted lines"]
     L -- "no / none" --> B2["🧾 Xero · new_bill (draft)<br/>single line for the total"]
+    B --> CUR{"org subscribed<br/>to the currency?"}
+    B2 --> CUR
+    CUR -- yes --> BD["⏹ done — draft bill created"]
+    CUR -- "no (e.g. INR)" --> CX["⚠️ skip — currency not supported<br/>file left renamed in Drive · logged · no error"]
 ```
 
 [`drive-invoice-to-xero.html`](drive-invoice-to-xero.html) is a standalone visual explainer of
