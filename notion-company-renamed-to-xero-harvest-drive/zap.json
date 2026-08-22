@@ -1,12 +1,12 @@
 {
   "name": "notion-company-renamed-to-xero-harvest-drive",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a028c7-92f0-747d-939f-2b147b4b3e18",
+  "current_version_id": "01a028c7-a046-7c04-afd9-7ce944d2a6a3",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXMyAdFXJubf-FKMAytR-w",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "notion-company-renamed-to-xero-harvest-drive",
     "description": "When a Notion Companies record is renamed, push the new name to its Xero contact, Harvest client, Google Drive client folder and its [Table] Company IDs row. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/notion-company-renamed-to-xero-harvest-drive",
     "enable_on_publish": false,

@@ -1,12 +1,12 @@
 {
   "name": "linear-customer-to-notion-company",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a028c7-6f79-7734-bf5a-5c4877e83831",
+  "current_version_id": "01a028c7-7a4a-7f77-bd2c-c9045fdb374a",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbQSGfJ83dQvIPKPhANUwQ",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "linear-customer-to-notion-company",
     "description": "When a customer is created in Linear, match it to a Notion Companies record by domain (creating the company if there is none) and write the Linear customer id onto that page. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/linear-customer-to-notion-company",
     "enable_on_publish": false,

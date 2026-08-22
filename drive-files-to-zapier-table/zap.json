@@ -1,12 +1,12 @@
 {
   "name": "drive-files-to-zapier-table",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a028c7-47d4-713a-8b25-3b57f08ca8d3",
+  "current_version_id": "01a028c7-5620-7ea2-8426-fb887c5c7d09",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcN51XndfE3ZxN07Pw-MiA",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "drive-files-to-zapier-table",
     "description": "Log every new file and folder on the Work.Flowers HQ shared drive into [Table] Google Drive Files and Folders, keyed on the Drive object id. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/drive-files-to-zapier-table",
     "enable_on_publish": false,

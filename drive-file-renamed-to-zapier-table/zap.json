@@ -1,12 +1,12 @@
 {
   "name": "drive-file-renamed-to-zapier-table",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a028c7-2386-7fa5-8f14-48ffb2bfdbb8",
+  "current_version_id": "01a028c7-2f6d-7048-bb1c-cdcf02af0af8",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ42GalZ3UFI67WRgXZ6UA",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "drive-file-renamed-to-zapier-table",
     "description": "Keep the Name (and parent) of a Google Drive file or folder current in [Table] Google Drive Files and Folders when it is updated. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/drive-file-renamed-to-zapier-table",
     "enable_on_publish": false,

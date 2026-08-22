@@ -1,12 +1,12 @@
 {
   "name": "company-ids-table-to-fivetran-sheet",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a028c6-fd9e-7720-bb75-e2acd7ffc4dc",
+  "current_version_id": "01a028c7-0af3-7b8c-94a4-1a967e2bd19b",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXQm4p69Og15gqEpzbe2tg",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "company-ids-table-to-fivetran-sheet",
     "description": "Weekly full refresh of the 'Company IDs' tab of the Fivetran Sync Jobs spreadsheet from [Table] Company IDs. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/company-ids-table-to-fivetran-sheet",
     "enable_on_publish": false,
