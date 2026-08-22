@@ -3,12 +3,16 @@
 # When a PR merges into `main`, this workflow:
 #   1. detect  — reports which deployed workflows the PR affects (a comment on
 #                the PR + the run Step Summary). No credentials, no side effects.
-#   2. publish — republishes each affected deployment to Zapier and syncs the new
-#                current_version_id back into zap.json (repo rule 4). Merging the
-#                PR is the approval: this job runs automatically on merge, with
-#                no separate environment gate. (There used to be a `production`
-#                environment with a required-reviewer rule here; it was removed
-#                2026-08-18 as redundant with the deliberate act of merging.)
+#   2. publish — publishes each affected deployment to Zapier and syncs the new
+#                current_version_id back into zap.json (repo rule 4). A Zap
+#                marked deploy.state "pending-create" is CREATED and gets its v1
+#                published here, with workflow_id / trigger_url synced back too.
+#                Merging the PR is the approval: this job runs automatically on
+#                merge, with no separate environment gate. (There used to be a
+#                `production` environment with a required-reviewer rule here; it
+#                was removed 2026-08-18 as redundant with the act of merging.)
+#                The sync-back also carries a regenerated docs/map.html — see the
+#                note on that step for why it has to.
 #
 # ┌─ SETUP NOTES ───────────────────────────────────────────────────────────────┐
 # │ Secrets: the existing repository secrets ZAPIER_CLIENT_ID /                 │
@@ -117,16 +121,27 @@ jobs:
           mapfile -t FILES < changed.txt
           node scripts/publish-changed-zaps.mjs --files "${FILES[@]}" --execute
 
-      - name: Commit the current_version_id sync-back
+      # The workflow map's data block is DERIVED from zap.json — including
+      # workflow_id and enabled, both of which the sync-back above can change. A
+      # first publish is the sharp case: a "pending-create" zap.json has
+      # workflow_id null, which build-map reads as "not deployed", so filling the
+      # ids in silently makes the committed map stale. Regenerating here, in the same
+      # commit as the zap.json changes that caused it, is what keeps `main` green
+      # for the check-map PR gate — which never sees this commit, because the
+      # sync-back is [skip ci].
+      - name: Regenerate the workflow map
+        run: node scripts/build-map.mjs
+
+      - name: Commit the sync-back
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if git diff --quiet -- '**/zap.json'; then
-            echo "No zap.json changes to sync back."
+          if git diff --quiet -- '**/zap.json' docs/map.html; then
+            echo "Nothing to sync back."
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- '**/zap.json'
-          git commit -m "Sync current_version_id after publishing (PR #${PR_NUMBER}) [skip ci]"
+          git add -- '**/zap.json' docs/map.html
+          git commit -m "Sync current_version_id and workflow map after publishing (PR #${PR_NUMBER}) [skip ci]"
           git push origin HEAD:main
