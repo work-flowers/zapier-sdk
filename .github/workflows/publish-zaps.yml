@@ -125,10 +125,10 @@ jobs:
       # workflow_id and enabled, both of which the sync-back above can change. A
       # first publish is the sharp case: a "pending-create" zap.json has
       # workflow_id null, which build-map reads as "not deployed", so filling the
-      # ids in silently makes the committed map stale. Regenerating here, in the same
-      # commit as the zap.json changes that caused it, is what keeps `main` green
-      # for the check-map PR gate — which never sees this commit, because the
-      # sync-back is [skip ci].
+      # ids in silently makes the committed map stale. Regenerating here, in the
+      # same commit as the zap.json changes that caused it, is what keeps `main`
+      # green for the check-map PR gate — which never sees this commit, because
+      # the sync-back is [skip ci].
       - name: Regenerate the workflow map
         run: node scripts/build-map.mjs
 
