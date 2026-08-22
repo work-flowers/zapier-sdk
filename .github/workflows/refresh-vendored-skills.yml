@@ -1,0 +1,117 @@
+# Refresh vendored skills
+#
+# The `workflows-*` and `zapier-sdk` skills in `.agents/skills/` are VENDORED —
+# copied out of `zapier/agent-skills` and committed here, pinned in
+# `skills-lock.json` (see the vendored-skills bullet in CLAUDE.md). That makes a
+# fresh clone self-contained: no org membership, no plugin install, no SSH key,
+# and Cursor/Codex read the same files. The cost is that a vendored copy goes
+# stale unless somebody refreshes it — which is exactly what happened between
+# the manual refresh in b1c8574 (2026-08-10) and this workflow existing.
+#
+# This job runs `npx skills update` weekly and opens a PR when anything moved.
+#
+# ┌─ WHY A PR AND NOT AN AUTO-COMMIT ───────────────────────────────────────────┐
+# │ These skills are not passive docs — `workflows-modify` governs republishing │
+# │ durables to PRODUCTION. The 2.0.0 -> 2.2.0 bump was a single safeguard:     │
+# │ don't silently drop a Zap's trigger on republish (a bug this repo has       │
+# │ already been bitten by). So a human reads the diff before it lands. Glance  │
+# │ and merge is fine; silent auto-commit is not.                              │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# Merging this PR does NOT deploy anything: no Zap source changes, so
+# `Publish Zaps` has nothing to republish.
+
+name: Refresh vendored skills
+
+on:
+  schedule:
+    # Mondays 02:00 UTC (10:00 Singapore) — a fresh diff waiting at the start of
+    # the week rather than mid-task.
+    - cron: "0 2 * * 1"
+  workflow_dispatch: {}
+
+# One refresh at a time, so a manual run can't race the scheduled one into two
+# competing branches.
+concurrency:
+  group: refresh-vendored-skills
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `--project` keeps it to this repo's .agents/skills (never the runner's
+      # user-level skills); `-y` skips the interactive scope prompt.
+      - name: Refresh from zapier/agent-skills
+        run: npx -y skills update --project -y
+
+      - name: Report what moved
+        id: diff
+        run: |
+          if git diff --quiet -- .agents/skills skills-lock.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Vendored skills already match upstream." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Vendored skill versions changed"
+            echo
+            echo '| Skill | Before | After |'
+            echo '|---|---|---|'
+            for f in .agents/skills/*/SKILL.md; do
+              name="$(basename "$(dirname "$f")")"
+              before="$(git show "HEAD:$f" 2>/dev/null | grep -m1 '^  version:' | tr -d ' "' | cut -d: -f2)"
+              after="$(grep -m1 '^  version:' "$f" | tr -d ' "' | cut -d: -f2)"
+              [ "$before" = "$after" ] && continue
+              echo "| \`$name\` | ${before:-—} | ${after:-—} |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The symlink bridge must survive a refresh: `.claude/skills/<name>` ->
+      # `../../.agents/skills/<name>`. If `skills update` added a new skill,
+      # there is no link for it yet and Claude Code would not discover it, so
+      # run the same hook a session runs. It only ever touches links pointing
+      # into .agents/skills, and leaves real directories (zap-ai-prompts,
+      # zap-map) alone.
+      - name: Re-link into .claude/skills
+        if: steps.diff.outputs.changed == 'true'
+        run: ./.claude/hooks/link-agent-skills.sh
+
+      - name: Open PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/refresh-vendored-skills
+          base: main
+          title: "chore: refresh vendored workflows-* skills from zapier/agent-skills"
+          commit-message: "chore: refresh vendored workflows-* skills from zapier/agent-skills"
+          labels: skills
+          delete-branch: true
+          body: |
+            Automated weekly refresh of the vendored skills in `.agents/skills/`
+            from their upstream source, `zapier/agent-skills`.
+
+            **Read the diff before merging.** `workflows-modify` and
+            `workflows-create` govern how durables get republished to
+            production — an upstream change here changes how Zaps ship. See the
+            run's Step Summary for the version table.
+
+            Worth checking in the diff:
+
+            - `sdk_cli_min` / `sdk_cli_validated` bumps — a raised floor means
+              the local `zapier-sdk` CLI may need updating before these skills
+              apply. Run `/workflows-doctor` after merging.
+            - Anything touching trigger handling or publish flags. Dropping a
+              trigger on republish leaves a Zap "enabled" but never firing.
+
+            No Zap source changed, so `Publish Zaps` has nothing to deploy.
