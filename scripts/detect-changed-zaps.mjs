@@ -80,19 +80,34 @@ function readJson(absPath) {
 }
 
 // Given a durable directory's zap.json and the list of files that changed inside
-// it, work out which deployed workflow(s) are affected. Handles all three shapes
+// it, work out which deployed workflow(s) are affected. Handles all four shapes
 // this repo uses:
 //   1. single deployment  -> top-level workflow_id
 //   2. deployments[] with a shared source file (e.g. luma workflow.ts)
 //   3. deployments[] each with its own entry_file + a shared module (sync.ts):
 //      a shared-module change hits ALL deployments; an entry-file change hits
 //      only that one. We take the union.
+//   4. NOT YET ON ZAPIER -> no workflow_id, and a `deploy` block declaring the
+//      container to create. The publisher creates it and publishes v1, so a new
+//      Zap ships the same way a change to an existing one does: open a PR, merge
+//      it, and CI does the publish. Marked pendingCreate so the report says
+//      "create" rather than "republish".
 function affectedDeployments(zap, changedSourceFilesInDir) {
   const deployments = Array.isArray(zap?.deployments)
     ? zap.deployments
     : zap?.workflow_id
       ? [{ name: zap.name || null, workflow_id: zap.workflow_id, enabled: zap.enabled, entry_file: "workflow.ts" }]
-      : [];
+      : zap?.deploy?.state === "pending-create"
+        ? [
+            {
+              name: zap.name || null,
+              workflow_id: null,
+              enabled: zap.enabled,
+              entry_file: "workflow.ts",
+              pendingCreate: true,
+            },
+          ]
+        : [];
 
   const entryFiles = new Set(deployments.map((d) => d.entry_file).filter(Boolean));
   const changedSet = new Set(changedSourceFilesInDir);
@@ -149,6 +164,9 @@ export function detectChangedZaps(files) {
           // Which repo file this deployment publishes as "workflow.ts".
           // Single-deployment dirs and luma-style shared dirs use workflow.ts.
           entryFile: d.entry_file || "workflow.ts",
+          // True when this Zap has no container on Zapier yet: the publisher
+          // creates it and publishes v1 instead of republishing.
+          pendingCreate: d.pendingCreate === true,
         })),
       });
     } else if (hasCodeStep) {
@@ -183,19 +201,24 @@ function renderMarkdown(results) {
     lines.push("**No Zap source changed — nothing would be republished.**");
   } else {
     const count = republish.reduce((n, r) => n + r.affected.length, 0);
-    lines.push(`**Would republish ${count} deployment(s) across ${republish.length} Zap director(y/ies):**`);
+    const creates = republish.reduce((n, r) => n + r.affected.filter((d) => d.pendingCreate).length, 0);
+    const suffix = creates ? ` (${creates} of them a first publish of a new Zap)` : "";
+    lines.push(
+      `**Would publish ${count} deployment(s) across ${republish.length} Zap director(y/ies)${suffix}:**`,
+    );
     lines.push("");
-    lines.push("| Zap directory | Deployment | Workflow ID | Enabled | Changed source |");
-    lines.push("| --- | --- | --- | --- | --- |");
+    lines.push("| Zap directory | Deployment | Action | Workflow ID | Enabled | Changed source |");
+    lines.push("| --- | --- | --- | --- | --- | --- |");
     for (const r of republish) {
       const srcList = r.changedSource.join(", ");
       if (r.affected.length === 0) {
         // Source changed but no deployment matched (e.g. deployments[] empty / not-deployed dir).
-        lines.push(`| \`${r.dir}\` | _(no deployed workflow in zap.json)_ | — | — | ${srcList} |`);
+        lines.push(`| \`${r.dir}\` | _(no deployed workflow in zap.json)_ | — | — | — | ${srcList} |`);
       }
       for (const d of r.affected) {
+        const action = d.pendingCreate ? "🆕 create + publish v1" : "♻️ republish";
         lines.push(
-          `| \`${r.dir}\` | ${d.name || "—"} | \`${d.workflowId || "—"}\` | ${d.enabled === false ? "⏸️ no" : "✅ yes"} | ${srcList} |`,
+          `| \`${r.dir}\` | ${d.name || "—"} | ${action} | \`${d.workflowId || "(to be created)"}\` | ${d.enabled === false ? "⏸️ no" : "✅ yes"} | ${srcList} |`,
         );
       }
     }
@@ -230,9 +253,11 @@ function renderMarkdown(results) {
 
   lines.push("---");
   lines.push(
-    "> When this graduates from dry run to real publishing, each affected deployment is republished with " +
-      "`publish-workflow-version` using the connections, dependencies, durable version, trigger, and enabled " +
-      "state recorded in its `zap.json`, and the new `current_version_id` is synced back (repo rule 4).",
+    "> On merge, each affected deployment is published by [`Publish Zaps`](../../.github/workflows/publish-zaps.yml) " +
+      "and the new `current_version_id` is synced back into `zap.json` (repo rule 4). An existing Zap is " +
+      "republished with the metadata read off its live version; a Zap marked `deploy.state: \"pending-create\"` " +
+      "gets its container created (honouring `is_private`) and v1 published from the `deploy` block, then has its " +
+      "`workflow_id`, `current_version_id` and `trigger_url` synced back.",
   );
   return lines.join("\n");
 }

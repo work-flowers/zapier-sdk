@@ -1,0 +1,49 @@
+{
+  "name": "drive-files-to-zapier-table",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "drive-files-to-zapier-table",
+    "description": "Log every new file and folder on the Work.Flowers HQ shared drive into [Table] Google Drive Files and Folders, keyed on the Drive object id. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/drive-files-to-zapier-table",
+    "enable_on_publish": false,
+    "enable_on_publish_note": "Parked at first publish so it cannot double-write alongside the still-live classic Zap. Cutover: disable the classic 'Log New Google Drive Files and Folders in Zapier Table', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+  },
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.23.2",
+    "action": "file_in_folder_v2",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "params": {
+      "drive": "0AHY_MJFjT0WtUk9PVA",
+      "includeSubfolders": true,
+      "subfolderDepth": 4,
+      "includeDeleted": "false"
+    },
+    "status": "pending-first-publish",
+    "trigger_note": "Google Drive POLLING trigger over the whole Work.Flowers HQ shared drive (no `folder`, same as the classic Zap), 4 subfolder levels deep. Param shapes follow `list-trigger-input-fields`: includeSubfolders is BOOLEAN and subfolderDepth INTEGER, so the classic Zap's string \"4\" is a real 4 here. Durable triggers have no polling-interval field, so it polls at the account default — matching the classic Zap's polling_interval_override of 0. No external URL to cut over."
+  },
+  "connections": {},
+  "connections_note": "None needed. The workflow only touches Zapier Tables, which require no connection; the Google Drive connection is bound to the TRIGGER (trigger.authentication_id), not to a step.",
+  "tables": {
+    "01K5ZN0AGNDHS4C424XEDCWJZY": "[Table] Google Drive Files and Folders — OWNED by this workflow (row creation). f1 ID, f2 Kind, f3 Name, f4 Parent ID. drive-file-renamed-to-zapier-table keeps f3/f4 current afterwards."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-22",
+  "version_created_at": null,
+  "replaces_classic_zap": "Log New Google Drive Files and Folders in Zapier Table",
+  "cutover": {
+    "classic_zap_disabled": null,
+    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+  },
+  "behaviour_changes": [
+    "The classic Zap created a row unconditionally, so a re-trigger on the same Drive object duplicated it. The durable upserts on the Drive id: unseen ids are created, a known id is left alone, and a known id whose name or parent drifted is repaired."
+  ],
+  "description": "Google Drive polling trigger (new file/folder anywhere on Work.Flowers HQ) -> upsert the object into [Table] Google Drive Files and Folders, keyed on the Drive object id."
+}

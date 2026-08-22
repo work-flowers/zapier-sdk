@@ -41,6 +41,7 @@
         "deal-to-client-drive-folder",
         "deal-to-client-slack-channel",
         "deal-won-set-up-client-workspace",
+        "linear-customer-to-notion-company",
         "notion-company-to-linear-customer",
         "proposal-fee-to-deal-value",
         "register-zapier-partner-lead",
@@ -72,10 +73,14 @@
     "internal-ops": {
       "label": "Internal Ops",
       "zaps": [
+        "company-ids-table-to-fivetran-sheet",
+        "drive-file-renamed-to-zapier-table",
+        "drive-files-to-zapier-table",
         "gcal-event-updated-to-meeting-note",
         "gws-new-user-provisioning",
         "internal-user-ids-to-table-and-notion",
         "notion-companies-to-zapier-table",
+        "notion-company-renamed-to-xero-harvest-drive",
         "notion-page-deleted-to-zapier-tables",
         "start-a-timer-from-notion-task",
         "whatsapp-slack-bridge"
@@ -313,13 +318,22 @@
       "id": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM",
       "name": "Notion Setup Sessions screenshots"
     },
+    "table:drive-files": {
+      "type": "table",
+      "id": "01K5ZN0AGNDHS4C424XEDCWJZY",
+      "name": "Google Drive Files and Folders"
+    },
     "app:xero": { "type": "external_app", "name": "Xero" },
     "app:buttondown": { "type": "external_app", "name": "Buttondown" },
     "app:slack": { "type": "external_app", "name": "Slack" },
     "app:gmail": { "type": "external_app", "name": "Gmail" },
     "app:luma": { "type": "external_app", "name": "Luma" },
     "app:esignatures": { "type": "external_app", "name": "eSignatures.io" },
-    "app:zapier-partner": { "type": "external_app", "name": "Zapier Partner Program" }
+    "app:zapier-partner": { "type": "external_app", "name": "Zapier Partner Program" },
+    "app:google-drive": { "type": "external_app", "name": "Google Drive" },
+    "app:google-sheets": { "type": "external_app", "name": "Fivetran Sync Jobs sheet" },
+    "app:harvest": { "type": "external_app", "name": "Harvest" },
+    "app:linear": { "type": "external_app", "name": "Linear" }
   },
   "edges": [
     { "from": "ds:contacts", "to": "contact-emails-to-zapier-table", "kind": "trigger" },
@@ -553,7 +567,26 @@
     { "from": "app:esignatures", "to": "esignatures-status-to-notion", "kind": "trigger" },
     { "from": "table:esignatures-map", "to": "esignatures-status-to-notion", "kind": "read" },
     { "from": "esignatures-status-to-notion", "to": "ds:sows", "kind": "write" },
-    { "from": "esignatures-status-to-notion", "to": "ds:project-addendums", "kind": "write" }
+    { "from": "esignatures-status-to-notion", "to": "ds:project-addendums", "kind": "write" },
+
+    { "from": "app:google-drive", "to": "drive-files-to-zapier-table", "kind": "trigger" },
+    { "from": "drive-files-to-zapier-table", "to": "table:drive-files", "kind": "own" },
+
+    { "from": "app:google-drive", "to": "drive-file-renamed-to-zapier-table", "kind": "trigger" },
+    { "from": "drive-file-renamed-to-zapier-table", "to": "table:drive-files", "kind": "write" },
+
+    { "from": "table:company-ids", "to": "company-ids-table-to-fivetran-sheet", "kind": "read" },
+    { "from": "company-ids-table-to-fivetran-sheet", "to": "app:google-sheets", "kind": "own" },
+
+    { "from": "ds:companies", "to": "notion-company-renamed-to-xero-harvest-drive", "kind": "trigger" },
+    { "from": "notion-company-renamed-to-xero-harvest-drive", "to": "table:company-ids", "kind": "write" },
+    { "from": "notion-company-renamed-to-xero-harvest-drive", "to": "app:xero", "kind": "write" },
+    { "from": "notion-company-renamed-to-xero-harvest-drive", "to": "app:harvest", "kind": "write" },
+    { "from": "notion-company-renamed-to-xero-harvest-drive", "to": "app:google-drive", "kind": "write" },
+
+    { "from": "app:linear", "to": "linear-customer-to-notion-company", "kind": "trigger" },
+    { "from": "linear-customer-to-notion-company", "to": "ds:companies", "kind": "write" },
+    { "from": "linear-customer-to-notion-company", "to": "table:company-ids", "kind": "reference" }
   ],
   "excluded_zaps": {
     "$comment": "Zap dirs deliberately left OFF the map (still validated: they need a cluster, and their edges below stay curated as documentation). Classic Zaps are excluded per Dennis, 2026-08-14.",
@@ -572,7 +605,27 @@
     },
     "contact-us-form-to-notion-contact": { "status": "cutover-pending" },
     "notion-page-deleted-to-zapier-tables": { "status": "cutover-pending" },
-    "sow-signed-to-deal-won": { "status": "cutover-pending" }
+    "sow-signed-to-deal-won": { "status": "cutover-pending" },
+    "drive-files-to-zapier-table": {
+      "status": "cutover-pending",
+      "note": "Published but parked disabled until the classic \u201cLog New Google Drive Files and Folders in Zapier Table\u201d is turned off."
+    },
+    "drive-file-renamed-to-zapier-table": {
+      "status": "cutover-pending",
+      "note": "Published but parked disabled until the classic \u201cUpdate Google Drive File Names in Zapier Table\u201d is turned off."
+    },
+    "company-ids-table-to-fivetran-sheet": {
+      "status": "cutover-pending",
+      "note": "Published but parked disabled until the classic \u201cRefresh Company IDs Table in Fivetran Sheet\u201d is turned off \u2014 two runs rewriting the same tab concurrently is the one way to mangle it."
+    },
+    "notion-company-renamed-to-xero-harvest-drive": {
+      "status": "cutover-pending",
+      "note": "Published but parked disabled until the classic \u201cSync Company Name Updates to Xero, Harvest, and Zapier Table\u201d is turned off."
+    },
+    "linear-customer-to-notion-company": {
+      "status": "cutover-pending",
+      "note": "Published but parked disabled. Disable the classic \u201cUpdate New Linear Customer in Zapier Table\u201d FIRST \u2014 the two resolve companies differently, so an overlap can create duplicate Notion Companies."
+    }
   },
   "blurbs": {
     "blog-rss-to-slack": "New work.flowers blog post in the RSS feed → announcement in Slack #marketing as BlogBot; tag/author index pages filtered out.",
@@ -583,7 +636,7 @@
     "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record."
   },
   "ignored_ids": {
-    "$comment": "Ids the regex sweep finds that are real but are not shared assets: test artifacts, fixed per-zap configuration, foreign-system record ids, and one Table row id.",
+    "$comment": "Ids the regex sweep finds that are real but are not shared assets: test artifacts, fixed per-zap configuration, foreign-system record ids, one Table row id, and the Notion DATABASE id of a data source already registered as an asset (kept in a zap.json for provenance, because the classic Zap addressed the database rather than the data source).",
     "ids": [
       "019c4004-7a2f-e4f0-9712-2a03fe4969ce",
       "019d489c-35c7-50fd-18ec-c10c03fef69b",
@@ -596,6 +649,7 @@
       "121d872b-594c-810b-ba5a-000206eeef1e",
       "1b61a648-859f-46e2-a430-fc5609d0f673",
       "1d8004ce-a30e-4796-a8dd-5bc213339f15",
+      "21991b07-11ac-806d-99e8-f151552c7d3c",
       "21991b07-11ac-8186-a243-e57dd4dd6501",
       "28e9b5ff-59e7-4e45-98bb-754855e2aff1",
       "2a875453-37cf-4c8a-a55e-5443f7720187",

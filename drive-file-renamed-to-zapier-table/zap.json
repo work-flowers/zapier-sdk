@@ -1,0 +1,47 @@
+{
+  "name": "drive-file-renamed-to-zapier-table",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "drive-file-renamed-to-zapier-table",
+    "description": "Keep the Name (and parent) of a Google Drive file or folder current in [Table] Google Drive Files and Folders when it is updated. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/drive-file-renamed-to-zapier-table",
+    "enable_on_publish": false,
+    "enable_on_publish_note": "Parked at first publish so it cannot double-write alongside the still-live classic Zap. Cutover: disable the classic 'Update Google Drive File Names in Zapier Table', then `zapier-sdk --experimental enable-workflow <workflow_id>`."
+  },
+  "trigger": {
+    "selected_api": "GoogleDriveCLIAPI@1.23.2",
+    "action": "updated_file",
+    "authentication_id": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "params": {
+      "include_deleted": false
+    },
+    "status": "pending-first-publish",
+    "trigger_note": "Google Drive POLLING trigger on updated files, unscoped (no `drive`/`folder`), same as the classic Zap. `include_deleted` is BOOLEAN per `list-trigger-input-fields`, so the classic Zap's \"no\" is a real false here. Durable triggers have no polling-interval field, so it polls at the account default — matching the classic Zap's polling_interval_override of 0. No external URL to cut over."
+  },
+  "connections": {},
+  "connections_note": "None needed. The workflow only touches Zapier Tables, which require no connection; the Google Drive connection is bound to the TRIGGER (trigger.authentication_id), not to a step.",
+  "tables": {
+    "01K5ZN0AGNDHS4C424XEDCWJZY": "[Table] Google Drive Files and Folders — f3 Name and f4 Parent ID updated here; rows are CREATED by drive-files-to-zapier-table, never by this workflow."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.97.1"
+  },
+  "created_at": "2026-08-22",
+  "version_created_at": null,
+  "replaces_classic_zap": "Update Google Drive File Names in Zapier Table",
+  "cutover": {
+    "classic_zap_disabled": null,
+    "status": "pending — durable is published but DISABLED. Enable it in the same sitting as disabling the classic Zap."
+  },
+  "behaviour_changes": [
+    "The classic Zap folded \"name differs\" into its Table search filter with success-on-miss OFF, so every update to a file whose name had NOT changed — and every update to a file the inventory had never logged — failed the step and surfaced as a Zap error. The durable looks the row up by Drive id only, compares in code, and skips quietly (`already-current` / `not-in-inventory`).",
+    "A parent change is now mirrored too (f4 Parent ID), so a file moved between folders no longer leaves a stale parent behind."
+  ],
+  "description": "Google Drive polling trigger (updated file) -> keep that object's Name and Parent ID current in [Table] Google Drive Files and Folders. Skips quietly when nothing changed or the object was never inventoried."
+}
