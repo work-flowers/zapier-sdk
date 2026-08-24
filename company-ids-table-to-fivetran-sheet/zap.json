@@ -1,7 +1,7 @@
 {
   "name": "company-ids-table-to-fivetran-sheet",
   "workflow_id": "01a028c6-fd9e-7720-bb75-e2acd7ffc4dc",
-  "current_version_id": "01a028c7-0af3-7b8c-94a4-1a967e2bd19b",
+  "current_version_id": "01a03195-0058-7853-9172-a41e6719d092",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXQm4p69Og15gqEpzbe2tg",
   "enabled": true,
   "is_private": false,
