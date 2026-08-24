@@ -91,17 +91,23 @@ async function readAllCompanies(): Promise<string[][]> {
 }
 
 /** A Sheets API call routed through the Zapier connection's API Request action,
- *  so it stays inside Zapier's auth and audit layer. */
+ *  so it stays inside Zapier's auth and audit layer.
+ *  Query parameters must be passed as `querystring` — the _zap_raw_request
+ *  action strips them from the URL string before forwarding to Google. */
 async function sheetsRequest(
   method: "GET" | "POST" | "PUT",
   path: string,
   body?: unknown,
+  querystring?: Record<string, string>,
 ): Promise<any> {
   const inputs: Record<string, unknown> = {
     fail_on_errors: true,
     method,
     url: `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/${path}`,
   };
+  if (querystring !== undefined) {
+    inputs.querystring = querystring;
+  }
   if (body !== undefined) {
     inputs.body = JSON.stringify(body);
     inputs.headers = { "Content-Type": "application/json" };
@@ -163,10 +169,13 @@ const workflow = defineDurable({
       // 3. Append every row back. `:append` anchors after the last populated
       //    row — the header, post-clear — and grows the grid if the Table
       //    outgrew it, which a plain `values.update` would reject.
+      //    `valueInputOption` must go through `querystring`, not in the URL:
+      //    `_zap_raw_request` strips URL query params before forwarding.
       const res = await sheetsRequest(
         "POST",
-        `values/${range("A1")}:append?valueInputOption=RAW`,
+        `values/${range("A1")}:append`,
         { values: rows },
+        { valueInputOption: "RAW" },
       );
       const updatedRows = Number(res?.updates?.updatedRows ?? 0);
       if (updatedRows !== rows.length) {
