@@ -4,4 +4,8 @@
 # Symlinks into .agents/skills, so Claude Code can discover skills that
 # skills.sh installs. Committed so a fresh clone has them in session one.
 !/.claude/skills/
+# Shared durables rules — loaded every session and synced byte-identical to
+# every other Zap repo. MUST be committed; without this exception the
+# deny-all above swallows it and the rules never propagate.
+!/.claude/rules/
 node_modules/
