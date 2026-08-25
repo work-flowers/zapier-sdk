@@ -6,10 +6,10 @@ Source-of-truth repo for workFlowers Code Zaps in the main work.flowers Zapier w
      handling, determinism guard, empty-ping guard, AI tiers, concurrency — live in
      .claude/rules/durables.md, which loads automatically every session and is kept
      BYTE-IDENTICAL across every Zap repo. This file holds only what is specific to
-     work.flowers. Put a universal lesson in the rules file, not here, or it will
+     work.flowers. Put a universal lesson in the rules files, not here, or it will
      never reach the other repos. -->
 
-Universal rules live in [`.claude/rules/durables.md`](.claude/rules/durables.md) — loaded automatically each session, and byte-identical across every Zap repo. **A new lesson that would be true in any Zap repo belongs there, not in this file.** This file holds only work.flowers-specific facts.
+Universal rules live in [`.claude/rules/`](.claude/rules/) — [`durables.md`](.claude/rules/durables.md) (how a Zap repo ships) and [`durables-sdk.md`](.claude/rules/durables-sdk.md) (writing durable code). Both load automatically each session, and both are byte-identical across every Zap repo. **A new lesson that would be true in any Zap repo belongs there, not in this file.** This file holds only work.flowers-specific facts.
 
 ## Workspace facts
 
