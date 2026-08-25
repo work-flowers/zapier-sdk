@@ -1,4 +1,4 @@
-<!-- shared-rules v2 · upstream: work-flowers/zapier-durables-template
+<!-- shared-rules v3 · upstream: work-flowers/zapier-durables-template
      BYTE-IDENTICAL ACROSS ALL ZAP REPOS. Do not add repo-specific facts here —
      connection ids, data-source state, named Zaps, account ids and workspace
      details belong in that repo's CLAUDE.md. Anything written here propagates
@@ -6,7 +6,8 @@
 
 # Zapier Durables — shared rules
 
-Universal engineering rules for a repo of Zapier Durables. Repo-specific facts
+Universal engineering rules for a repo of Zapier Durables — how a Zap repo ships.
+Its companion `durables-sdk.md` covers writing the code. Repo-specific facts
 (connection ids, account id, reference-implementation paths, workspace details)
 live in `CLAUDE.md` alongside this file.
 
@@ -52,21 +53,13 @@ Editing it republishes on merge. The trigger is the one piece of metadata *not* 
 - **A guard that only catches a PARSE failure misses the worse case: a payload that parses fine and means something.** The rule above is usually read as "don't drop junk", but the dangerous shape is an input schema where every field is nullable *and* all-null is itself a valid instruction — then "no payload" and "do the default thing" are the same request, and there is nothing for a `try`/`catch` to catch. An empty ping resolves to the default mode and reaches the write path, so a stray hit on the public catch URL performs a real write. **Test: can you name a payload that means "do nothing"?** If not, require an explicit instruction (a `fetch: true` flag, or a mandatory field) rather than defaulting — and never let a default mode be the one an empty POST selects.
 - "Skip" means *don't raise*, not *don't log* — log a line so the run history still shows the ping was seen. `CLAUDE.md` names this repo's reference implementation of `isEmptyPing`.
 
-## Durable runtime hazards
-
-**Never write `new Date` (or `Date.now()`, `Math.random()`, `fetch`, `setTimeout`) in a durable's workflow body — only inside a `ctx.step`.** `@zapier/zapier-durable` monkey-patches those globals at startup and runs the workflow function in GUARDED mode, so a call outside a step throws `DeterminismViolation: Non-deterministic API "…" called in GUARDED mode`. **The `Date` guard is argument-blind:** its Proxy's `construct` trap asserts *before* looking at the arguments, so `new Date(ms)` and `new Date(Date.UTC(y, m, d))` — both perfectly deterministic — fail exactly as hard as a bare `new Date()`. (`Date.UTC` and `Date.parse` are unguarded, since the `get` trap only special-cases `now`, but don't build on that.)
-
-- **Calendar arithmetic:** integer maths, no `Date` at all. Use the `daysFromCivil` / `isoDateFromEpochMs` / `daysInMonth` helpers — `CLAUDE.md` names where this repo's copy lives. Paying a task for a `ctx.step` just to format a date is absurd.
-- **A genuine clock read:** wrap it, e.g. `await ctx.step("today", async () => isoDateFromEpochMs(Date.now()))`. The value is then fixed for every retry of that run, which is the whole point of the rule.
-- **Nothing catches this before production.** The guard is a runtime component of the durable package — not a lint, not a publish-time check — so `tsc` passes and `publish-workflow-version` succeeds, and the failure only appears when a real payload reaches that line. It has cost a Zap 100% of its runs, and the same latent bug has shipped twice. **When testing a new durable with `run-durable`, use a payload that reaches the main path**, not one that returns at an early guard clause — a skip-path test proves nothing about the code after it.
-
 ## Skills
 
 **Load the `zapier-sdk` skill before writing or running any Zapier SDK code.** Do it first, not after something fails — it documents the things the CLI won't warn you about (parameter names without suffixes, single-consumption paginated results, `sdk.fetch`/`curl` bypassing org governance, `ZAPIER_CREDENTIALS_*` env var names that fail silently when wrong). Working from memory instead is how a session burns turns on avoidable errors.
 
 - **The skills are vendored in this repo and invocable as `/zapier-sdk`, `/workflows-modify`, and so on.** `npx skills add` installs them to `.agents/skills/` (the cross-agent path, so Cursor and Codex see them too), which **Claude Code does not scan** — it only discovers project skills under `.claude/skills/`. Each one is therefore committed as a relative symlink `.claude/skills/<name>` → `../../.agents/skills/<name>`, and the `link-agent-skills.sh` SessionStart hook re-creates, repairs and prunes those links. Without them `Skill(zapier-sdk)` fails with `Unknown skill` and this rule silently degrades to working from memory — which is exactly what it exists to prevent. **`.agents/skills/` is the source of truth: never edit through the link**, since `npx skills add`/`update` rewrites that directory and `skills-lock.json` wholesale. **Repo-local skills that aren't vendored** live as **real directories** under `.claude/skills/`, not symlinks: they have no `.agents/skills/` counterpart, so edit them in place. The hook leaves a real directory alone — its prune step only removes symlinks pointing into `../../.agents/skills/` — so the two kinds coexist safely; don't "repair" one into a link.
 - **Prefer the bare skill names — `workflows-modify`, `zapier-sdk` — over any namespaced duplicate (`sdk:zapier-sdk`).** A namespaced entry is the same upstream skill delivered by a Zapier marketplace plugin, which can sit behind since a plugin only re-clones on `claude plugin update`. The bare names are the repo's vendored copies: lockfile-pinned, refreshed daily by [`refresh-vendored-skills.yml`](.github/workflows/refresh-vendored-skills.yml), and reviewable in git.
-- **It is not enough on its own for Durables.** That skill explicitly defers `defineDurable`, `run-durable` and `publish-workflow-version` specifics to the version-matched `workflows-*` skills, whose method shapes shift release to release. For anything touching a durable, also load `workflows-modify` (edit + republish an existing Zap) or `workflows-create` (new Zap), and run the `workflows-doctor` compatibility gate they both ask for. **Use `workflows-modify` for its fetch/edit and metadata mechanics — but its "direct publish" step ships straight to production and skips PR review, so on the normal path you merge a PR and let the pipeline publish; publish directly only for a deliberate, stated out-of-band hotfix.** Getting this wrong is silent: `defineDurable` takes `(name, async (ctx, rawInput) => …)` in `0.9.1`, and the plausible-looking `(name, options, async (input, ctx) => …)` publishes fine and then fails at run time with `durable.run is not a function`.
+- **It is not enough on its own for Durables.** That skill explicitly defers `defineDurable`, `run-durable` and `publish-workflow-version` specifics to the version-matched `workflows-*` skills, whose method shapes shift release to release. For anything touching a durable, also load `workflows-modify` (edit + republish an existing Zap) or `workflows-create` (new Zap), and run the `workflows-doctor` compatibility gate they both ask for. **Use `workflows-modify` for its fetch/edit and metadata mechanics — but its "direct publish" step ships straight to production and skips PR review, so on the normal path you merge a PR and let the pipeline publish; publish directly only for a deliberate, stated out-of-band hotfix.** Getting the call shape wrong is silent — it publishes fine and fails at run time; see `durables-sdk.md`.
 
 ## Notion page creation (repo rule 5)
 
