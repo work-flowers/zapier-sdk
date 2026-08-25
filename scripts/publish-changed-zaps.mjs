@@ -6,10 +6,19 @@
 // for each affected deployment, mirrors the workflows-modify "direct publish"
 // path: fetch the DEPLOYED version's metadata, rebuild source_files from the
 // repo, and republish carrying that metadata forward — dependencies, durable
-// version, connections, app-versions, and the exact trigger-vs-manual start
-// mode. Getting the start mode wrong silently drops a live trigger, so this
-// script REFUSES (non-zero exit, nothing published) on anything ambiguous
-// rather than guessing:
+// version, connections and app-versions. Getting the trigger-vs-manual start
+// mode wrong silently drops a live trigger, so this script REFUSES (non-zero
+// exit, nothing published) on anything ambiguous rather than guessing:
+//
+// The TRIGGER is the one thing not carried forward: zap.json is its source of
+// truth, the same way it is for the code. Every republish compares the trigger
+// zap.json declares against the deployed one, on the four fields that are
+// actually Zapier's (selected_api, action, authentication_id, params — the rest
+// of the block is repo annotation and a webhook_url readback). Identical, the
+// deployed object goes back verbatim; different, the declared one replaces it.
+// That means a PR touching only zap.json republishes when — and only when — it
+// really did change the trigger, and a trigger edited in the Zapier UI is healed
+// back to what the repo says. `--audit` shows that drift without publishing.
 //
 // A NEW Zap — one whose zap.json has no workflow_id and a `deploy` block with
 // `state: "pending-create"` — takes the first-publish path instead: create the
@@ -30,21 +39,23 @@
 // Usage:
 //   node scripts/publish-changed-zaps.mjs --base <sha> --head <sha>            # PLAN only (no publish)
 //   node scripts/publish-changed-zaps.mjs --base <sha> --head <sha> --execute  # publish + sync back
+//   node scripts/publish-changed-zaps.mjs --audit                              # trigger drift report, no publish
 //
 // Without --execute it prints the plan and touches nothing — a deeper dry run.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { detectChangedZaps } from "./detect-changed-zaps.mjs";
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname;
 
 function parseArgs(argv) {
-  const args = { base: null, head: null, execute: false, files: null };
+  const args = { base: null, head: null, execute: false, files: null, audit: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--execute") args.execute = true;
+    else if (a === "--audit") args.audit = true;
     else if (a === "--base") args.base = argv[++i];
     else if (a === "--head") args.head = argv[++i];
     else if (a === "--files") {
@@ -138,6 +149,84 @@ function buildSourceFiles(dir, deployedKeys, entryFile) {
   return out;
 }
 
+// ---- Triggers ------------------------------------------------------------
+
+// zap.json is the SOURCE OF TRUTH for a Zap's trigger, the same way it is for
+// its code. Everything else on a republish is carried forward from the live
+// version; the trigger is reconciled against what the repo declares.
+//
+// Only these four fields are Zapier's — everything else in a zap.json trigger
+// block is repo annotation (trigger_note, notes, status, authentication_note,
+// params_note, why_not_polling, manual_run_note, no_webhook_available) or a
+// readback of what the server issued (webhook_url). They are never published and
+// never compared. `authentication_id` and `params` are normalised because
+// several catch-hook Zaps omit them entirely and would otherwise read as
+// permanently changed.
+export function triggerCore(t) {
+  if (t === null || t === undefined) return null;
+  return {
+    selected_api: t.selected_api,
+    action: t.action,
+    authentication_id: t.authentication_id ?? null,
+    params: t.params ?? {},
+  };
+}
+
+// Stable, key-order-independent comparison of two trigger cores.
+export function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(value).sort();
+  return "{" + keys.map((k) => JSON.stringify(k) + ":" + stableStringify(value[k])).join(",") + "}";
+}
+
+export function sameTrigger(a, b) {
+  return stableStringify(triggerCore(a)) === stableStringify(triggerCore(b));
+}
+
+// A trigger that can't be claimed fails SILENTLY, so what the repo declares is
+// validated before it is ever sent. Shared by the create and republish paths.
+function validateTrigger(dir, trigger) {
+  if (trigger === null) return trigger;
+  if (!trigger.selected_api) fail(`${dir}: zap.json is missing trigger.selected_api`);
+  if (!trigger.action) fail(`${dir}: zap.json is missing trigger.action`);
+  // A bare, unversioned selected_api makes the trigger claim fail SILENTLY.
+  if (!String(trigger.selected_api).includes("@")) {
+    fail(
+      `${dir}: trigger.selected_api "${trigger.selected_api}" is not version-pinned ` +
+        `(expected e.g. "NotionCLIAPI@2.39.1") — an unversioned value fails the claim silently.`,
+    );
+  }
+  return trigger;
+}
+
+// Where a deployment's trigger block lives in zap.json: per-deployment for a
+// multi-deployment dir (whatsapp-slack-bridge, esignatures-*, ...), top-level
+// otherwise. A MISSING key is a refusal, not a fallback — publishing without
+// --trigger silently unclaims the trigger and the Zap never fires, so "no
+// trigger" has to be stated as `"trigger": null`.
+export function resolveTriggerBlock(dir, dep) {
+  const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+  let block;
+  if (Array.isArray(zap.deployments)) {
+    const d = zap.deployments.find((x) => x.workflow_id === dep.workflowId);
+    if (!d) fail(`${dir}: no deployments[] entry with workflow_id "${dep.workflowId}" in zap.json`);
+    block = d.trigger;
+    if (block === undefined) {
+      fail(
+        `${dir}: deployments[] entry "${d.name || dep.workflowId}" must state "trigger" ` +
+          `(a trigger config, or null for a manual workflow)`,
+      );
+    }
+  } else {
+    block = zap.trigger;
+    if (block === undefined) {
+      fail(`${dir}: zap.json must state "trigger" (a trigger config, or null for a manual workflow)`);
+    }
+  }
+  return validateTrigger(dir, block ?? null);
+}
+
 // ---- First publish of a brand-new Zap -----------------------------------
 
 // Read the `deploy` block a not-yet-created Zap declares, and fail loudly on
@@ -170,18 +259,7 @@ function readCreateSpec(dir) {
     fail(`${dir}: zap.json must state deploy.enable_on_publish (true/false)`);
   }
 
-  const trigger = zap.trigger;
-  if (trigger !== null) {
-    need(trigger.selected_api, "trigger.selected_api");
-    need(trigger.action, "trigger.action");
-    // A bare, unversioned selected_api makes the trigger claim fail SILENTLY.
-    if (!String(trigger.selected_api).includes("@")) {
-      fail(
-        `${dir}: trigger.selected_api "${trigger.selected_api}" is not version-pinned ` +
-          `(expected e.g. "NotionCLIAPI@2.39.1") — an unversioned value fails the claim silently.`,
-      );
-    }
-  }
+  const trigger = validateTrigger(dir, zap.trigger);
 
   // publish wants { alias: { connectionId } }; zap.json stores { alias: id }.
   const connections = {};
@@ -304,21 +382,15 @@ function createAndPublish(dir, dep, execute) {
 
 // ---- Republishing an existing deployment ---------------------------------
 
-// Returns { newVersionId } after publishing, or the plan object when !execute.
+// Returns { skipped } when there is nothing to do, { plan } when !execute, else
+// { plan, newVersionId, triggerChanged, webhookUrl }.
 function publishDeployment(dir, dep, currentVersionId, execute) {
   const id = dep.workflowId;
   if (!id) fail(`${dir}: deployment "${dep.name}" has no workflow_id`);
   if (!currentVersionId) fail(`${dir}: deployment "${dep.name}" has no current_version_id in zap.json`);
 
-  // 1. Refuse if an open draft exists — a direct publish would be rejected,
-  //    and folding into a draft is a human decision (workflows-modify 6A).
-  const drafts = unwrap(sdk(["list-workflow-drafts", id])) || [];
-  if (Array.isArray(drafts) && drafts.length > 0) {
-    fail(`${dir}: workflow ${id} has ${drafts.length} open draft(s); resolve them in the editor before CI can publish.`);
-  }
-
-  // 2. Read back the deployed version's metadata (the authoritative source of
-  //    what to carry forward).
+  // 1. Read back the deployed version's metadata (the authoritative source of
+  //    what to carry forward — everything except the trigger).
   const version = unwrap(sdk(["get-workflow-version", id, currentVersionId]));
   const wf = unwrap(sdk(["get-workflow", id]));
 
@@ -330,16 +402,34 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const durableVersion = version?.zapier_durable_version ?? null;
   const connections = version?.connections ?? null;
   const appVersions = version?.app_versions ?? null;
-  const triggerCfg = version?.trigger ?? null;
+  const deployedTrigger = version?.trigger ?? null;
 
-  // 3. Determine start mode from BOTH signals and refuse if they disagree.
+  // 2. Reconcile the trigger against what the repo declares. zap.json wins, so
+  //    a trigger edited here ships, and one edited in the Zapier UI is healed.
+  const desired = resolveTriggerBlock(dir, dep);
+  const triggerChanged = !sameTrigger(desired, deployedTrigger);
+
+  // 3. This deployment is only here because zap.json changed, and the trigger it
+  //    declares is what is already live: nothing to publish. (Checked BEFORE the
+  //    draft refusal below, so an open draft can't fail a run that is a no-op.)
+  if (!dep.bySource && !triggerChanged) {
+    return { skipped: "no-trigger-change", workflowId: id };
+  }
+
+  // 4. Refuse if an open draft exists — a direct publish would be rejected,
+  //    and folding into a draft is a human decision (workflows-modify 6A).
+  const drafts = unwrap(sdk(["list-workflow-drafts", id])) || [];
+  if (Array.isArray(drafts) && drafts.length > 0) {
+    fail(`${dir}: workflow ${id} has ${drafts.length} open draft(s); resolve them in the editor before CI can publish.`);
+  }
+
+  // 5. Zapier's own two signals must agree before we touch anything: a saved
+  //    trigger with an empty live triggers[] (or vice versa) means the account
+  //    state is already broken, and republishing over it would hide that.
   const liveTriggers = Array.isArray(wf?.triggers) ? wf.triggers : [];
-  const hasSavedTrigger = triggerCfg != null;
+  const hasSavedTrigger = deployedTrigger != null;
   const hasLiveTrigger = liveTriggers.length > 0;
-  let startMode;
-  if (hasSavedTrigger && hasLiveTrigger) startMode = "trigger";
-  else if (!hasSavedTrigger && !hasLiveTrigger) startMode = "manual";
-  else {
+  if (hasSavedTrigger !== hasLiveTrigger) {
     fail(
       `${dir}: trigger signals disagree for ${id} ` +
         `(saved trigger: ${hasSavedTrigger}, live triggers[]: ${hasLiveTrigger}). ` +
@@ -347,10 +437,13 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     );
   }
 
-  // 4. Enabled state to preserve.
+  // 6. Start mode follows what the repo declares, not what is live.
+  const startMode = desired === null ? "manual" : "trigger";
+
+  // 7. Enabled state to preserve.
   const enabled = typeof wf?.enabled === "boolean" ? wf.enabled : undefined;
 
-  // 5. Rebuild source_files from the repo (fresh contents, same file set).
+  // 8. Rebuild source_files from the repo (fresh contents, same file set).
   const sourceFiles = buildSourceFiles(dir, deployedKeys, dep.entryFile || "workflow.ts");
 
   const plan = {
@@ -365,35 +458,76 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     hasDependencies: dependencies != null,
     hasConnections: connections != null,
     hasAppVersions: appVersions != null,
+    triggerChanged,
+    reason: dep.bySource ? (triggerChanged ? "source + trigger" : "source") : "trigger",
+    triggerFrom: triggerCore(deployedTrigger),
+    triggerTo: triggerCore(desired),
   };
 
   if (!execute) return { plan };
 
-  // 6. Publish, carrying every piece of metadata forward.
+  // 9. Publish, carrying every piece of metadata forward. The trigger is the one
+  //    exception: unchanged, the deployed object goes back verbatim (so a field
+  //    the canonical core doesn't model can't be dropped); changed, the repo's
+  //    declared core replaces it.
   const rest = ["publish-workflow-version", id, JSON.stringify(sourceFiles)];
   if (dependencies != null) rest.push("--dependencies", JSON.stringify(dependencies));
   if (durableVersion != null) rest.push("--zapier-durable-version", String(durableVersion));
   if (connections != null) rest.push("--connections", JSON.stringify(connections));
   if (appVersions != null) rest.push("--app-versions", JSON.stringify(appVersions));
-  if (startMode === "trigger") rest.push("--trigger", JSON.stringify(triggerCfg));
-  else rest.push("--manual");
+  if (startMode === "trigger") {
+    rest.push("--trigger", JSON.stringify(triggerChanged ? triggerCore(desired) : deployedTrigger));
+  } else {
+    rest.push("--manual");
+  }
   if (enabled === false) rest.push("--enabled", "false"); // never re-enable a disabled Zap
 
   const published = unwrap(sdk(rest));
   const newVersionId = published?.version?.id || published?.id || published?.version_id || null;
   if (!newVersionId) fail(`${dir}: publish of ${id} returned no new version id — response: ${JSON.stringify(published)}`);
 
-  // 7. Verify the start mode survived.
-  const after = unwrap(sdk(["get-workflow", id]));
-  const afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
+  // 10. Verify the start mode survived. A NEW claim is asynchronous and fails
+  //     silently, so it is polled like the create path; an unchanged trigger
+  //     carries an already-live claim and reads back on the first try.
+  let after = unwrap(sdk(["get-workflow", id]));
+  let afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
+  for (
+    let attempt = 0;
+    triggerChanged && startMode === "trigger" && afterTriggers.length === 0 && attempt < 5;
+    attempt++
+  ) {
+    sleepSync(3000);
+    after = unwrap(sdk(["get-workflow", id]));
+    afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
+  }
   if (startMode === "trigger" && afterTriggers.length === 0) {
     fail(`${dir}: PUBLISHED but the trigger was dropped (triggers[] empty) on ${id} — needs immediate attention.`);
   }
   if (startMode === "manual" && afterTriggers.length > 0) {
     fail(`${dir}: PUBLISHED but a trigger appeared unexpectedly on ${id} — needs attention.`);
   }
+  // A claim can succeed on the WRONG trigger, which the presence check above
+  // would wave through — so when we changed it, read the new version back.
+  if (triggerChanged) {
+    const newVersion = unwrap(sdk(["get-workflow-version", id, newVersionId]));
+    if (!sameTrigger(newVersion?.trigger ?? null, desired)) {
+      fail(
+        `${dir}: PUBLISHED ${newVersionId} on ${id} but the new version's trigger is not the one zap.json ` +
+          `declares — got ${JSON.stringify(triggerCore(newVersion?.trigger ?? null))}, ` +
+          `expected ${JSON.stringify(triggerCore(desired))}. Needs immediate attention.`,
+      );
+    }
+  }
 
-  return { plan, newVersionId };
+  return {
+    plan,
+    newVersionId,
+    triggerChanged,
+    // Present only for catch-hook triggers; a changed trigger can be issued a
+    // NEW catch URL, which has to land back in zap.json.
+    webhookUrl: afterTriggers[0]?.details?.webhook_url || null,
+    declaredWebhookUrl: desired?.webhook_url ?? null,
+  };
 }
 
 // ---- zap.json sync-back --------------------------------------------------
@@ -412,6 +546,22 @@ function syncBackVersionId(dir, oldVersionId, newVersionId) {
     fail(`${dir}: could not find current_version_id "${oldVersionId}" in zap.json to sync back`);
   }
   writeFileSync(abs, raw.replace(re, `$1${newVersionId}$2`));
+}
+
+// A changed catch-hook trigger can be issued a NEW catch URL, and that URL is
+// what every external system POSTs to — so the readback has to land back in
+// zap.json. Same in-place, value-targeted replacement as above (a JSON
+// round-trip would re-encode every escape and reformat the whole file).
+export function syncBackWebhookUrl(dir, oldUrl, newUrl) {
+  if (!newUrl || !oldUrl || oldUrl === newUrl) return false;
+  const abs = join(REPO_ROOT, dir, "zap.json");
+  const raw = readFileSync(abs, "utf8");
+  const re = new RegExp('("webhook_url":\\s*")' + oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '(")');
+  if (!re.test(raw)) {
+    fail(`${dir}: could not find webhook_url "${oldUrl}" in zap.json to sync back`);
+  }
+  writeFileSync(abs, raw.replace(re, `$1${newUrl}$2`));
+  return true;
 }
 
 // Fill in the ids a first publish produced, and retire the `deploy` block's
@@ -464,6 +614,67 @@ function loadCurrentVersionId(dir, workflowId) {
   return zap.current_version_id || null;
 }
 
+// ---- Drift audit ---------------------------------------------------------
+
+// Compare EVERY Zap's declared trigger against the live one, and publish
+// nothing. Because zap.json now wins on a republish, latent drift — most
+// plausibly a selected_api version pin here that lags what Zapier actually has
+// — would ship the first time that zap.json is touched for any reason. This is
+// the way to see it coming.
+function auditTriggers() {
+  const dirs = readdirSync(REPO_ROOT, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "scripts" && e.name !== "node_modules")
+    .map((e) => e.name)
+    .filter((d) => existsSync(join(REPO_ROOT, d, "zap.json")))
+    .sort();
+
+  const rows = [];
+  let checked = 0;
+  for (const dir of dirs) {
+    const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+    const deployments = Array.isArray(zap.deployments)
+      ? zap.deployments
+      : zap.workflow_id
+        ? [{ name: zap.name || dir, workflow_id: zap.workflow_id, current_version_id: zap.current_version_id }]
+        : [];
+    for (const d of deployments) {
+      if (!d.workflow_id || !d.current_version_id) continue;
+      checked++;
+      const dep = { name: d.name, workflowId: d.workflow_id };
+      let desired;
+      try {
+        desired = resolveTriggerBlock(dir, dep);
+      } catch (err) {
+        rows.push({ dir, name: d.name, note: `⚠️ ${err.message}` });
+        continue;
+      }
+      const version = unwrap(sdk(["get-workflow-version", d.workflow_id, d.current_version_id]));
+      const live = version?.trigger ?? null;
+      if (sameTrigger(desired, live)) continue;
+      rows.push({ dir, name: d.name, live: triggerCore(live), repo: triggerCore(desired) });
+    }
+  }
+
+  log(`## 🔍 Trigger drift audit — ${checked} deployment(s) checked`);
+  log("");
+  if (rows.length === 0) {
+    log("**No drift.** Every declared trigger matches the one that is live.");
+    return;
+  }
+  log(`**${rows.length} mismatch(es).** On the next republish of these, zap.json wins and the live trigger is replaced:`);
+  log("");
+  for (const r of rows) {
+    log(`### \`${r.dir}\` → ${r.name || "—"}`);
+    if (r.note) {
+      log(`- ${r.note}`);
+    } else {
+      log(`- live: \`${JSON.stringify(r.live)}\``);
+      log(`- repo: \`${JSON.stringify(r.repo)}\``);
+    }
+    log("");
+  }
+}
+
 function log(line) {
   process.stdout.write(line + "\n");
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, line + "\n");
@@ -475,15 +686,23 @@ function main() {
     fail("ZAPIER_CLIENT_ID and ZAPIER_CLIENT_SECRET must be set to --execute.");
   }
 
+  if (args.audit) {
+    if (!CLIENT_ID || !CLIENT_SECRET) fail("ZAPIER_CLIENT_ID and ZAPIER_CLIENT_SECRET must be set to --audit.");
+    auditTriggers();
+    return;
+  }
+
   const results = detectChangedZaps(changedFiles(args));
-  const toPublish = results.filter((r) => r.kind === "durable" && r.wouldRepublish);
+  // Source changed -> republish. Only zap.json changed -> a CANDIDATE: publish
+  // just those whose declared trigger turns out to differ from the live one.
+  const toPublish = results.filter((r) => r.kind === "durable" && (r.wouldRepublish || r.triggerCandidate));
   const deployments = toPublish.flatMap((r) => r.affected.map((d) => ({ dir: r.dir, dep: d })));
 
   log(`## ${args.execute ? "🚀 Publishing" : "📋 Publish plan (dry)"} — ${deployments.length} deployment(s)`);
   log("");
 
   if (deployments.length === 0) {
-    log("No Zap source changed — nothing to publish.");
+    log("No Zap source or trigger changed — nothing to publish.");
     return;
   }
 
@@ -514,14 +733,34 @@ function main() {
     }
 
     const currentVersionId = loadCurrentVersionId(dir, dep.workflowId);
-    const { plan, newVersionId } = publishDeployment(dir, dep, currentVersionId, args.execute);
-    log(`- start mode: **${plan.startMode}**, enabled: ${plan.enabled}, files: ${plan.sourceFileKeys.join(", ")}`);
+    const result = publishDeployment(dir, dep, currentVersionId, args.execute);
+
+    // zap.json changed but its trigger matches what is live: nothing to do.
+    if (result.skipped) {
+      log(`- ⏭️ \`zap.json\` changed but the trigger matches what is live — nothing published`);
+      log("");
+      continue;
+    }
+
+    const { plan, newVersionId } = result;
+    log(
+      `- reason: **${plan.reason}**, start mode: **${plan.startMode}**, enabled: ${plan.enabled}, ` +
+        `files: ${plan.sourceFileKeys.join(", ")}`,
+    );
+    if (plan.triggerChanged) {
+      log(`- 🎯 trigger change — zap.json wins:`);
+      log(`  - live: \`${JSON.stringify(plan.triggerFrom)}\``);
+      log(`  - repo: \`${JSON.stringify(plan.triggerTo)}\``);
+    }
     if (args.execute) {
       syncBackVersionId(dir, currentVersionId, newVersionId);
-      synced.push({ dir, workflowId: dep.workflowId, newVersionId });
+      synced.push({ dir, workflowId: dep.workflowId, newVersionId, triggerChanged: plan.triggerChanged });
       log(`- ✅ published new version \`${newVersionId}\`; zap.json updated`);
+      if (syncBackWebhookUrl(dir, result.declaredWebhookUrl, result.webhookUrl)) {
+        log(`- 🔗 catch URL changed to ${result.webhookUrl} — synced back; REPOINT anything that POSTs to the old one`);
+      }
     } else {
-      log(`- would republish from \`${plan.fromVersion}\` carrying deps/connections/app-versions/trigger forward`);
+      log(`- would republish from \`${plan.fromVersion}\` carrying deps/connections/app-versions forward`);
     }
     log("");
   }
@@ -531,10 +770,14 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
-  log("");
-  log(`❌ ${err.message}`);
-  process.exit(1);
+// Only run as a CLI when invoked directly, not when imported (the trigger
+// helpers above are unit-testable off-CI).
+if (process.argv[1] && process.argv[1].endsWith("publish-changed-zaps.mjs")) {
+  try {
+    main();
+  } catch (err) {
+    log("");
+    log(`❌ ${err.message}`);
+    process.exit(1);
+  }
 }

@@ -78,7 +78,10 @@ jobs:
           node scripts/detect-changed-zaps.mjs --files "${FILES[@]}" --json > detect.json
           node -e '
             const d = JSON.parse(require("fs").readFileSync("detect.json","utf8"));
-            const any = d.results.some(r => r.kind === "durable" && r.wouldRepublish);
+            // Source changed -> a republish. Only zap.json changed -> a trigger
+            // CANDIDATE: the publish job compares it against the live trigger
+            // and publishes only if they differ.
+            const any = d.results.some(r => r.kind === "durable" && (r.wouldRepublish || r.triggerCandidate));
             require("fs").appendFileSync(process.env.GITHUB_OUTPUT, "has_changes=" + any + "\n");
             console.log("has_changes =", any);
           '

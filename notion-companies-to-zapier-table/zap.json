@@ -7,7 +7,12 @@
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
     "action": "hook_v2",
-    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/b25a7dfde826bff6/"
+    "authentication_id": null,
+    "params": {
+      "_zap_static_hook_code": "b25a7dfde826bff6"
+    },
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/b25a7dfde826bff6/",
+    "params_note": "The static hook code PINS the catch URL above. It is live on Zapier and must stay declared here — republishing with empty params would have Zapier issue a NEW catch URL and silently orphan every caller of the old one."
   },
   "zapier_durable_version": "0.6.1",
   "dependencies": {
