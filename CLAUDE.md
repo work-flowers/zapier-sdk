@@ -20,6 +20,12 @@ Universal rules live in [`.claude/rules/durables.md`](.claude/rules/durables.md)
 - **Zaps pinning a catch URL with `params._zap_static_hook_code`**: `notion-newsletter-to-buttondown`, `notion-companies-to-zapier-table`. Never let that key fall out of their `zap.json`. The `--audit` run on 2026-08-25 found exactly this drift on `notion-companies-to-zapier-table` and it was corrected in the repo.
 - The `notion-companies-to-zapier-table` Durable was historically managed in the personal `denchiuten/notion-companies-hub` repo by mistake; this repo is its source of truth now. Its deployed header comment and workflow description still point at the old repo until the next republish.
 
+## Unrecognized-payload mechanism
+
+This repo uses the **default mechanism: throw.** An unrecognized non-empty payload raises, producing a red run and a Zapier error alert. That suits the workload here — several Zaps are background mirrors ([`contact-emails-to-zapier-table`](contact-emails-to-zapier-table/), [`gcal-event-updated-to-meeting-note`](gcal-event-updated-to-meeting-note/)) where no human is waiting on any individual run, so a silent skip would go unnoticed indefinitely. That is not hypothetical: the latter's predecessor sat dead for three months.
+
+The shared rule permits substituting an explicit alert channel instead. **This repo does not substitute.**
+
 ## Reference implementations
 
 The shared rules cite these helpers by name; here is where this repo's copy lives.
