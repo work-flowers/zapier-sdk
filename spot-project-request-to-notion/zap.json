@@ -1,12 +1,12 @@
 {
   "name": "spot-project-request-to-notion",
   "workflow_id": "019fb61c-c04e-7783-90ba-37a70bc3415c",
-  "current_version_id": "01a014cb-165c-78ee-84c6-84ac5a875b4b",
+  "current_version_id": "01a03649-c796-7f94-acf5-e1e5097d4ead",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVQztSWpPmcqN6-IJU8wfQ",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "App227952CLIAPI@1.5.0",
+    "selected_api": "App227952CLIAPI@1.5.1",
     "action": "updated_project_request",
     "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
     "params": {},
@@ -34,12 +34,13 @@
   },
   "partner_app": {
     "app_key": "App227952CLIAPI",
-    "app_version": "1.5.0",
+    "app_version": "1.5.1",
+    "app_version_note": "Pinned 1.5.0 -> 1.5.1 on 2026-08-25 via out-of-band --trigger publish (version 01a03649-c796-…), on the hypothesis that 1.5.1 might fix the acceptance-delivery dedup bug (see acceptance_delivery_broken_2026_08_24). UNTESTED: the fix can only be confirmed by the next real Pending->Accepted transition, and a Zapier support ticket was filed in parallel. Source/deps/connection unchanged; only the trigger's app version moved. If 1.5.1 does NOT fix it, the durable reconciliation-sweep remains the real fix.",
     "trigger": "read/updated_project_request",
     "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and new_project_request (this Zap's ORIGINAL trigger, abandoned 2026-08-18 — it fires once per request at Pending, before identity is revealed, and never again; see stage_change_trigger). Also exposes a find_project_request SEARCH action: filter by id or email, or leave both blank to return every project request. That call is the cheapest way to see the account's real state and answered why this Zap sat at zero runs."
   },
   "created_at": "2026-07-31T02:59:25.394Z",
-  "version_created_at": "2026-08-18T12:14:09.121Z",
+  "version_created_at": "2026-08-25T00:20:00.159Z",
   "description": "Zapier Solution Partner project request ACCEPTED (stage-change trigger, gated to Accepted — Pending arrives identity-withheld, Declined/Expired are deliberately not filed) -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
   "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three. FLAG NAMING (2026-08-07, CLI 0.71.1): publishing with `--zapier_durable_version` emits 'DEPRECATION WARNING - `zapier_durable_version` is deprecated and may be removed in a future release'. That is a RENAME, not a removal of version pinning — the canonical CLI flag is kebab-case `--zapier-durable-version` (likewise `--app-versions`), and the MCP publish tool takes camelCase `zapierDurableVersion`. Use those spellings and the warning goes away. The vendored workflow skills documented the snake_case forms until 2026-08-07, which is why a publish here went out with a deprecated flag; `npx skills update` on the bundle moved them to sdk_cli_min 0.67.4 / sdk_cli_validated 0.67.5 and the kebab-case spellings.",
   "first_run": {
@@ -105,6 +106,7 @@
     ],
     "root_cause_location": "Zapier/SPOT side (the app trigger's dedup, or the durable polling engine). NOT fixable in workflow.ts — the durable is correct and files as designed when handed an accepted payload. A real fix needs a different delivery mechanism (e.g. a scheduled reconciliation sweep over find_project_request that files any Accepted-but-unfiled request, or a serializing classic-Zap front door).",
     "decision": "Dennis, 2026-08-24: document the workaround now (this block + README), design/build the real fix separately. SPOT app 1.5.1 now exists; whether it changes this trigger's dedup is UNTESTED and worth checking when the fix is scoped.",
+    "pin_1_5_1_attempt": "2026-08-25: pinned the trigger 1.5.0 -> 1.5.1 (out-of-band --trigger publish, version 01a03649-c796-7f94-acf5-e1e5097d4ead; enabled + triggers[0] active on updated_project_request confirmed) as a speculative fix, since 1.5.1's dedup behaviour cannot be inspected via MCP/CLI and the bug cannot be exercised without a real stage transition (a read/test-trigger only returns a snapshot; there is no write action to change a request's stage, and declining a live lead is off the table). So this is 'install and observe on the next real Pending->Accepted'. A Zapier support ticket was filed in parallel to get a definitive answer. If the next acceptance still does not fire a run, 1.5.1 did not fix it and the durable reconciliation-sweep is the real fix.",
     "commercial_laundry_replay": {
       "request_id": "02700000000003A00hE",
       "company": "Commercial Laundry Solutions",
