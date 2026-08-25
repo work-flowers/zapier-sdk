@@ -1,7 +1,7 @@
 {
   "name": "contrast-registrations-to-event-attendance",
   "workflow_id": "019f83b2-c92f-7fb0-8dcd-3c07990a0d52",
-  "current_version_id": "01a03673-b5b9-784e-a88e-33077913fa86",
+  "current_version_id": "01a03676-aaeb-7c70-9bf0-b82b13df9bd5",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ae0HJbkWHBu2fj-NYj6pvA",
   "enabled": false,
   "trigger": {
