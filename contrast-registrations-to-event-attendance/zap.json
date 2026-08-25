@@ -6,9 +6,9 @@
   "enabled": false,
   "trigger": {
     "selected_api": "ContrastCLIAPI@1.5.1",
-    "action": "replay_views",
+    "action": "registrations",
     "authentication_id": "02bb11d4-8a47-8bb1-857a-78e7edc97a4c",
-    "trigger_note": "TEMPORARY, for the trigger-change pipeline test (PR #124). The real action is `registrations`; a follow-up PR restores it. Contrast is no longer used at all, so nothing fires on this Zap either way."
+    "trigger_note": "Retired. Contrast is no longer used at all, so this trigger will never fire; the Zap is disabled and kept only as the repo's one inert target for live pipeline tests. Its action was temporarily swapped to `replay_views` on 2026-08-25 to exercise the trigger-change publish path (PRs #124/#125) and restored here."
   },
   "zapier_durable_version": "0.9.1",
   "dependencies": {
