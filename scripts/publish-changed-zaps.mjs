@@ -480,16 +480,36 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   } else {
     rest.push("--manual");
   }
-  if (enabled === false) rest.push("--enabled", "false"); // never re-enable a disabled Zap
+  // Never re-enable a parked Zap. `--enabled false` is NOT a valid shape — the
+  // CLI's booleans take no value ("too many arguments ... 'false' was read as an
+  // extra argument"), and the negation is the separate `--disabled` flag. It is
+  // not trusted on its own either: a publish enables by default, so the state is
+  // read back and forced down below.
+  if (enabled === false) rest.push("--disabled");
 
   const published = unwrap(sdk(rest));
   const newVersionId = published?.version?.id || published?.id || published?.version_id || null;
   if (!newVersionId) fail(`${dir}: publish of ${id} returned no new version id — response: ${JSON.stringify(published)}`);
 
-  // 10. Verify the start mode survived. A NEW claim is asynchronous and fails
+  // 10. A publish ENABLES the workflow. Force a parked Zap back down FIRST —
+  //     before the trigger readback below, which can poll for ~15s — so the
+  //     window in which it could fire is as short as possible. (disable-workflow
+  //     keeps the catch URL, so nothing is lost by it.)
+  let after = unwrap(sdk(["get-workflow", id]));
+  if (enabled === false && after?.enabled !== false) {
+    sdk(["disable-workflow", id]);
+    after = unwrap(sdk(["get-workflow", id]));
+    if (after?.enabled !== false) {
+      fail(
+        `${dir}: PUBLISHED ${newVersionId} on ${id} but it is still ENABLED after disable-workflow — ` +
+          `this Zap was parked and must not run. Disable it in the Zapier UI now.`,
+      );
+    }
+  }
+
+  // 11. Verify the start mode survived. A NEW claim is asynchronous and fails
   //     silently, so it is polled like the create path; an unchanged trigger
   //     carries an already-live claim and reads back on the first try.
-  let after = unwrap(sdk(["get-workflow", id]));
   let afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
   for (
     let attempt = 0;

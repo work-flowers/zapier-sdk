@@ -7,7 +7,8 @@
   "trigger": {
     "selected_api": "ContrastCLIAPI@1.5.1",
     "action": "replay_views",
-    "authentication_id": "02bb11d4-8a47-8bb1-857a-78e7edc97a4c"
+    "authentication_id": "02bb11d4-8a47-8bb1-857a-78e7edc97a4c",
+    "trigger_note": "TEMPORARY, for the trigger-change pipeline test (PR #124). The real action is `registrations`; a follow-up PR restores it. Contrast is no longer used at all, so nothing fires on this Zap either way."
   },
   "zapier_durable_version": "0.9.1",
   "dependencies": {
