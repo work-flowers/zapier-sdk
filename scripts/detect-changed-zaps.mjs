@@ -92,7 +92,13 @@ function readJson(absPath) {
 //      Zap ships the same way a change to an existing one does: open a PR, merge
 //      it, and CI does the publish. Marked pendingCreate so the report says
 //      "create" rather than "republish".
-function affectedDeployments(zap, changedSourceFilesInDir) {
+//
+// A zap.json edit may have changed a deployment's TRIGGER, which is published
+// metadata just like the code is. Whether it actually differs from what is live
+// can't be answered from the working tree — the deployed trigger lives on
+// Zapier — so every deployment in the dir is marked a CANDIDATE and the
+// publisher decides by comparing against the live trigger.
+function affectedDeployments(zap, changedSourceFilesInDir, zapJsonChanged) {
   const deployments = Array.isArray(zap?.deployments)
     ? zap.deployments
     : zap?.workflow_id
@@ -119,7 +125,12 @@ function affectedDeployments(zap, changedSourceFilesInDir) {
   const affected = [];
   for (const d of deployments) {
     const hitByOwnEntry = d.entry_file && changedSet.has(d.entry_file);
-    if (sharedChanged || hitByOwnEntry) affected.push(d);
+    const bySource = Boolean(sharedChanged || hitByOwnEntry);
+    // A brand-new Zap is only ever created off a source change: a metadata tweak
+    // on a dir still marked pending-create must not conjure the container.
+    const triggerCandidate = Boolean(zapJsonChanged) && d.pendingCreate !== true;
+    if (!bySource && !triggerCandidate) continue;
+    affected.push({ ...d, bySource, triggerCandidate });
   }
   return { deployments, affected };
 }
@@ -147,7 +158,8 @@ export function detectChangedZaps(files) {
 
     if (hasZapJson) {
       const zap = readJson(join(abs, "zap.json"));
-      const { deployments, affected } = affectedDeployments(zap, changedSource);
+      const zapJsonChanged = rel.includes("zap.json");
+      const { deployments, affected } = affectedDeployments(zap, changedSource, zapJsonChanged);
       results.push({
         dir,
         kind: "durable",
@@ -155,6 +167,9 @@ export function detectChangedZaps(files) {
         zapierDurableVersion: zap?.zapier_durable_version || null,
         totalDeployments: deployments.length,
         wouldRepublish: changedSource.length > 0,
+        // zap.json changed, so a trigger change is POSSIBLE. Only the publisher
+        // can tell, by comparing zap.json's trigger against the live one.
+        triggerCandidate: zapJsonChanged && affected.length > 0,
         changedFiles: rel,
         changedSource,
         affected: affected.map((d) => ({
@@ -167,6 +182,10 @@ export function detectChangedZaps(files) {
           // True when this Zap has no container on Zapier yet: the publisher
           // creates it and publishes v1 instead of republishing.
           pendingCreate: d.pendingCreate === true,
+          // Its deployed code changed -> republish unconditionally.
+          bySource: d.bySource === true,
+          // Only zap.json changed -> republish ONLY if the trigger differs.
+          triggerCandidate: d.triggerCandidate === true,
         })),
       });
     } else if (hasCodeStep) {
@@ -187,7 +206,10 @@ export function detectChangedZaps(files) {
 function renderMarkdown(results) {
   const durables = results.filter((r) => r.kind === "durable");
   const republish = durables.filter((r) => r.wouldRepublish);
-  const metaOnly = durables.filter((r) => !r.wouldRepublish);
+  // zap.json changed but no code did: republished on merge only if the trigger
+  // it declares turns out to differ from the one that is live.
+  const triggerOnly = durables.filter((r) => !r.wouldRepublish && r.triggerCandidate);
+  const metaOnly = durables.filter((r) => !r.wouldRepublish && !r.triggerCandidate);
   const classic = results.filter((r) => r.kind === "classic-code-step");
   const other = results.filter((r) => r.kind === "non-zap");
 
@@ -225,6 +247,28 @@ function renderMarkdown(results) {
   }
   lines.push("");
 
+  if (triggerOnly.length) {
+    const count = triggerOnly.reduce((n, r) => n + r.affected.length, 0);
+    lines.push(`### 🎯 Trigger check — ${count} deployment(s) across ${triggerOnly.length} Zap director(y/ies)`);
+    lines.push("");
+    lines.push(
+      "`zap.json` changed but no code did. On merge, each deployment's declared trigger is compared " +
+        "against the one that is live, and it is **republished only if they differ** " +
+        "(a trigger-only republish ships the same source as a new version).",
+    );
+    lines.push("");
+    lines.push("| Zap directory | Deployment | Workflow ID | Enabled |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const r of triggerOnly) {
+      for (const d of r.affected) {
+        lines.push(
+          `| \`${r.dir}\` | ${d.name || "—"} | \`${d.workflowId || "—"}\` | ${d.enabled === false ? "⏸️ no" : "✅ yes"} |`,
+        );
+      }
+    }
+    lines.push("");
+  }
+
   if (metaOnly.length) {
     lines.push("<details><summary>Durable dirs with metadata/README-only changes (no republish)</summary>");
     lines.push("");
@@ -255,9 +299,10 @@ function renderMarkdown(results) {
   lines.push(
     "> On merge, each affected deployment is published by [`Publish Zaps`](../../.github/workflows/publish-zaps.yml) " +
       "and the new `current_version_id` is synced back into `zap.json` (repo rule 4). An existing Zap is " +
-      "republished with the metadata read off its live version; a Zap marked `deploy.state: \"pending-create\"` " +
-      "gets its container created (honouring `is_private`) and v1 published from the `deploy` block, then has its " +
-      "`workflow_id`, `current_version_id` and `trigger_url` synced back.",
+      "republished with the metadata read off its live version, EXCEPT the trigger: `zap.json` is the source of " +
+      "truth there, so a declared trigger that differs from the live one replaces it. A Zap marked " +
+      "`deploy.state: \"pending-create\"` gets its container created (honouring `is_private`) and v1 published " +
+      "from the `deploy` block, then has its `workflow_id`, `current_version_id` and `trigger_url` synced back.",
   );
   return lines.join("\n");
 }

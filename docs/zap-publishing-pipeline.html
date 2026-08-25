@@ -619,9 +619,10 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     </p>
     <div class="tldr">
       <span class="tag">TL;DR</span>
-      <p>Every merged PR is scanned for real source changes to deployed durables. If there are any,
-      a publish job republishes each affected deployment exactly as it runs today
-      and commits the new <code>current_version_id</code> straight
+      <p>Every merged PR is scanned for real source changes to deployed durables — and for
+      <strong>trigger changes</strong>, since <code>zap.json</code> is the source of truth for a
+      Zap's trigger. If there are any, a publish job republishes each affected deployment exactly as
+      it runs today and commits the new <code>current_version_id</code> straight
       back to <code>main</code>. No separate approval step — merging the PR is the approval.
       The repo always matches what's deployed.</p>
     </div>
@@ -721,6 +722,13 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       <code>package.json</code>, or <code>package-lock.json</code> — inside a durable directory
       (one with a <code>zap.json</code>). Everything else is reported and left alone.
     </p>
+    <p>
+      With one exception: editing a <code>zap.json</code> makes every deployment in that directory a
+      <strong>trigger candidate</strong>. The working tree can't say whether the trigger really
+      changed — the deployed one lives on Zapier — so detection can only flag the possibility, and
+      the publish job settles it by comparing against the live trigger. A note-only tweak ends as a
+      no-op run; a real trigger change republishes.
+    </p>
     <div class="scroll-x">
       <table class="rules">
         <thead>
@@ -744,8 +752,9 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
           </tr>
           <tr>
             <td><code>some-zap/zap.json</code></td>
-            <td><span class="verdict no">nothing</span></td>
-            <td>It mirrors deployed state; editing the mirror deploys nothing.</td>
+            <td><span class="verdict go">maybe republishes</span></td>
+            <td>It's the source of truth for the <strong>trigger</strong>. Flagged as a candidate;
+            the publish job republishes only if the declared trigger differs from the live one.</td>
           </tr>
           <tr>
             <td><code>scripts/</code>, <code>docs/</code>, <code>.github/</code>, root files</td>
@@ -790,11 +799,37 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       For each affected deployment, the publisher mirrors the <code>workflows-modify</code>
       "direct publish" path: it fetches the <strong>deployed</strong> version's metadata, rebuilds
       the source files from the repo (same file set, fresh contents), and republishes carrying
-      everything forward — dependencies, durable version, connections, app-versions, the enabled
-      state (a disabled Zap is never re-enabled), and the exact
-      <strong>trigger-vs-manual start mode</strong>. That last one matters most: getting the start
-      mode wrong silently drops a live trigger, so it's read from two independent signals and
-      verified again <em>after</em> publishing.
+      everything forward — dependencies, durable version, connections, app-versions, and the enabled
+      state (a disabled Zap is never re-enabled).
+    </p>
+    <p>
+      The <strong>trigger</strong> is the one thing not carried forward, because
+      <code>zap.json</code> is its source of truth. The publisher compares the trigger the repo
+      declares against the deployed one on the four fields that are actually Zapier's —
+      <code>selected_api</code>, <code>action</code>, <code>authentication_id</code>,
+      <code>params</code>. Identical, and the deployed object goes back verbatim, so nothing the
+      comparison doesn't model can be dropped. Different, and the declared one replaces it, with the
+      before/after logged in the run summary. Everything else in the block —
+      <code>trigger_note</code>, <code>status</code>, and friends — is repo annotation, and
+      <code>webhook_url</code> is a readback of what Zapier issued; none of it is ever published or
+      compared.
+    </p>
+    <p>
+      Getting the <strong>trigger-vs-manual start mode</strong> wrong silently drops a live trigger
+      and the Zap never fires again, so it is verified <em>after</em> publishing rather than
+      trusted — and when the trigger changed, the new version is read back and its trigger checked
+      against what <code>zap.json</code> declares, because a claim can succeed on the wrong trigger
+      and a presence check would wave that through. A new claim is asynchronous, so the readback is
+      polled.
+    </p>
+    <p>
+      Two consequences worth knowing. A trigger edited in the Zapier editor is <em>healed</em> back
+      to what the repo says on the next republish of any kind —
+      <code>node scripts/publish-changed-zaps.mjs --audit</code> reports every such mismatch without
+      publishing anything. And a changed catch-hook trigger can be issued a
+      <strong>new <code>webhook_url</code></strong>: the publisher syncs it back into
+      <code>zap.json</code> and says so, but repointing whatever POSTs to the old URL is a manual
+      cutover step.
     </p>
     <h3 style="margin-top: 30px;">It refuses — loudly, publishing nothing — when:</h3>
     <ul class="refusals">
@@ -802,6 +837,8 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       <li><span class="x">refuse</span><span>The <strong>trigger signals disagree</strong> — the saved version has a trigger but the live workflow's <code>triggers[]</code> is empty, or vice versa. Reconcile in the editor first.</span></li>
       <li><span class="x">refuse</span><span>A <strong>deployed source file has no counterpart in the repo</strong>. It will not publish a different file set than what is live.</span></li>
       <li><span class="x">refuse</span><span>Required <strong>metadata can't be read back</strong> — no deployed source files, no <code>current_version_id</code>, or the publish response returns no new version id.</span></li>
+      <li><span class="x">refuse</span><span><code>zap.json</code> <strong>doesn't state a trigger</strong>, or states one whose <code>selected_api</code> isn't version-pinned. Publishing without a trigger silently unclaims it, and an unversioned app fails the claim silently — so "no trigger" has to be written as <code>"trigger": null</code>.</span></li>
+      <li><span class="x">refuse</span><span>The published version's <strong>trigger isn't the one that was declared</strong>, after a trigger change. The claim succeeded on something else.</span></li>
     </ul>
     <p>
       The script has a plan/execute split: without <code>--execute</code> it prints the full plan
@@ -815,8 +852,9 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <h2>The Sync-Back</h2>
     <p>
       After each successful publish, the script rewrites <strong>only</strong> the
-      <code>current_version_id</code> value inside that Zap's <code>zap.json</code> — a surgical
-      one-line regex replace, not a parse-and-re-serialise, so the diff is one line and the rest of
+      <code>current_version_id</code> value inside that Zap's <code>zap.json</code> (plus the
+      <code>webhook_url</code>, on the rare occasion a trigger change was issued a new catch URL) —
+      a surgical regex replace, not a parse-and-re-serialise, so the diff is one line and the rest of
       the file stays byte-for-byte. The workflow then commits it as
       <code>github-actions[bot]</code> and pushes straight to <code>main</code>:
       one commit, no second PR.
@@ -875,7 +913,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       </div>
       <div class="guarantee">
         <h3>Deployed metadata is fetched, never assumed</h3>
-        <p>Connections, dependencies, app-versions, enabled state, and — critically — the trigger-vs-manual start mode all come from the live deployment, then get verified after publishing.</p>
+        <p>Connections, dependencies, app-versions and enabled state all come from the live deployment. The trigger instead comes from <code>zap.json</code>, which is its source of truth — and either way the start mode is verified after publishing.</p>
       </div>
       <div class="guarantee">
         <h3>Ambiguity means refusal</h3>
