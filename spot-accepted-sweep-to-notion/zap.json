@@ -1,8 +1,8 @@
 {
   "name": "spot-accepted-sweep-to-notion",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a03cc8-85db-7ab5-9045-d8c2d2ed1707",
+  "current_version_id": "01a03cc8-953d-734f-988e-bc8212410ceb",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZhyJXo70Ii7YfdzHJ5eqw",
   "enabled": false,
   "is_private": false,
   "trigger": {
@@ -26,7 +26,7 @@
     "@zapier/zapier-sdk": "0.91.0"
   },
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "spot-accepted-sweep-to-notion",
     "description": "Scheduled reconciliation sweep for accepted Zapier Solution Partner project requests. Lists every request via the SPOT find_project_request search action and files any that are Accepted but not yet in the shared SPOT Project Requests dedupe Table, using the same Contact/Company/Deal upsert logic as spot-project-request-to-notion. Backstop for that Zap's updated_project_request trigger, which cannot deliver acceptances (Zapier dedupes it on the stable project_request_id — confirmed by Zapier Product Escalations 2026-08-26, ticket 9NPEKP-739EJ).",
     "enable_on_publish": false
