@@ -1,12 +1,12 @@
 {
   "name": "agent-chat-session-to-notion",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a03cdd-a9f7-72be-a1b5-dd45f0b14ffe",
+  "current_version_id": "01a03cdd-b937-72cb-bdb8-896f0158da48",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATlmsO3syDeDn2pxUiKcsw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "agent-chat-session-to-notion",
     "description": "embeddable-agent-chat session.ended webhook -> fetch the full transcript via the Notion Agents Unofficial custom integration -> AI summary (standard/auto) -> log a record in the Agent Chat Sessions Notion database with the transcript as the page body.",
     "enable_on_publish": true
