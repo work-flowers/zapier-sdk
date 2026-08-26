@@ -4,7 +4,7 @@ A **scheduled reconciliation sweep** that files accepted Zapier **Solution Partn
 
 **This is the reliable backstop for [`spot-project-request-to-notion`](../spot-project-request-to-notion/).** That Zap's `updated_project_request` polling trigger *cannot* deliver acceptances: Zapier's poller dedupes on the stable `project_request_id` (the trigger marks it the primary output field, which overrides the root-level composite `id` as the dedupe key), so a request fires once — at `Pending`, identity still withheld — and never again on the transition to `Accepted`. **Zapier Product Escalations confirmed this from their own dedup logs on 2026-08-26 (ticket `9NPEKP-739EJ`)**; the fix is on Zapier's side with no timeline, and a scheduled sweep is their own recommended workaround. See [`spot-project-request-to-notion/zap.json` → `acceptance_delivery_broken_2026_08_24`](../spot-project-request-to-notion/zap.json).
 
-**Status:** 🅿️ **Parked, disabled, pending review + a `run-durable` test.** Authored as a `deploy: pending-create` Zap; on merge the pipeline creates and first-publishes it **disabled** (`enable_on_publish: false`). It has **not** been run — see [Before enabling](#before-enabling). Cutover is a single `enable-workflow <id>` once tested.
+**Status:** ✅ **Live — enabled 2026-08-26, `everyHour`, dryRun-verified.** Workflow `01a03cc8-85db-7ab5-9045-d8c2d2ed1707`, current version `01a03cd0-95e2-…`. The `run-durable` gate was cleared on the deployed Zap via `run_workflow --input {dryRun:true}` (run `01a03cd4-0ed6-…`): it listed all 5 requests, kept the 2 `Accepted`-with-email, found both already-filed against the shared dedupe Table, and **wrote nothing** — no determinism fault. Cadence is hourly and staying there for now (Dennis, 2026-08-26); trimming to `everyDay` later is a one-field trigger switch (see [Cadence and cost](#cadence-and-cost)). Runs beside `spot-project-request-to-notion`; the shared dedupe Table keeps them idempotent, so the trigger Zap was left as-is.
 
 ## How it fits with the trigger Zap
 
@@ -49,19 +49,17 @@ Unlike the trigger Zap, this workflow **calls the partner tool** (`find_project_
 
 `everyHour` means **~24 `find_project_request` tasks/day** (≈720/month) as a baseline, for a workflow that files only a handful of acceptances a month. That is the **first thing to decide at review**: `everyDay` (~30/month) still catches every acceptance within a day and is far cheaper — but **verify its param fields** (`list-trigger-input-fields ScheduleCLIAPI everyDay`) before switching, because a wrong param shape makes the trigger claim fail *silently* at publish. Hourly is the default only because its param shape is already proven; nothing is spent until the Zap is enabled.
 
-## Before enabling
+## How it was verified (2026-08-26)
 
-Authored without a live run — the session had no CLI/durable runtime. `workflow.ts` **typechecks** (`tsc --skipLibCheck`, clean) but has **not executed**, and durable determinism violations don't surface until a real payload runs. So before the `pending-create` merges (merge = deploy = first publish):
+Authored without a live run (the authoring session had no CLI/durable runtime), so the `run-durable` gate was cleared *after* deploy, on the live Zap, via a `dryRun` run — which lists and classifies against live SPOT data and writes nothing:
 
-1. **`run-durable` with `dryRun`** — lists and classifies against live SPOT data, writes nothing:
-   ```bash
-   run-durable "$SOURCE_FILES" \
-     --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"spot":{"connectionId":"02a5085e-1d27-853d-89b7-115a57fc4d32"}}' \
-     --input '{"dryRun":true}' --private
-   ```
-   Confirm `checked` / `acceptedWithEmail` look right and the already-filed requests (Yanolja, Commercial Laundry) report `status: already-filed`.
-2. **One real run** (a fresh throwaway acceptance, or accept the dryRun evidence) to confirm a Deal is created and the dedupe row written.
-3. **Cutover:** merge (publishes disabled) → `enable-workflow <id>`. No need to touch the trigger Zap; the shared dedupe Table keeps them idempotent.
+```
+run_workflow / trigger-workflow  01a03cc8-85db-7ab5-9045-d8c2d2ed1707  --input '{"dryRun":true}'
+```
+
+Durable run `01a03cd4-0ed6-…` returned `checked: 5`, `acceptedWithEmail: 2`, and both Accepted requests (Commercial Laundry `02700000000003A00hE`, Yanolja `02700000000002X00hE`) `status: already-filed` against the shared dedupe Table — `filedCount: 0`, nothing written. The 3 Declined requests were filtered out, and the per-request keyed steps ran with no collision and no determinism fault. (Equivalently, `run-durable "$SOURCE_FILES" --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"spot":{"connectionId":"02a5085e-1d27-853d-89b7-115a57fc4d32"}}' --input '{"dryRun":true}' --private` runs the source ad hoc without touching the deployed Zap.)
+
+The first *real* filing run will happen the first time a genuinely new acceptance appears that isn't already in the dedupe Table; watch that run's history for the created Deal + the written dedupe row.
 
 ## Idempotency & concurrency
 
