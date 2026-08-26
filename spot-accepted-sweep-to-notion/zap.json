@@ -1,0 +1,58 @@
+{
+  "name": "spot-accepted-sweep-to-notion",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyHour",
+    "authentication_id": null,
+    "params": {
+      "moh": "00",
+      "weekends": "yes"
+    },
+    "authentication_note": "Schedule by Zapier needs no connection (get-app ScheduleCLIAPI reports auth_type ''), same as xero-invoice-alerts. The SPOT and Notion credentials are bound as connection ALIASES instead, because both are called from the workflow body.",
+    "params_note": "PROVEN config, copied verbatim from xero-invoice-alerts (everyHour, top of the hour, weekends included). `moh` MUST be the STRING \"00\" not the integer 0 (its real choices are the zero-padded strings \"00\"/\"15\"/\"30\"/\"45\" — check list-trigger-input-field-choices ScheduleCLIAPI everyHour moh). CADENCE IS THE #1 REVIEW ITEM: hourly = ~24 find_project_request tasks/day baseline (720/month) for a workflow that files a handful of acceptances a month. everyDay (~30/month) is the cost-sensible alternative — but verify its param fields via `list-trigger-input-fields ScheduleCLIAPI everyDay` before switching, because a wrong param shape makes the trigger claim fail SILENTLY at publish. Parked disabled, so nothing is spent until it is enabled at cutover."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "spot": "02a5085e-1d27-853d-89b7-115a57fc4d32"
+  },
+  "zapier_durable_version": "0.10.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.91.0"
+  },
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "spot-accepted-sweep-to-notion",
+    "description": "Scheduled reconciliation sweep for accepted Zapier Solution Partner project requests. Lists every request via the SPOT find_project_request search action and files any that are Accepted but not yet in the shared SPOT Project Requests dedupe Table, using the same Contact/Company/Deal upsert logic as spot-project-request-to-notion. Backstop for that Zap's updated_project_request trigger, which cannot deliver acceptances (Zapier dedupes it on the stable project_request_id — confirmed by Zapier Product Escalations 2026-08-26, ticket 9NPEKP-739EJ).",
+    "enable_on_publish": false
+  },
+  "connections_note": "Two aliases. `notion_wf` is the work.flowers Notion connection (the CRM databases are shared with it — NEVER the Knoxx connection). `spot` is the work.flowers SPOT connection, the SAME id the trigger Zap carries on its trigger auth — bound here as a --connections alias because THIS workflow calls find_project_request from its body.",
+  "tables": {
+    "01KYV1R8BWAZ697HQ8P1QV80AF": "SPOT Project Requests — request id -> the Notion Deal/Contact/Company page ids it produced. SHARED with spot-project-request-to-notion (which owns it): this sweep reads it to skip already-filed requests and writes a row for each one it files, so the two Zaps are safe to run side by side. Same dedupe key, so whichever files a given request first wins and the other is a no-op.",
+    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> Notion Contact page id, owned by contact-emails-to-zapier-table. Read here, and written when this Zap creates a contact.",
+    "01JM8PH8YM93A482M8BFZ6WKW6": "Notion Companies mirror, owned by notion-companies-to-zapier-table (read-only here; the domain -> company page id lookup)."
+  },
+  "notion_data_sources": {
+    "21991b07-11ac-81a6-a894-000be4a09a67": "Contacts — found by email or created.",
+    "21991b07-11ac-80b0-b787-000b3d3995f6": "Companies — resolved by domain or created.",
+    "21a91b07-11ac-808d-9657-000b1390d20b": "Deals — always created, one per request, from the Deals default template (Status=Lead, Owner set)."
+  },
+  "partner_app": {
+    "app_key": "App227952CLIAPI",
+    "app_version": "1.5.1",
+    "action": "search/find_project_request",
+    "note": "Solution Partner Operations Tool (SPOT; private, invite-only). This sweep calls the find_project_request SEARCH action (filter by id or email, or leave both blank to return every project request — this Zap leaves them blank). Its `id` field is the bare project_request_id (no composite), which extractRequest reads first, so no composite-id handling is needed here. Pinned 1.5.1 to match the trigger Zap; find_project_request's shape is stable across 1.5.x."
+  },
+  "description": "Scheduled reconciliation sweep: list all SPOT project requests, file every Accepted-but-unfiled one into the Notion CRM (Contact + Company + Deal), deduped against the shared SPOT Project Requests Table. The reliable backstop for spot-project-request-to-notion, whose polling trigger cannot deliver acceptances.",
+  "why_this_exists": "Zapier Product Escalations confirmed 2026-08-26 (ticket 9NPEKP-739EJ) that the updated_project_request polling trigger dedupes on the stable project_request_id (the trigger marks it the primary output field, which overrides the root-level composite id as the dedupe key), so a request fires once at Pending and never again on the Accepted transition. The fix is on Zapier's side with no timeline; a scheduled reconciliation sweep is Zapier's own recommended workaround and does not depend on the broken trigger. See spot-project-request-to-notion/zap.json -> acceptance_delivery_broken_2026_08_24.",
+  "review_before_enabling": [
+    "UNTESTED HERE: workflow.ts typechecks (tsc --skipLibCheck, clean) but has NOT been run — no CLI/durable runtime in the authoring session. Before this pending-create is merged (merge = deploy = first publish), run it with run-durable AND dryRun to exercise the main path against live data: `run-durable \"$SOURCE_FILES\" --connections '{\"notion_wf\":{\"connectionId\":\"02b73654-15c8-85c3-b16a-07304d2beb17\"},\"spot\":{\"connectionId\":\"02a5085e-1d27-853d-89b7-115a57fc4d32\"}}' --input '{\"dryRun\":true}' --private`. dryRun lists + classifies and writes NOTHING; confirm `checked`/`acceptedWithEmail` look right and the already-filed requests (Yanolja, Commercial Laundry) show status already-filed, before any non-dryRun run.",
+    "CADENCE: decide everyHour (as configured, ~24 tasks/day) vs everyDay (~30/month, verify params first). See trigger.params_note.",
+    "PARKED DISABLED (enable_on_publish false): publishing creates + first-publishes it disabled. Cutover = `enable-workflow <id>` once tested. It coexists with the trigger Zap via the shared dedupe Table; no need to disable the trigger Zap."
+  ]
+}
