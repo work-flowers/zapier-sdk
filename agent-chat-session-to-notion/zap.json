@@ -16,6 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/oJjxJFydlfiu6QLw/",
     "trigger_note": "Catch hook. The sender is the embeddable-agent-chat Lovable app (repo: work-flowers/internal/embeddable-agent-chat): its cron-driven dispatcher POSTs a `session.ended` event when a widget chat session ends (idle rollover or message cap), retrying failed deliveries up to 5 times with backoff. After first publish, paste the `webhook_url` readback into the widget's 'Webhook URL' field in that app's UI. The sender can HMAC-sign the body (X-Signature) when a secret is set; this workflow does not verify it — the payload carries only ids, and the transcript is re-fetched from Notion, so a forged POST can at worst create a junk log row.",
     "payload_note": "Payload shape: { event: 'session.ended', event_id, occurred_at, end_reason: 'idle'|'message_cap', widget: { id, name, agent_id, agent_name }, session: { notion_session_id, visitor_id, message_count, started_at, last_message_at, ended_at } }. Session id = session.notion_session_id; agent id = widget.agent_id. Metadata only — the transcript is fetched, never delivered."
   },
@@ -36,7 +37,7 @@
   "notion": {
     "agent_chat_sessions_datasource": "64e3a5e5-846c-4b95-bac6-d149e0284f39",
     "database_page": "https://app.notion.com/p/10a3de2851e84fa6892fe9d53abab21d",
-    "note": "Database created 2026-08-26; Dennis filed it under Marketing -> Databases the same day (data source since renamed 'Ask workFlowers Chat Sessions' in Notion; the id is what matters). Verified writable via notion_wf in the 2026-08-26 run-durable test."
+    "note": "Database created 2026-08-26 and since filed by Dennis (currently under Marketing -> Databases; the data source has been renamed in Notion — the id is what matters and it survives moves/renames). Verified writable via notion_wf in the 2026-08-26 run-durable test."
   },
   "description": "embeddable-agent-chat session.ended webhook -> fetch transcript via Notion Agents Unofficial -> AI summary -> record in the Agent Chat Sessions Notion database."
 }
