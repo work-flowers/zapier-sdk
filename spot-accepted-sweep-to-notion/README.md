@@ -4,7 +4,7 @@ A **scheduled reconciliation sweep** that files accepted Zapier **Solution Partn
 
 **This is the reliable backstop for [`spot-project-request-to-notion`](../spot-project-request-to-notion/).** That Zap's `updated_project_request` polling trigger *cannot* deliver acceptances: Zapier's poller dedupes on the stable `project_request_id` (the trigger marks it the primary output field, which overrides the root-level composite `id` as the dedupe key), so a request fires once — at `Pending`, identity still withheld — and never again on the transition to `Accepted`. **Zapier Product Escalations confirmed this from their own dedup logs on 2026-08-26 (ticket `9NPEKP-739EJ`)**; the fix is on Zapier's side with no timeline, and a scheduled sweep is their own recommended workaround. See [`spot-project-request-to-notion/zap.json` → `acceptance_delivery_broken_2026_08_24`](../spot-project-request-to-notion/zap.json).
 
-**Status:** ✅ **Live — enabled 2026-08-26, `everyHour`, dryRun-verified.** Workflow `01a03cc8-85db-7ab5-9045-d8c2d2ed1707`, current version `01a03cd0-95e2-…`. The `run-durable` gate was cleared on the deployed Zap via `run_workflow --input {dryRun:true}` (run `01a03cd4-0ed6-…`): it listed all 5 requests, kept the 2 `Accepted`-with-email, found both already-filed against the shared dedupe Table, and **wrote nothing** — no determinism fault. Cadence is hourly and staying there for now (Dennis, 2026-08-26); trimming to `everyDay` later is a one-field trigger switch (see [Cadence and cost](#cadence-and-cost)). Runs beside `spot-project-request-to-notion`; the shared dedupe Table keeps them idempotent, so the trigger Zap was left as-is.
+**Status:** ✅ **Live — enabled 2026-08-26, `everyDay` @ 9:00 AM, dryRun-verified.** Workflow `01a03cc8-85db-7ab5-9045-d8c2d2ed1707`. The `run-durable` gate was cleared on the deployed Zap via `run_workflow --input {dryRun:true}` (run `01a03cd4-0ed6-…`): it listed all 5 requests, kept the 2 `Accepted`-with-email, found both already-filed against the shared dedupe Table, and **wrote nothing** — no determinism fault. Enabled on `everyHour` and trimmed to `everyDay` the same day (Dennis, 2026-08-26) to save tasks while the trigger Zap's `@1.5.2` fix is unverified — see [Cadence and cost](#cadence-and-cost). Runs beside `spot-project-request-to-notion`; the shared dedupe Table keeps them idempotent, so the trigger Zap was left as-is. **Kept as backstop until `@1.5.2` is verified firing on a real acceptance, then retire.**
 
 ## How it fits with the trigger Zap
 
@@ -15,7 +15,7 @@ Both Zaps write the same records and share one dedupe Table (`01KYV1R8BWAZ697HQ8
 
 ```mermaid
 flowchart TD
-    sched["⏰ Schedule by Zapier<br/>(hourly — see Cadence)"] --> list
+    sched["⏰ Schedule by Zapier<br/>(daily @ 9am — see Cadence)"] --> list
 
     subgraph sweep["spot-accepted-sweep-to-notion (this Zap)"]
         list["list-project-requests<br/>SPOT find_project_request (no filters)"] --> filter{"per request:<br/>lead_stage = Accepted?<br/>has email?"}
@@ -41,13 +41,13 @@ Returns a summary: `{ dryRun, checked, acceptedWithEmail, filedCount, alreadyFil
 
 ## Trigger
 
-`ScheduleCLIAPI@1.7.0` / `everyHour`, params `{ "moh": "00", "weekends": "yes" }` — Schedule by Zapier, top of the hour, weekends included. **No connection** (Schedule needs none); `moh` is the **string** `"00"`, not the integer. Config copied verbatim from the proven [`xero-invoice-alerts`](../xero-invoice-alerts/) trigger.
+`ScheduleCLIAPI@1.7.0` / `everyDay`, params `{ "hod": "9:00 AM", "weekends": "yes" }` — Schedule by Zapier, daily at 9:00 AM (account timezone), weekends included. **No connection** (Schedule needs none). `everyDay` takes `hod` (required), not `moh` (that's `everyHour`'s). Started on `everyHour` (params `{ "moh": "00", "weekends": "yes" }`, copied from [`xero-invoice-alerts`](../xero-invoice-alerts/)) and trimmed to daily on 2026-08-26.
 
 Unlike the trigger Zap, this workflow **calls the partner tool** (`find_project_request`), so the SPOT connection is bound as a `--connections` alias (`spot`), alongside `notion_wf`. Both are the work.flowers connections; never the Knoxx one.
 
 ## Cadence and cost
 
-`everyHour` means **~24 `find_project_request` tasks/day** (≈720/month) as a baseline, for a workflow that files only a handful of acceptances a month. That is the **first thing to decide at review**: `everyDay` (~30/month) still catches every acceptance within a day and is far cheaper — but **verify its param fields** (`list-trigger-input-fields ScheduleCLIAPI everyDay`) before switching, because a wrong param shape makes the trigger claim fail *silently* at publish. Hourly is the default only because its param shape is already proven; nothing is spent until the Zap is enabled.
+Now on `everyDay` (**~30 `find_project_request` tasks/month**). It started on `everyHour` (~24 tasks/day ≈ 720/month), which was overkill for a workflow that files a handful of acceptances a month, so it was trimmed to daily on 2026-08-26 (Dennis) once the trigger Zap's `@1.5.2` fix landed — a negligible cost for a backstop kept only until that fix is verified. Changing the schedule is a trigger change but needs no out-of-band publish: `publish-changed-zaps.mjs` compares the declared trigger against the deployed one and republishes the declared one when different.
 
 ## How it was verified (2026-08-26)
 

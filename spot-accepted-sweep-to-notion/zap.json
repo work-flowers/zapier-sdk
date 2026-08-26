@@ -7,14 +7,14 @@
   "is_private": false,
   "trigger": {
     "selected_api": "ScheduleCLIAPI@1.7.0",
-    "action": "everyHour",
+    "action": "everyDay",
     "authentication_id": null,
     "params": {
-      "moh": "00",
+      "hod": "9:00 AM",
       "weekends": "yes"
     },
     "authentication_note": "Schedule by Zapier needs no connection (get-app ScheduleCLIAPI reports auth_type ''), same as xero-invoice-alerts. The SPOT and Notion credentials are bound as connection ALIASES instead, because both are called from the workflow body.",
-    "params_note": "PROVEN config, copied verbatim from xero-invoice-alerts (everyHour, top of the hour, weekends included). `moh` MUST be the STRING \"00\" not the integer 0 (its real choices are the zero-padded strings \"00\"/\"15\"/\"30\"/\"45\" — check list-trigger-input-field-choices ScheduleCLIAPI everyHour moh). CADENCE: hourly, kept deliberately (Dennis, 2026-08-26: 'leaving it on hourly is fine for now') — ~24 find_project_request tasks/day baseline. If that cost ever wants trimming, everyDay (~30/month) is a one-field switch, but it is a TRIGGER change: needs an out-of-band `--trigger` publish (the merge pipeline carries the deployed trigger forward), and its params differ — `everyDay` takes `hod` (required, e.g. \"9:00 AM\") + optional `weekends`/`timezone_override`, NOT `moh` (verified via get-trigger-fields 2026-08-26)."
+    "params_note": "CADENCE: daily at 9:00 AM (account timezone), weekends included. Trimmed from everyHour on 2026-08-26 (Dennis) to stop burning ~24 find_project_request tasks/day while the trigger Zap's @1.5.2 fix is unverified — daily is ~30 tasks/month, a negligible backstop cost. `everyDay` params: `hod` (required, e.g. \"9:00 AM\") + optional `weekends`/`timezone_override`; NOT `moh` (that is everyHour's) — verified via get-trigger-fields 2026-08-26. Changing this action/params is a TRIGGER change, but it does NOT need an out-of-band publish: editing it here and merging is enough — publish-changed-zaps.mjs compares the declared trigger against the deployed one and republishes the declared one when different."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
@@ -34,7 +34,7 @@
   "cutover": {
     "enabled_at": "2026-08-26",
     "enabled_via": "enable-workflow (MCP enable_workflow), by Dennis's go-ahead",
-    "cadence": "everyHour, kept (Dennis: 'leaving it on hourly is fine for now')",
+    "cadence": "everyDay @ 9:00 AM as of 2026-08-26 (trimmed from everyHour to save tasks — see trigger.params_note). Enabled 2026-08-26 on everyHour, ran hourly briefly, then trimmed to daily the same day.",
     "dryrun_verification": "Verified LIVE 2026-08-26 via run_workflow --input {dryRun:true} (durable run 01a03cd4-0ed6-…): checked=5, acceptedWithEmail=2, both already-filed (Commercial Laundry 02700000000003A00hE, Yanolja 02700000000002X00hE) against the shared dedupe Table, filedCount=0, NOTHING written. The 3 Declined requests were filtered out. Per-request keyed steps ran with no collisions and no determinism fault — the run-durable gate the authoring session couldn't clear, cleared on the live deployed Zap.",
     "version_note": "current_version_id 01a03cd0-95e2-… superseded the pipeline's first-publish 01a03cc8-953d-… via an out-of-band MCP draft-publish during cutover (byte-identical source, same everyHour trigger — an attempt to switch cadence to everyDay that the publish path ignored the trigger override on; harmless, still everyHour)."
   },
@@ -58,7 +58,7 @@
   "description": "Scheduled reconciliation sweep: list all SPOT project requests, file every Accepted-but-unfiled one into the Notion CRM (Contact + Company + Deal), deduped against the shared SPOT Project Requests Table. The reliable backstop for spot-project-request-to-notion, whose polling trigger cannot deliver acceptances.",
   "why_this_exists": "Zapier Product Escalations confirmed 2026-08-26 (ticket 9NPEKP-739EJ) that the updated_project_request polling trigger dedupes on the stable project_request_id (the trigger marks it the primary output field, which overrides the root-level composite id as the dedupe key), so a request fires once at Pending and never again on the Accepted transition. The fix is on Zapier's side with no timeline; a scheduled reconciliation sweep is Zapier's own recommended workaround and does not depend on the broken trigger. See spot-project-request-to-notion/zap.json -> acceptance_delivery_broken_2026_08_24.",
   "operational_notes": [
-    "LIVE since 2026-08-26 — enabled, everyHour, dryRun-verified (see cutover). Coexists with spot-project-request-to-notion via the shared dedupe Table; the trigger Zap was NOT disabled (whichever files a request first wins, the other is a no-op).",
+    "LIVE since 2026-08-26 — enabled, everyDay @ 9:00 AM (trimmed from everyHour the same day), dryRun-verified (see cutover). Coexists with spot-project-request-to-notion via the shared dedupe Table; the trigger Zap was NOT disabled (whichever files a request first wins, the other is a no-op). Kept as the backstop until the trigger Zap's @1.5.2 fix is verified firing on a real acceptance, then retire.",
     "To exercise it safely at any time without writing: run_workflow / trigger-workflow with `{\"dryRun\":true}` — it lists + classifies and writes nothing.",
     "To trim cost to daily later: switch the trigger to everyDay via an out-of-band `--trigger` publish (params in trigger.params_note), then sync this file. Not a merge-pipeline change — the pipeline carries the deployed trigger forward."
   ]
