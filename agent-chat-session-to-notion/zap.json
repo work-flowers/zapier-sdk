@@ -1,0 +1,42 @@
+{
+  "name": "agent-chat-session-to-notion",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "agent-chat-session-to-notion",
+    "description": "embeddable-agent-chat session.ended webhook -> fetch the full transcript via the Notion Agents Unofficial custom integration -> AI summary (standard/auto) -> log a record in the Agent Chat Sessions Notion database with the transcript as the page body.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "trigger_note": "Catch hook. The sender is the embeddable-agent-chat Lovable app (repo: work-flowers/internal/embeddable-agent-chat): its cron-driven dispatcher POSTs a `session.ended` event when a widget chat session ends (idle rollover or message cap), retrying failed deliveries up to 5 times with backoff. After first publish, paste the `webhook_url` readback into the widget's 'Webhook URL' field in that app's UI. The sender can HMAC-sign the body (X-Signature) when a secret is set; this workflow does not verify it — the payload carries only ids, and the transcript is re-fetched from Notion, so a forged POST can at worst create a junk log row.",
+    "payload_note": "Payload shape: { event: 'session.ended', event_id, occurred_at, end_reason: 'idle'|'message_cap', widget: { id, name, agent_id, agent_name }, session: { notion_session_id, visitor_id, message_count, started_at, last_message_at, ended_at } }. Session id = session.notion_session_id; agent id = widget.agent_id. Metadata only — the transcript is fetched, never delivered."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "notion_agents": "029801b6-2a74-80bb-b257-5a036be3903e"
+  },
+  "connections_note": "notion_agents is the 'custom-agent-embed' connection on the Notion Agents Unofficial custom integration (App245513CLIAPI@1.0.0, slug notion-agents-unofficial). notion_wf is the standard work.flowers Notion connection used by every Zap in this repo.",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  },
+  "zapier_durable_version": "0.12.5",
+  "ai_model": {
+    "tier": "standard/auto",
+    "why": "Short-summary workload — exactly what Standard is recommended for. Verified on real session transcripts (see README table): summaries were accurate and followed the prompt's format rules at Standard; no capability gap suggesting a higher tier."
+  },
+  "notion": {
+    "agent_chat_sessions_datasource": "64e3a5e5-846c-4b95-bac6-d149e0284f39",
+    "database_page": "https://app.notion.com/p/10a3de2851e84fa6892fe9d53abab21d",
+    "note": "Database created 2026-08-26; Dennis filed it under Marketing -> Databases the same day (data source since renamed 'Ask workFlowers Chat Sessions' in Notion; the id is what matters). Verified writable via notion_wf in the 2026-08-26 run-durable test."
+  },
+  "description": "embeddable-agent-chat session.ended webhook -> fetch transcript via Notion Agents Unofficial -> AI summary -> record in the Agent Chat Sessions Notion database."
+}
