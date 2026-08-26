@@ -71,7 +71,10 @@ Session ID, Agent (select), Agent ID, Widget, End Reason (select), Session
 Status (select), Visitor ID, Messages, Started At, Ended At, Model, Agent
 Version, and Event ID (the sender's idempotency key, so duplicates are
 findable). The full transcript is appended as the page body (capped at 40k
-chars). Creation goes through `createItemWithTemplate`, so a default template
+chars), with blank lines stripped first (outside code fences) — Notion's
+markdown converter turns every blank line into an empty paragraph block, which
+littered the first test page; consecutive text lines instead merge into one
+paragraph with soft line-breaks, which reads fine. Creation goes through `createItemWithTemplate`, so a default template
 added to the data source later is picked up with no code change.
 
 ## Guards

@@ -120,6 +120,25 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max)}\n\n…(truncated)`;
 }
 
+/**
+ * Notion's markdown converter is line-based: every line becomes a block, so a
+ * BLANK line becomes an empty paragraph block. A "\n\n"-separated transcript
+ * therefore rendered with an empty block between every message (seen on the
+ * first test page). Single newlines already start a new block, so blank lines
+ * add nothing — drop them, except inside fenced code blocks, where a blank
+ * line is real content.
+ */
+function stripBlankLines(md: string): string {
+  const out: string[] = [];
+  let inFence = false;
+  for (const line of md.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+    if (!inFence && line.trim() === "") continue;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
 /** What the embeddable-agent-chat app POSTs on session end. Every field is
  *  extracted defensively; only the session id is load-bearing. */
 interface SessionEndedEvent {
@@ -379,7 +398,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     if (endedAt) props["properties|||Ended At|||date__start"] = endedAt;
 
     const body = transcript
-      ? `## Transcript\n\n${truncate(transcript, MAX_BODY_TRANSCRIPT_CHARS)}`
+      ? stripBlankLines(`## Transcript\n${truncate(transcript, MAX_BODY_TRANSCRIPT_CHARS)}`)
       : null;
 
     const created = await createItemWithTemplate(ctx, "session", SESSIONS_DS, props, body);
