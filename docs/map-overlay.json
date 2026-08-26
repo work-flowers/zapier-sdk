@@ -47,6 +47,7 @@
         "register-zapier-partner-lead",
         "sow-signed-to-deal-won",
         "spot-project-request-to-notion",
+        "spot-accepted-sweep-to-notion",
         "zapier-partner-lead-status-to-notion"
       ]
     },
@@ -446,6 +447,14 @@
     { "from": "spot-project-request-to-notion", "to": "ds:contacts", "kind": "write" },
     { "from": "spot-project-request-to-notion", "to": "ds:companies", "kind": "write" },
     { "from": "spot-project-request-to-notion", "to": "ds:deals", "kind": "write" },
+    { "from": "app:zapier-partner", "to": "spot-accepted-sweep-to-notion", "kind": "read" },
+    { "from": "spot-accepted-sweep-to-notion", "to": "table:spot-requests", "kind": "write" },
+    { "from": "table:spot-requests", "to": "spot-accepted-sweep-to-notion", "kind": "read" },
+    { "from": "table:company-ids", "to": "spot-accepted-sweep-to-notion", "kind": "read" },
+    { "from": "table:email-contacts", "to": "spot-accepted-sweep-to-notion", "kind": "read" },
+    { "from": "spot-accepted-sweep-to-notion", "to": "ds:contacts", "kind": "write" },
+    { "from": "spot-accepted-sweep-to-notion", "to": "ds:companies", "kind": "write" },
+    { "from": "spot-accepted-sweep-to-notion", "to": "ds:deals", "kind": "write" },
 
     { "from": "ds:companies", "to": "register-zapier-partner-lead", "kind": "trigger" },
     { "from": "register-zapier-partner-lead", "to": "table:zapier-leads", "kind": "own" },
