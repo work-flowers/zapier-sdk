@@ -1,7 +1,7 @@
 {
   "name": "spot-project-request-to-notion",
   "workflow_id": "019fb61c-c04e-7783-90ba-37a70bc3415c",
-  "current_version_id": "01a03649-c796-7f94-acf5-e1e5097d4ead",
+  "current_version_id": "01a0409f-f1fc-746c-b8b0-2a44b9eaab9e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVQztSWpPmcqN6-IJU8wfQ",
   "enabled": true,
   "is_private": false,

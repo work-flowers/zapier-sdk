@@ -1,7 +1,7 @@
 {
   "name": "spot-accepted-sweep-to-notion",
   "workflow_id": "01a03cc8-85db-7ab5-9045-d8c2d2ed1707",
-  "current_version_id": "01a03cd0-95e2-7796-ab77-3d14bac33bc6",
+  "current_version_id": "01a0409f-b533-7ad1-b446-18f220b3c604",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZhyJXo70Ii7YfdzHJ5eqw",
   "enabled": true,
   "is_private": false,
