@@ -78,14 +78,17 @@
         "company-ids-table-to-fivetran-sheet",
         "drive-file-renamed-to-zapier-table",
         "drive-files-to-zapier-table",
+        "gcal-block-sweep",
         "gcal-event-updated-to-meeting-note",
         "gws-new-user-provisioning",
         "internal-user-ids-to-table-and-notion",
         "notion-companies-to-zapier-table",
         "notion-company-renamed-to-xero-harvest-drive",
         "notion-page-deleted-to-zapier-tables",
+        "scw-events-to-workflowers-block",
         "start-a-timer-from-notion-task",
-        "whatsapp-slack-bridge"
+        "whatsapp-slack-bridge",
+        "workflowers-events-to-scw-busy"
       ]
     },
     "esignatures-legal": {
@@ -381,6 +384,11 @@
     "app:notion-agents": {
       "type": "external_app",
       "name": "Notion Agents"
+    },
+    "table:gcal-sync-map": {
+      "type": "table",
+      "id": "01M13QPJ5GRJV33096MBNSN1Q5",
+      "name": "GCal Sync Map"
     }
   },
   "edges": [
@@ -1407,6 +1415,36 @@
     {
       "from": "agent-chat-session-to-notion",
       "to": "ds:agent-chat-sessions",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map",
+      "to": "scw-events-to-workflowers-block",
+      "kind": "read"
+    },
+    {
+      "from": "scw-events-to-workflowers-block",
+      "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map",
+      "to": "workflowers-events-to-scw-busy",
+      "kind": "read"
+    },
+    {
+      "from": "workflowers-events-to-scw-busy",
+      "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map",
+      "to": "gcal-block-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "gcal-block-sweep",
+      "to": "table:gcal-sync-map",
       "kind": "write"
     }
   ],
