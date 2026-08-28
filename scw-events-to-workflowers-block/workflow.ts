@@ -55,7 +55,7 @@ const SYNC_MARKER = "[gcal-block]";
  * single series. Occurrences rolling into the window later are picked up by
  * gcal-block-sweep. Keep in lockstep with the sweep's default window.
  */
-const HORIZON_DAYS = 60;
+const HORIZON_DAYS = 30;
 const HORIZON_MS = HORIZON_DAYS * 86400000;
 
 // --- Input -------------------------------------------------------------------

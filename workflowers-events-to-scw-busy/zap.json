@@ -8,7 +8,7 @@
   "deploy": {
     "state": "pending-create",
     "workflow_name": "workflowers-events-to-scw-busy",
-    "description": "One half of the two-way calendar-blocking pair (with scw-events-to-workflowers-block; gcal-block-sweep is the shared horizon backstop). Mirrors every timed, busy, non-declined event on the dennis@work.flowers Google Calendar onto dchiuten@securecodewarrior.com as a PRIVATE, BARE 'Busy' block — no title, description, location or attendees leak into the SCW workspace. Keyed through the GCal Sync Map table so updates move the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 60 days out; the sweep fills those in as they approach. Replaces Notion Calendar's built-in event blocking, which SCW IT cut off on 2026-08-28.",
+    "description": "One half of the two-way calendar-blocking pair (with scw-events-to-workflowers-block; gcal-block-sweep is the shared horizon backstop). Mirrors every timed, busy, non-declined event on the dennis@work.flowers Google Calendar onto dchiuten@securecodewarrior.com as a PRIVATE, BARE 'Busy' block — no title, description, location or attendees leak into the SCW workspace. Keyed through the GCal Sync Map table so updates move the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out; the sweep fills those in as they approach. Replaces Notion Calendar's built-in event blocking, which SCW IT cut off on 2026-08-28.",
     "enable_on_publish": true
   },
   "trigger": {
@@ -21,7 +21,7 @@
     },
     "authentication_note": "work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the calendar being READ. Same id gcal-event-updated-to-meeting-note carries on its trigger; that Zap and this one both poll dennis@work.flowers and coexist fine. The SCW credential is a --connections alias because the workflow writes there.",
     "trigger_note": "Polling trigger, fires on create AND update. Cancellations arrive through it too as sparse status:'cancelled' tombstones (observed on gcal-event-updated-to-meeting-note's production runs) — verify on the first real cancellation after cutover; the fallback is a second deployment on event_cancelled.",
-    "params_note": "expand_recurring: true DELIBERATELY differs from gcal-event-updated-to-meeting-note (false): blocking needs one mirror per occurrence, keyed on the occurrence id. The workflow's 60-day horizon guard bounds the resulting volume (a weekly series expands ~730 instances in one poll)."
+    "params_note": "expand_recurring: true DELIBERATELY differs from gcal-event-updated-to-meeting-note (false): blocking needs one mirror per occurrence, keyed on the occurrence id. The workflow's 30-day horizon guard bounds the resulting volume (a weekly series expands ~730 instances in one poll)."
   },
   "connections": {
     "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"

@@ -18,7 +18,7 @@ flowchart TD
     L --> C{cancelled / all-day /\nfree / declined?}
     C -- "yes, active mirror" --> D[delete_event block on\ndchiuten@securecodewarrior.com] --> DR[(row: Status=deleted)]
     C -- "yes, no mirror" --> S3[skip]
-    C -- no --> H{no mirror yet and start\n> 60d after updated?}
+    C -- no --> H{no mirror yet and start\n> 30d after updated?}
     H -- yes --> S4[skip: beyond-horizon\nsweep picks it up later]
     H -- no --> U{times unchanged?}
     U -- yes --> S5[skip: unchanged]
@@ -36,7 +36,7 @@ Same three layers as the sibling — structural (one direction per Zap), the sha
 
 ## Maintainer notes
 
-- **The horizon guard is load-bearing** — see the sibling README; keep `HORIZON_DAYS` (60) in lockstep across all three workflows.
+- **The horizon guard is load-bearing** — see the sibling README; keep `HORIZON_DAYS` (30) in lockstep across all three workflows.
 - Task cost: 0 for every skip path, 1 per create/move/delete. Only a *moved* occurrence spends the update task — renames and description edits on the source change nothing on a bare Busy block.
 - Skip-worthy transitions (declined later, changed to all-day, changed to Free) delete an existing block.
 - This Zap polls the same calendar as [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/); they coexist (separate workflows, separate dedupe).

@@ -16,7 +16,7 @@ flowchart TD
     L --> C{cancelled / all-day /\nfree / declined?}
     C -- "yes, active mirror" --> D[delete_event mirror on\ndennis@work.flowers] --> DR[(row: Status=deleted)]
     C -- "yes, no mirror" --> S3[skip]
-    C -- no --> H{no mirror yet and start\n> 60d after updated?}
+    C -- no --> H{no mirror yet and start\n> 30d after updated?}
     H -- yes --> S4[skip: beyond-horizon\nsweep picks it up later]
     H -- no --> U{times & title\nunchanged?}
     U -- yes --> S5[skip: unchanged]
@@ -32,7 +32,7 @@ flowchart TD
 
 ## Maintainer notes
 
-- **The horizon guard is load-bearing.** `expand_recurring: true` expanded a weekly series ~14 years (~730 instances) in one observed poll (2026-08-28). Without the 60-day create-horizon, one open-ended series would burn ~700 tasks. Zapier's dedupe means a skipped occurrence never re-fires — that gap is exactly what [`gcal-block-sweep`](../gcal-block-sweep/) exists to fill. Keep `HORIZON_DAYS` in lockstep across all three workflows.
+- **The horizon guard is load-bearing.** `expand_recurring: true` expanded a weekly series ~14 years (~730 instances) in one observed poll (2026-08-28). Without the 30-day create-horizon, one open-ended series would burn ~700 tasks. Zapier's dedupe means a skipped occurrence never re-fires — that gap is exactly what [`gcal-block-sweep`](../gcal-block-sweep/) exists to fill. Keep `HORIZON_DAYS` in lockstep across all three workflows.
 - **Task cost per run**: 0 for every skip path (Table reads are free), 1 for a create/update/delete.
 - **Change guard**: `event_updated` fires on every touch (other people's RSVPs, description edits, Gemini attaching notes — the meeting-note Zap sees ~60/day). Only a move or rename spends the update task.
 - A mirror hand-deleted on work.flowers is recreated on the source's next edit (the `update_event` "not found" is caught inside the step, so it doesn't spin retries).

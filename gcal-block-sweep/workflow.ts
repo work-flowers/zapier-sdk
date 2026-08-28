@@ -7,13 +7,13 @@
 // weekly series ~14 years (≈730 instances) into the future and Zapier's
 // polling dedupe means a skipped instance never re-fires on its own. This
 // sweep runs daily, scans the sliver of calendar that just rolled INTO the
-// horizon (default window: days 53..60 from now, generous overlap so a few
+// horizon (default window: days 23..30 from now, generous overlap so a few
 // missed days self-heal), and creates any mirror the map table says is
 // missing. Rows that already exist are free Table reads, so a quiet day
 // costs approximately nothing.
 //
 // It is also the BACKFILL: run it by hand over the whole horizon —
-//   trigger-workflow <id> --input '{"from_days":0,"to_days":60}'
+//   trigger-workflow <id> --input '{"from_days":0,"to_days":30}'
 // — to mirror every existing future event at cutover. Add '"dryRun":true' to
 // see what it would create without writing, and
 // '"cleanup_notion_blocks":true' to also delete the orphaned "Event blocked
@@ -39,7 +39,7 @@ const SYNC_MAP_TABLE = "01M13QPJ5GRJV33096MBNSN1Q5";
 const SYNC_MARKER = "[gcal-block]";
 
 /** Keep in lockstep with HORIZON_DAYS in the two trigger Zaps. */
-const HORIZON_DAYS = 60;
+const HORIZON_DAYS = 30;
 /** Default daily window: the week rolling into the horizon, with overlap. */
 const DEFAULT_FROM_DAYS = HORIZON_DAYS - 7;
 /** Search the calendars in slices this wide so no single search page overflows. */
