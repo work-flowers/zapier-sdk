@@ -1,12 +1,12 @@
 {
   "name": "gcal-block-sweep",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a04796-9a82-7b73-8d69-db9979743c78",
+  "current_version_id": "01a04796-a748-7857-a69b-80d0a246b5b4",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUj2fEs1hoxR4VmsBw5Njg",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "gcal-block-sweep",
     "description": "Daily horizon backstop and manual backfill for the two-way calendar-blocking pair (scw-events-to-workflowers-block / workflowers-events-to-scw-busy). Those Zaps refuse to create mirrors for occurrences starting more than 30 days out, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own — so this sweep scans the week rolling INTO the horizon (days 23..30) each morning, in both directions, and creates any mirror the GCal Sync Map table says is missing. Manual runs take a window override for the cutover backfill ({\"from_days\":0,\"to_days\":30}), a dryRun flag, and a cleanup_notion_blocks flag that deletes the frozen legacy Notion Calendar blocker events on the SCW calendar.",
     "enable_on_publish": true

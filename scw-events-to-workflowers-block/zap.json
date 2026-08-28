@@ -1,12 +1,12 @@
 {
   "name": "scw-events-to-workflowers-block",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a04796-b7fa-7fa5-ab0b-df9a59724bbf",
+  "current_version_id": "01a04796-c6f1-7877-8cad-6449478d8f75",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASlBn_lZLnJpJoJGV9z0Aw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "scw-events-to-workflowers-block",
     "description": "One half of the two-way calendar-blocking pair (with workflowers-events-to-scw-busy; gcal-block-sweep is the shared horizon backstop). Mirrors every timed, busy, non-declined event on the dchiuten@securecodewarrior.com Google Calendar onto dennis@work.flowers WITH ITS FULL TITLE, keyed through the GCal Sync Map table so updates move/rename the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out (expand_recurring fires an open-ended series ~14 years ahead); the sweep fills those in as they approach.",
     "enable_on_publish": true
