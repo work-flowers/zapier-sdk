@@ -1,0 +1,41 @@
+{
+  "name": "gcal-block-sweep",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "gcal-block-sweep",
+    "description": "Daily horizon backstop and manual backfill for the two-way calendar-blocking pair (scw-events-to-workflowers-block / workflowers-events-to-scw-busy). Those Zaps refuse to create mirrors for occurrences starting more than 30 days out, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own — so this sweep scans the week rolling INTO the horizon (days 23..30) each morning, in both directions, and creates any mirror the GCal Sync Map table says is missing. Manual runs take a window override for the cutover backfill ({\"from_days\":0,\"to_days\":30}), a dryRun flag, and a cleanup_notion_blocks flag that deletes the frozen legacy Notion Calendar blocker events on the SCW calendar.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyDay",
+    "authentication_id": null,
+    "params": {
+      "hod": "7:00 AM",
+      "weekends": "yes"
+    },
+    "authentication_note": "Schedule by Zapier needs no connection (same as spot-accepted-sweep-to-notion). Both Google credentials are --connections aliases because the workflow reads AND writes both calendars.",
+    "trigger_note": "Daily at 7:00 AM account time, weekends included (events land on weekends too). The tick payload's `id` field IS the fire time as an RFC 3339 timestamp — the workflow uses it as its deterministic clock, so scheduled runs never read Date.now().",
+    "params_note": "`everyDay` params: `hod` (required) + optional `weekends`/`timezone_override` — NOT `moh` (that is everyHour's). Verified on spot-accepted-sweep-to-notion 2026-08-26.",
+    "manual_run_note": "Backfill: trigger-workflow <id> --input '{\"from_days\":0,\"to_days\":30}'. Add \"dryRun\":true to preview without writing, \"cleanup_notion_blocks\":true to also delete the legacy 'Event blocked with Notion Calendar' events on the SCW calendar, and \"now\":\"<RFC3339>\" to pin the window's anchor. Steady-state cost: ~2 search tasks/day plus one create task per occurrence that newly rolls into the horizon."
+  },
+  "connections": {
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
+  },
+  "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers'); gcal_scw is the SCW one ('dchiuten@securecodewarrior.com', created 2026-08-28). Both are read (event_v2 window search on the source side) and written (detailed_event on the destination side); cleanup deletes only on gcal_scw.",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  },
+  "tables": {
+    "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — source occurrence id -> mirror event id, both directions. SHARED with the two trigger Zaps: read to skip everything already mapped (free), written with a row for each mirror this sweep creates. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7), Source Updated (f8)."
+  },
+  "description": "Daily sweep that mirrors calendar events newly rolling into the 30-day blocking horizon, in both directions, and doubles as the manual cutover backfill (window override + dryRun + legacy Notion Calendar block cleanup)."
+}

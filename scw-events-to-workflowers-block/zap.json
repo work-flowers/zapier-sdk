@@ -1,0 +1,39 @@
+{
+  "name": "scw-events-to-workflowers-block",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "scw-events-to-workflowers-block",
+    "description": "One half of the two-way calendar-blocking pair (with workflowers-events-to-scw-busy; gcal-block-sweep is the shared horizon backstop). Mirrors every timed, busy, non-declined event on the dchiuten@securecodewarrior.com Google Calendar onto dennis@work.flowers WITH ITS FULL TITLE, keyed through the GCal Sync Map table so updates move/rename the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out (expand_recurring fires an open-ended series ~14 years ahead); the sweep fills those in as they approach.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleCalendarCLIAPI@1.15.0",
+    "action": "event_updated",
+    "authentication_id": "02cb5353-8bd1-82ad-a382-b1900d3d40f2",
+    "params": {
+      "calendarid": "dchiuten@securecodewarrior.com",
+      "expand_recurring": true
+    },
+    "authentication_note": "SCW Google Calendar connection 'dchiuten@securecodewarrior.com' (created 2026-08-28). The credential for the calendar being READ lives here on the trigger; the work.flowers credential is a --connections alias because the workflow writes there.",
+    "trigger_note": "Polling trigger, fires on create AND update. Cancellations arrive through it too as sparse status:'cancelled' tombstones (observed on gcal-event-updated-to-meeting-note's production runs, whose trigger is identical) — verify on the first real cancellation after cutover; the fallback is a second deployment on event_cancelled.",
+    "params_note": "expand_recurring: true DELIBERATELY differs from gcal-event-updated-to-meeting-note (false): blocking needs one mirror per occurrence, keyed on the occurrence id. A probe on 2026-08-28 showed a weekly series expanded ~14 years (730 instances) in one poll — the workflow's 30-day horizon guard is what makes this affordable."
+  },
+  "connections": {
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5"
+  },
+  "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the DESTINATION this workflow creates/updates/deletes mirror events on. Same id gcal-event-updated-to-meeting-note carries on its trigger.",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  },
+  "tables": {
+    "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — source occurrence id -> mirror event id, both directions. SHARED with workflowers-events-to-scw-busy and gcal-block-sweep: it is the loop guard (an incoming event id found in Mirror Event ID is the sync's own output), the update/delete target map, and the change detector. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3, scw_to_wf|wf_to_scw), Status (f4, active|deleted), Start (f5), End (f6), Summary (f7), Source Updated (f8)."
+  },
+  "description": "Mirror SCW calendar events onto the work.flowers calendar with full titles, so SCW meetings visibly block work.flowers time. Creates, moves, renames and deletes the mirror in step with the source."
+}
