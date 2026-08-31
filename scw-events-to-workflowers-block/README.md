@@ -1,8 +1,8 @@
 # scw-events-to-workflowers-block
 
-One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dchiuten@securecodewarrior.com** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dennis@work.flowers** **with its full title**, so SCW meetings visibly block work.flowers time. Updates move/rename the mirror; cancellations delete it.
+One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dchiuten@securecodewarrior.com** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dennis@work.flowers** **with its full title**, so SCW meetings visibly block work.flowers time. Updates move/rename the mirror. **Cancellations do NOT reach this trigger** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31; see [`scw-cancellations-to-workflowers-unblock`](../scw-cancellations-to-workflowers-unblock/)), so deletion propagation lives in that companion Zap; the cancel branch here is kept as a belt.
 
-Siblings: [`workflowers-events-to-scw-busy`](../workflowers-events-to-scw-busy/) (the reverse direction, bare "Busy" blocks) and [`gcal-block-sweep`](../gcal-block-sweep/) (daily horizon backstop + cutover backfill). All three share the **GCal Sync Map** Zapier Table (`01M13QPJ5GRJV33096MBNSN1Q5`).
+Siblings: [`workflowers-events-to-scw-busy`](../workflowers-events-to-scw-busy/) (the reverse direction, bare "Busy" blocks), [`scw-cancellations-to-workflowers-unblock`](../scw-cancellations-to-workflowers-unblock/) (deletion propagation for this direction) and [`gcal-block-sweep`](../gcal-block-sweep/) (daily horizon backstop + cutover backfill). All three share the **GCal Sync Map** Zapier Table (`01M13QPJ5GRJV33096MBNSN1Q5`).
 
 ```mermaid
 flowchart TD

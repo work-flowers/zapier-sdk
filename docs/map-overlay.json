@@ -85,9 +85,11 @@
         "notion-companies-to-zapier-table",
         "notion-company-renamed-to-xero-harvest-drive",
         "notion-page-deleted-to-zapier-tables",
+        "scw-cancellations-to-workflowers-unblock",
         "scw-events-to-workflowers-block",
         "start-a-timer-from-notion-task",
         "whatsapp-slack-bridge",
+        "workflowers-cancellations-to-scw-unblock",
         "workflowers-events-to-scw-busy"
       ]
     },
@@ -1444,6 +1446,26 @@
     },
     {
       "from": "gcal-block-sweep",
+      "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map",
+      "to": "scw-cancellations-to-workflowers-unblock",
+      "kind": "read"
+    },
+    {
+      "from": "scw-cancellations-to-workflowers-unblock",
+      "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map",
+      "to": "workflowers-cancellations-to-scw-unblock",
+      "kind": "read"
+    },
+    {
+      "from": "workflowers-cancellations-to-scw-unblock",
       "to": "table:gcal-sync-map",
       "kind": "write"
     }

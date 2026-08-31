@@ -1,6 +1,6 @@
 # workflowers-events-to-scw-busy
 
-One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. Updates move the block; cancellations delete it.
+One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. Updates move the block. **Cancellations do NOT reach this trigger** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31, when a deleted 9 AM work.flowers event left its SCW block standing), so deletion propagation lives in [`workflowers-cancellations-to-scw-unblock`](../workflowers-cancellations-to-scw-unblock/); the cancel branch here is kept as a belt.
 
 Replaces **Notion Calendar's built-in event blocking**, which SCW IT cut off on 2026-08-28 (its old frozen blocks are cleaned up by the sweep's `cleanup_notion_blocks` mode).
 

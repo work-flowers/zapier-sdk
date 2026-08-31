@@ -20,7 +20,7 @@
       "expand_recurring": true
     },
     "authentication_note": "SCW Google Calendar connection 'dchiuten@securecodewarrior.com' (created 2026-08-28). The credential for the calendar being READ lives here on the trigger; the work.flowers credential is a --connections alias because the workflow writes there.",
-    "trigger_note": "Polling trigger, fires on create AND update. Cancellations arrive through it too as sparse status:'cancelled' tombstones (observed on gcal-event-updated-to-meeting-note's production runs, whose trigger is identical) — verify on the first real cancellation after cutover; the fallback is a second deployment on event_cancelled.",
+    "trigger_note": "Polling trigger, fires on create AND update. Cancellations DO NOT arrive through it: with expand_recurring: true Zapier silently drops cancelled tombstones (proven 2026-08-31 — 0 cancelled in 100 runs here vs 13/100 on the meeting-note Zap, whose only trigger difference is expand_recurring: false; a deleted work.flowers event left its SCW block standing). Deletion propagation lives in scw-cancellations-to-workflowers-unblock (event_cancelled). The cancel branch in this workflow is kept as a belt.",
     "params_note": "expand_recurring: true DELIBERATELY differs from gcal-event-updated-to-meeting-note (false): blocking needs one mirror per occurrence, keyed on the occurrence id. A probe on 2026-08-28 showed a weekly series expanded ~14 years (730 instances) in one poll — the workflow's 30-day horizon guard is what makes this affordable."
   },
   "connections": {

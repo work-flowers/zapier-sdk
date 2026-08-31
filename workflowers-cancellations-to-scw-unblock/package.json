@@ -1,0 +1,16 @@
+{
+  "name": "workflowers-cancellations-to-scw-unblock",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@zapier/zapier-durable": "0.12.5",
+    "@zapier/zapier-sdk": "0.102.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  },
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --skipLibCheck --noEmit workflow.ts"
+  }
+}
