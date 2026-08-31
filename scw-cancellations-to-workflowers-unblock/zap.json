@@ -1,12 +1,12 @@
 {
   "name": "scw-cancellations-to-workflowers-unblock",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0558a-54c3-70f6-937a-b4957e6ea784",
+  "current_version_id": "01a0558a-6977-7289-9ca7-96f69dc358b3",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaJGwspFR_ag3GY1GUQzxQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "scw-cancellations-to-workflowers-unblock",
     "description": "Deletion propagation for the two-way calendar-blocking pair. scw-events-to-workflowers-block's event_updated trigger runs with expand_recurring: true, and in that mode Zapier silently drops cancellations (proven 2026-08-31: the meeting-note Zap on expand_recurring: false had 13 cancelled tombstones in its last 100 runs; the blocking Zap had 0 in 100). This slim workflow triggers on event_cancelled for dchiuten@securecodewarrior.com, looks the cancelled event up in the GCal Sync Map, deletes its work.flowers mirror, and marks the row deleted. Creates and updates stay with the main Zap.",
     "enable_on_publish": true
