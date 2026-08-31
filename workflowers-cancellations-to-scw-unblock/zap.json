@@ -1,0 +1,38 @@
+{
+  "name": "workflowers-cancellations-to-scw-unblock",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "workflowers-cancellations-to-scw-unblock",
+    "description": "Deletion propagation for the two-way calendar-blocking pair. workflowers-events-to-scw-busy's event_updated trigger runs with expand_recurring: true, and in that mode Zapier silently drops cancellations (proven 2026-08-31: the meeting-note Zap on expand_recurring: false had 13 cancelled tombstones in its last 100 runs; the blocking Zap had 0 in 100, and a deleted 9am work.flowers event left its SCW Busy block standing). This slim workflow triggers on event_cancelled for dennis@work.flowers, looks the cancelled event up in the GCal Sync Map, deletes its SCW Busy block, and marks the row deleted. Creates and updates stay with the main Zap.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleCalendarCLIAPI@1.15.0",
+    "action": "event_cancelled",
+    "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "params": {
+      "calendarid": "dennis@work.flowers"
+    },
+    "authentication_note": "work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the calendar whose cancellations are read. The SCW credential is a --connections alias because this workflow deletes Busy blocks there.",
+    "trigger_note": "Polling trigger, fires on cancellation/deletion. `calendarid` is its only input field (verified via list-trigger-input-fields 2026-08-31). Payload is the raw Google event with status 'cancelled', per-occurrence ids for recurring instances — the probe on 2026-08-31 contained the exact deleted 9am event that motivated this Zap.",
+    "why_this_exists": "event_updated with expand_recurring: true NEVER delivers cancellations — the trigger_note on workflowers-events-to-scw-busy originally bet the other way based on the meeting-note Zap's behaviour, but that Zap runs expand_recurring: false, which turned out to be the deciding difference. First observed live 2026-08-31: a deleted 9am work.flowers event left its SCW Busy block standing until it was cleared by hand-triggering the main Zap's cancel path."
+  },
+  "connections": {
+    "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
+  },
+  "connections_note": "gcal_scw is the SCW Google Calendar connection 'dchiuten@securecodewarrior.com' — where this workflow deletes the Busy blocks that workflowers-events-to-scw-busy / gcal-block-sweep created.",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  },
+  "tables": {
+    "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — shared with the whole blocking family. Read for the loop guard (a cancelled event whose id is a Mirror Event ID is the sync's own deletion echoing back) and the mapping lookup; the matched row's Status is written to 'deleted'."
+  },
+  "description": "work.flowers calendar cancellations → delete the corresponding private Busy block on the SCW calendar and mark the GCal Sync Map row deleted. The deletion-propagation half event_updated (expand_recurring: true) cannot deliver."
+}
