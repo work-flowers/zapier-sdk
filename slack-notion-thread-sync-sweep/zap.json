@@ -1,12 +1,12 @@
 {
   "name": "slack-notion-thread-sync-sweep",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a05bff-15bd-726c-bf83-ca56967bf5cc",
+  "current_version_id": "01a05bff-2402-7b58-b196-c6d3e3b6a360",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AezPhnKoN0URfqLhM6t97Q",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "slack-notion-thread-sync-sweep",
     "description": "Daily sweep behind the Slack <-> Notion thread sync. For each active thread_map row: (1) resolve check — if the discussion no longer appears in GET /v1/comments the thread is marked resolved and a closing note is posted to Slack (resolved and deleted are indistinguishable via the API); (2) reply backstop — diffs the full Slack thread against message_map and mirrors anything the event-driven durable missed, making the mirror self-healing. Idempotent: both paths converge on the same slack_ts-keyed rows.",
     "enable_on_publish": true,
