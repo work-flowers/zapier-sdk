@@ -118,10 +118,26 @@ function notionMarkdownToEmail(md: string): string {
       while (lines.length && lines[0].trim() === "") lines.shift();
       while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
       if (icon && lines.length) lines[0] = `${icon} ${lines[0]}`;
-      const quoted = lines
-        .map((l) => (l.trim() === "" ? ">" : `> ${l}`))
-        .join("\n");
-      return `\n\n${quoted}\n\n`;
+      // Each line here is a separate Notion block (paragraph, list item, ...).
+      // Adjacent "> a" / "> b" lines are ONE Markdown paragraph whose soft
+      // breaks collapse to spaces when rendered, so separate blocks with a
+      // blank ">" line — except between list items, which stay tight.
+      const isListItem = (l: string) => /^\s*([-*+]|\d+[.)])\s/.test(l);
+      const quotedLines: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        quotedLines.push(l.trim() === "" ? ">" : `> ${l}`);
+        const next = lines[i + 1];
+        if (
+          next !== undefined &&
+          l.trim() !== "" &&
+          next.trim() !== "" &&
+          !(isListItem(l) && isListItem(next))
+        ) {
+          quotedLines.push(">");
+        }
+      }
+      return `\n\n${quotedLines.join("\n")}\n\n`;
     },
   );
 
