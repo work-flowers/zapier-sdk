@@ -54,8 +54,18 @@ jobs:
 
       # `--project` keeps it to this repo's .agents/skills (never the runner's
       # user-level skills); `-y` skips the interactive scope prompt.
+      #
+      # The `mkdir` is load-bearing: on a bare runner the skills CLI detects NO
+      # installed agents, and its `-y` fallback is "install to all agents" —
+      # which scatters copies into every agent's directory, including a stray
+      # top-level `agent/` tree (the "Eve" agent) that nothing in this repo
+      # reads. Pre-creating ~/.claude makes it detect Claude Code and target
+      # only Universal (.agents/skills) + Claude Code, same as a dev machine.
+      # PR #139 shipped 4,300 lines of that junk before this guard existed.
       - name: Refresh from zapier/agent-skills
-        run: npx -y skills update --project -y
+        run: |
+          mkdir -p "$HOME/.claude"
+          npx -y skills update --project -y
 
       - name: Report what moved
         id: diff
@@ -94,6 +104,15 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          # Only these paths belong in a refresh PR. Without this allowlist,
+          # create-pull-request commits EVERYTHING the refresh step left in the
+          # working tree — which is how the stray `agent/` tree reached PR #139.
+          # Belt to the mkdir suspenders above: junk may get created, but it
+          # can never be committed.
+          add-paths: |
+            .agents/skills/**
+            .claude/skills/**
+            skills-lock.json
           branch: chore/refresh-vendored-skills
           base: main
           title: "chore: refresh vendored workflows-* skills from zapier/agent-skills"
