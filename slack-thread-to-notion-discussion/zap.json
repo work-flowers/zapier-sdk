@@ -1,0 +1,43 @@
+{
+  "name": "slack-thread-to-notion-discussion",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "slack-thread-to-notion-discussion",
+    "description": "Slack -> Notion half of the thread <-> discussion two-way sync. Listens to every public-channel message (instant Slack event subscription; fires on thread replies too — verified by deployed test 2026-09-01). A message in a mapped thread mirrors into the mapped Notion discussion as a comment under the Slack author's own display_name. A message in an unmapped thread that names a ticket (TKT-###) or pastes a Notion page URL links the thread: opens a page-level discussion, backfills the thread, and confirms in-thread. Everything else exits at the free guard path.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "SlackCLIAPI@1.40.1",
+    "action": "anywhere_message",
+    "authentication_id": "020cae54-a27c-86d6-93a9-27b012c17e74",
+    "params": {
+      "listen_for_bots": "no",
+      "raw": "no"
+    },
+    "trigger_note": "Public channels only by design (v1 scope). listen_for_bots is set to no but has proven inconsistent — the workflow body re-checks user.is_bot explicitly, which is also echo-suppression layer 1 for the sync's own Slack posts.",
+    "why_not_polling": "Deployed Slack triggers register a Slack event subscription (delivery in seconds). Sample polls never show thread replies — that is documented test-time behaviour, not the deployed behaviour."
+  },
+  "connections": {
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "zod": "4.3.6",
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "tables": {
+    "thread_map": "01M1DXXXH3E7K7JWDJYA1R50CF",
+    "message_map": "01M1DXY3QEF60HX7HW8XYVE5AF"
+  },
+  "notion": {
+    "tasks_data_source_id": "27a91b07-11ac-81ed-973f-000ba6da1441",
+    "ticket_property": "Ticket ID"
+  },
+  "description": "Slack -> Notion half of the Slack thread <-> Notion discussion two-way sync (TKT-825). Mention a TKT-### (or paste a Notion page URL) in any public Slack thread to link it to that task; from then on every human message in the thread mirrors into the task's Notion discussion, attributed via display_name. Companion Zaps: notion-comment-to-slack-thread (reverse direction) and slack-notion-thread-sync-sweep (resolve detection + self-healing backstop)."
+}

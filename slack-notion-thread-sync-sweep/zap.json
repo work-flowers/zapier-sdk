@@ -1,0 +1,37 @@
+{
+  "name": "slack-notion-thread-sync-sweep",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "slack-notion-thread-sync-sweep",
+    "description": "Daily sweep behind the Slack <-> Notion thread sync. For each active thread_map row: (1) resolve check — if the discussion no longer appears in GET /v1/comments the thread is marked resolved and a closing note is posted to Slack (resolved and deleted are indistinguishable via the API); (2) reply backstop — diffs the full Slack thread against message_map and mirrors anything the event-driven durable missed, making the mirror self-healing. Idempotent: both paths converge on the same slack_ts-keyed rows.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyDay",
+    "authentication_id": null,
+    "params": {
+      "hod": "7:00 AM",
+      "weekends": "yes"
+    },
+    "trigger_note": "Daily at 07:00 account time, weekends included — conversations don't pause for weekends and the sweep is the only resolve-detection mechanism."
+  },
+  "connections": {
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "tables": {
+    "thread_map": "01M1DXXXH3E7K7JWDJYA1R50CF",
+    "message_map": "01M1DXY3QEF60HX7HW8XYVE5AF"
+  },
+  "description": "Scheduled backstop for the Slack thread <-> Notion discussion two-way sync (TKT-825): daily resolve detection plus self-healing reply diff. Companion Zaps: slack-thread-to-notion-discussion and notion-comment-to-slack-thread."
+}
