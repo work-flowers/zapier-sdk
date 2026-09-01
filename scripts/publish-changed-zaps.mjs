@@ -103,13 +103,28 @@ function sdkArgs(rest) {
   ];
 }
 
-// Run a CLI command and parse its JSON. Throws with stderr on failure.
+// Run a CLI command and parse its JSON. execFileSync's own error message is the
+// full command line (megabytes of inline source on a publish) with the server's
+// actual complaint left on err.stderr — so failures rethrow the captured
+// stderr/stdout instead, or the 2026-09-01 sweep publish failure repeats with
+// nothing in the log but the command that failed.
 function sdk(rest) {
-  const raw = execFileSync("npx", sdkArgs(rest), {
-    cwd: REPO_ROOT,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  let raw;
+  try {
+    raw = execFileSync("npx", sdkArgs(rest), {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (err) {
+    const stderr = (err.stderr ?? "").toString().trim();
+    const stdout = (err.stdout ?? "").toString().trim();
+    const detail = [stderr, stdout].filter(Boolean).join("\n--- stdout ---\n").slice(0, 4000);
+    fail(
+      `zapier-sdk ${rest[0]} failed (exit ${err.status ?? "?"})` +
+        (detail ? `:\n${detail}` : ` — no stderr/stdout captured: ${String(err.message).slice(0, 300)}`),
+    );
+  }
   return JSON.parse(raw);
 }
 
