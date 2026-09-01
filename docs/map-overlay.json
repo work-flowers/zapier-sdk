@@ -90,7 +90,10 @@
         "start-a-timer-from-notion-task",
         "whatsapp-slack-bridge",
         "workflowers-cancellations-to-scw-unblock",
-        "workflowers-events-to-scw-busy"
+        "workflowers-events-to-scw-busy",
+        "slack-thread-to-notion-discussion",
+        "notion-comment-to-slack-thread",
+        "slack-notion-thread-sync-sweep"
       ]
     },
     "esignatures-legal": {
@@ -391,6 +394,16 @@
       "type": "table",
       "id": "01M13QPJ5GRJV33096MBNSN1Q5",
       "name": "GCal Sync Map"
+    },
+    "table:slack-notion-thread-map": {
+      "type": "table",
+      "id": "01M1DXXXH3E7K7JWDJYA1R50CF",
+      "name": "Slack-Notion Thread Map"
+    },
+    "table:slack-notion-message-map": {
+      "type": "table",
+      "id": "01M1DXY3QEF60HX7HW8XYVE5AF",
+      "name": "Slack-Notion Message Map"
     }
   },
   "edges": [
@@ -1467,6 +1480,121 @@
     {
       "from": "workflowers-cancellations-to-scw-unblock",
       "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "app:slack",
+      "to": "slack-thread-to-notion-discussion",
+      "kind": "trigger"
+    },
+    {
+      "from": "app:slack",
+      "to": "slack-thread-to-notion-discussion",
+      "kind": "read"
+    },
+    {
+      "from": "table:slack-notion-thread-map",
+      "to": "slack-thread-to-notion-discussion",
+      "kind": "read"
+    },
+    {
+      "from": "table:slack-notion-message-map",
+      "to": "slack-thread-to-notion-discussion",
+      "kind": "read"
+    },
+    {
+      "from": "slack-thread-to-notion-discussion",
+      "to": "table:slack-notion-thread-map",
+      "kind": "write"
+    },
+    {
+      "from": "slack-thread-to-notion-discussion",
+      "to": "table:slack-notion-message-map",
+      "kind": "write"
+    },
+    {
+      "from": "ds:tasks",
+      "to": "slack-thread-to-notion-discussion",
+      "kind": "read"
+    },
+    {
+      "from": "slack-thread-to-notion-discussion",
+      "to": "ds:tasks",
+      "kind": "write"
+    },
+    {
+      "from": "slack-thread-to-notion-discussion",
+      "to": "app:slack",
+      "kind": "write"
+    },
+    {
+      "from": "ds:tasks",
+      "to": "notion-comment-to-slack-thread",
+      "kind": "trigger"
+    },
+    {
+      "from": "table:slack-notion-thread-map",
+      "to": "notion-comment-to-slack-thread",
+      "kind": "read"
+    },
+    {
+      "from": "table:slack-notion-message-map",
+      "to": "notion-comment-to-slack-thread",
+      "kind": "read"
+    },
+    {
+      "from": "table:user-ids",
+      "to": "notion-comment-to-slack-thread",
+      "kind": "read"
+    },
+    {
+      "from": "notion-comment-to-slack-thread",
+      "to": "table:slack-notion-message-map",
+      "kind": "write"
+    },
+    {
+      "from": "notion-comment-to-slack-thread",
+      "to": "app:slack",
+      "kind": "write"
+    },
+    {
+      "from": "table:slack-notion-thread-map",
+      "to": "slack-notion-thread-sync-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "table:slack-notion-message-map",
+      "to": "slack-notion-thread-sync-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "app:slack",
+      "to": "slack-notion-thread-sync-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "ds:tasks",
+      "to": "slack-notion-thread-sync-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "slack-notion-thread-sync-sweep",
+      "to": "table:slack-notion-thread-map",
+      "kind": "write"
+    },
+    {
+      "from": "slack-notion-thread-sync-sweep",
+      "to": "table:slack-notion-message-map",
+      "kind": "write"
+    },
+    {
+      "from": "slack-notion-thread-sync-sweep",
+      "to": "ds:tasks",
+      "kind": "write"
+    },
+    {
+      "from": "slack-notion-thread-sync-sweep",
+      "to": "app:slack",
       "kind": "write"
     }
   ],
