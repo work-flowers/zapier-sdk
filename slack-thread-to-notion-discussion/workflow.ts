@@ -131,6 +131,11 @@ function extractNotionPageId(text: string): string | null {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+/** Canonical Notion page URL from a dashed page id. */
+function notionPageUrl(pageId: string): string {
+  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
+}
+
 type TableRow = { recordId: string; data: Record<string, unknown> };
 
 function extractRow(result: unknown): TableRow | null {
@@ -437,7 +442,7 @@ async function linkThread(
     postNotionComment(
       { parent: { page_id: pageId! } },
       msg.permalink
-        ? `Linked Slack thread: ${msg.permalink}`
+        ? `Linked Slack thread: [open in Slack](${msg.permalink})`
         : `Linked Slack thread ${msg.channelId}/${msg.threadTs}`,
       "Notion Sync",
     ),
@@ -524,7 +529,11 @@ async function linkThread(
       inputs: {
         channel: msg.channelId,
         thread_ts: msg.threadTs,
-        text: `:link: Thread linked to Notion${ticketNumber !== null ? ` (TKT-${ticketNumber})` : ""} — replies here now sync to the task's discussion.`,
+        text: `:link: Thread linked to ${
+          ticketNumber !== null
+            ? `<${notionPageUrl(pageId!)}|TKT-${ticketNumber}>`
+            : `<${notionPageUrl(pageId!)}|Notion>`
+        } — replies here now sync to the task's discussion.`,
         as_bot: "yes",
         username: "Notion Sync",
         unfurl: "no",

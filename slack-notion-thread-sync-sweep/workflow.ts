@@ -175,7 +175,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             inputs: {
               channel: row.channelId,
               thread_ts: row.threadTs,
-              text: ":white_check_mark: The linked Notion discussion was resolved — this thread is no longer syncing.",
+              text: `:white_check_mark: The linked <https://www.notion.so/${row.pageId.replace(/-/g, "")}|Notion discussion> was resolved — this thread is no longer syncing.`,
               as_bot: "yes",
               username: "Notion Sync",
               unfurl: "no",
