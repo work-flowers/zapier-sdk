@@ -20,7 +20,7 @@ const THREAD_MAP_TABLE = "01M1DXXXH3E7K7JWDJYA1R50CF";
 const TM_CHANNEL = "f1"; // Slack Channel ID
 const TM_THREAD_TS = "f2"; // Slack Thread Ts
 const TM_DISCUSSION = "f3"; // Notion Discussion ID
-// f4 = Notion Page ID, f5 = Notion Block ID (empty: page-level discussion) —
+// f4 = Notion Page ID, f5 = Notion Block ID (per-thread anchor block) —
 // written via new__data__f4/f5 literals below.
 const TM_STATE = "f6"; // active / resolved / deleted
 
@@ -131,6 +131,11 @@ function extractNotionPageId(text: string): string | null {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+/** Canonical Notion page URL from a dashed page id. */
+function notionPageUrl(pageId: string): string {
+  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
+}
+
 type TableRow = { recordId: string; data: Record<string, unknown> };
 
 function extractRow(result: unknown): TableRow | null {
@@ -212,7 +217,7 @@ type NotionComment = { commentId: string; discussionId: string };
 async function postNotionComment(
   parent:
     | { discussion_id: string }
-    | { parent: { page_id: string } },
+    | { parent: { block_id: string } },
   markdown: string,
   displayName: string,
 ): Promise<NotionComment> {
@@ -432,12 +437,59 @@ async function linkThread(
     }
   }
 
-  // Open the discussion with a header comment linking back to Slack.
+  // Each linked thread needs its OWN discussion, and page-parented comments all
+  // join the page's single open page-level discussion (verified live
+  // 2026-09-01: two page-parent comments shared one discussion_id, while each
+  // block-parent comment opened a fresh one). So: append a small anchor block
+  // per thread — it doubles as the in-page marker — and open the discussion on
+  // that block.
+  const anchorBlockId = await ctx.step("append-anchor-block", async () => {
+    const linkText = msg.permalink
+      ? {
+          type: "text",
+          text: { content: "open in Slack", link: { url: msg.permalink } },
+        }
+      : { type: "text", text: { content: `${msg.channelId}/${msg.threadTs}` } };
+    const res = await sdk.fetch(`${NOTION_API}/blocks/${pageId}/children`, {
+      connection: NOTION_CONNECTION,
+      method: "PATCH",
+      headers: {
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        children: [
+          {
+            object: "block",
+            type: "callout",
+            callout: {
+              icon: { type: "emoji", emoji: "💬" },
+              rich_text: [
+                { type: "text", text: { content: "Slack thread: " } },
+                linkText,
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Notion append anchor block failed (${res.status}): ${await res.text()}`,
+      );
+    }
+    const json = (await res.json()) as { results?: Array<{ id?: string }> };
+    const id = firstString(json.results?.[0]?.id);
+    if (!id) throw new Error("Notion append anchor block returned no block id");
+    return id;
+  });
+
+  // Open the discussion on the anchor block with a header comment.
   const header = await ctx.step("create-discussion", async () =>
     postNotionComment(
-      { parent: { page_id: pageId! } },
+      { parent: { block_id: anchorBlockId } },
       msg.permalink
-        ? `Linked Slack thread: ${msg.permalink}`
+        ? `Linked Slack thread: [open in Slack](${msg.permalink})`
         : `Linked Slack thread ${msg.channelId}/${msg.threadTs}`,
       "Notion Sync",
     ),
@@ -454,7 +506,7 @@ async function linkThread(
         new__data__f2: msg.threadTs,
         new__data__f3: header.discussionId,
         new__data__f4: pageId,
-        new__data__f5: "",
+        new__data__f5: anchorBlockId,
         new__data__f6: "active",
       },
     });
@@ -524,7 +576,11 @@ async function linkThread(
       inputs: {
         channel: msg.channelId,
         thread_ts: msg.threadTs,
-        text: `:link: Thread linked to Notion${ticketNumber !== null ? ` (TKT-${ticketNumber})` : ""} — replies here now sync to the task's discussion.`,
+        text: `:link: Thread linked to ${
+          ticketNumber !== null
+            ? `<${notionPageUrl(pageId!)}|TKT-${ticketNumber}>`
+            : `<${notionPageUrl(pageId!)}|Notion>`
+        } — replies here now sync to the task's discussion.`,
         as_bot: "yes",
         username: "Notion Sync",
         unfurl: "no",

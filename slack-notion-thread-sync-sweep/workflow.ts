@@ -19,6 +19,7 @@ const TM_CHANNEL = "f1";
 const TM_THREAD_TS = "f2";
 const TM_DISCUSSION = "f3";
 const TM_PAGE = "f4";
+const TM_BLOCK = "f5"; // per-thread anchor block the discussion lives on
 const TM_STATE = "f6";
 
 const MESSAGE_MAP_TABLE = "01M1DXY3QEF60HX7HW8XYVE5AF";
@@ -42,6 +43,7 @@ type ThreadRow = {
   threadTs: string;
   discussionId: string;
   pageId: string;
+  blockId: string; // anchor block; falls back to pageId for legacy rows
   state: string;
 };
 
@@ -62,6 +64,7 @@ function parseThreadRow(raw: Record<string, unknown>): ThreadRow | null {
     threadTs: get(TM_THREAD_TS, "Slack Thread Ts"),
     discussionId: get(TM_DISCUSSION, "Notion Discussion ID"),
     pageId: get(TM_PAGE, "Notion Page ID"),
+    blockId: get(TM_BLOCK, "Notion Block ID"),
     state: get(TM_STATE, "State"),
   };
 }
@@ -131,10 +134,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }
 
       // 2a. Resolve check: a discussion that vanished from the comments list
-      // was resolved (or deleted — the API cannot tell them apart).
+      // was resolved (or deleted — the API cannot tell them apart). Discussions
+      // are opened on a per-thread anchor block, so query that block; legacy
+      // rows without one fall back to the page id.
       const stillOpen = await ctx.step(`check-discussion-${row.recordId}`, async () => {
         const res = await sdk.fetch(
-          `${NOTION_API}/comments?block_id=${row.pageId}&page_size=100`,
+          `${NOTION_API}/comments?block_id=${row.blockId || row.pageId}&page_size=100`,
           {
             connection: NOTION_CONNECTION,
             headers: { "Notion-Version": NOTION_VERSION },
@@ -175,7 +180,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             inputs: {
               channel: row.channelId,
               thread_ts: row.threadTs,
-              text: ":white_check_mark: The linked Notion discussion was resolved — this thread is no longer syncing.",
+              text: `:white_check_mark: The linked <https://www.notion.so/${row.pageId.replace(/-/g, "")}|Notion discussion> was resolved — this thread is no longer syncing.`,
               as_bot: "yes",
               username: "Notion Sync",
               unfurl: "no",
