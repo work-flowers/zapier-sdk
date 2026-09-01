@@ -1,4 +1,6 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/slack-notion-thread-sync-sweep
+// First-publish retry: run 33483876845 died on this Zap's publish, and the
+// pending-create path only fires on a SOURCE change — hence this comment.
 import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 
