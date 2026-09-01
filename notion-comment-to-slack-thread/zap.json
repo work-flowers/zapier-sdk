@@ -1,12 +1,12 @@
 {
   "name": "notion-comment-to-slack-thread",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a05bf0-f5ac-7b68-b51b-38eb3ba9ea88",
+  "current_version_id": "01a05bf1-0545-7385-9a60-c2e5ccdd2750",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Adawn1YZfC37W-9dzYKyCg",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "notion-comment-to-slack-thread",
     "description": "Notion -> Slack half of the thread <-> discussion two-way sync. Fires on new comments on Tasks pages (instant when deployed — ~4s measured 2026-09-01 — and the payload is the full comment object, so no fetch-back). A comment in a mapped discussion posts into the mapped Slack thread as-bot under '<author> (via Notion)', resolved via the Internal User IDs table. Comments by the sync's own integration, already-mirrored comments, and comments on unmapped discussions all exit at the free guard path.",
     "enable_on_publish": true
@@ -19,7 +19,8 @@
       "datasource_id": "27a91b07-11ac-81ed-973f-000ba6da1441"
     },
     "trigger_note": "Scoped to the Tasks data source — covers every task page in one trigger. Do NOT drop the scope: an unscoped poll returned nothing (verified 2026-09-01). Replaces the task doc's original catch-hook + Notion-webhook design entirely, so no webhook subscription, verification token, or signature validation exists.",
-    "params_note": "datasource_id = Tasks data source in Project Management DB."
+    "params_note": "datasource_id = Tasks data source in Project Management DB.",
+    "webhook_url": "https://hooks.zapier.com/hooks/standard/20495893/1ac54650f81c44039e93622a5dab9553/"
   },
   "connections": {
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
@@ -35,5 +36,6 @@
     "message_map": "01M1DXY3QEF60HX7HW8XYVE5AF",
     "internal_user_ids": "01JM3J9SG5X6S8GBSSC8AS28AT"
   },
-  "description": "Notion -> Slack half of the Slack thread <-> Notion discussion two-way sync (TKT-825). New comments in a linked task discussion post into the linked Slack thread, attributed as '<author> (via Notion)'. Companion Zaps: slack-thread-to-notion-discussion (reverse direction) and slack-notion-thread-sync-sweep (resolve detection + backstop)."
+  "description": "Notion -> Slack half of the Slack thread <-> Notion discussion two-way sync (TKT-825). New comments in a linked task discussion post into the linked Slack thread, attributed as '<author> (via Notion)'. Companion Zaps: slack-thread-to-notion-discussion (reverse direction) and slack-notion-thread-sync-sweep (resolve detection + backstop).",
+  "version_created_at": "2026-09-01T07:48:37.444Z"
 }

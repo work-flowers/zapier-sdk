@@ -9,7 +9,8 @@
     "state": "pending-create",
     "workflow_name": "slack-thread-to-notion-discussion",
     "description": "Slack -> Notion half of the thread <-> discussion two-way sync. Listens to every public-channel message (instant Slack event subscription; fires on thread replies too — verified by deployed test 2026-09-01). A message in a mapped thread mirrors into the mapped Notion discussion as a comment under the Slack author's own display_name. A message in an unmapped thread that names a ticket (TKT-###) or pastes a Notion page URL links the thread: opens a page-level discussion, backfills the thread, and confirms in-thread. Everything else exits at the free guard path.",
-    "enable_on_publish": true
+    "enable_on_publish": true,
+    "note": "Never attempted by failed publish run 33483876845 (2026-09-01) — the job died on the sweep before reaching this directory. Touched so the retry merge picks it up."
   },
   "trigger": {
     "selected_api": "SlackCLIAPI@1.40.1",

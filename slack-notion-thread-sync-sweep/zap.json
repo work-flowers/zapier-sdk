@@ -9,7 +9,8 @@
     "state": "pending-create",
     "workflow_name": "slack-notion-thread-sync-sweep",
     "description": "Daily sweep behind the Slack <-> Notion thread sync. For each active thread_map row: (1) resolve check — if the discussion no longer appears in GET /v1/comments the thread is marked resolved and a closing note is posted to Slack (resolved and deleted are indistinguishable via the API); (2) reply backstop — diffs the full Slack thread against message_map and mirrors anything the event-driven durable missed, making the mirror self-healing. Idempotent: both paths converge on the same slack_ts-keyed rows.",
-    "enable_on_publish": true
+    "enable_on_publish": true,
+    "note": "Retry of failed publish run 33483876845 (2026-09-01): create succeeded but publish-workflow-version failed with its stderr swallowed by the publisher (fixed in this same PR). The empty orphan container 01a05bf1-162f-7528-8584-f0440aded187 was deleted; this merge re-creates cleanly."
   },
   "trigger": {
     "selected_api": "ScheduleCLIAPI@1.7.0",
