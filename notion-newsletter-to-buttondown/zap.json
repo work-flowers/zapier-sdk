@@ -1,7 +1,7 @@
 {
   "name": "notion-newsletter-to-buttondown",
   "workflow_id": "019f0cba-8f96-76a4-8aff-3ec87e9178e4",
-  "current_version_id": "01a014c8-3e0a-7836-9926-b0449475a891",
+  "current_version_id": "01a05b6d-8962-7339-ad20-b6fc2519b243",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ARcz_XgM1aTd9G3qiaKOlg",
   "enabled": true,
   "is_private": false,
