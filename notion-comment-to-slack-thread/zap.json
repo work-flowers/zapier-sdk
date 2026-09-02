@@ -1,7 +1,7 @@
 {
   "name": "notion-comment-to-slack-thread",
   "workflow_id": "01a05bf0-f5ac-7b68-b51b-38eb3ba9ea88",
-  "current_version_id": "01a05bf1-0545-7385-9a60-c2e5ccdd2750",
+  "current_version_id": "01a05ff5-d6fd-70cf-ad60-0fa2e269b0d2",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Adawn1YZfC37W-9dzYKyCg",
   "enabled": true,
   "is_private": false,
