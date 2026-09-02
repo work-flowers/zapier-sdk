@@ -24,6 +24,7 @@ const MM_COMMENT = "f3";
 
 // Internal User IDs — Notion user id -> name (and other systems' ids).
 const USER_IDS_TABLE = "01JM3J9SG5X6S8GBSSC8AS28AT";
+const UID_SLACK_USER = "f3";
 const UID_NOTION_USER = "f6";
 const UID_FIRST_NAME = "f13";
 const UID_LAST_NAME = "f14";
@@ -178,9 +179,13 @@ const workflow = defineDurable<Input, unknown>(
       return { skipped: "already-mirrored", commentId };
     }
 
-    // Resolve the author's name: Internal User IDs table first, then the
-    // Notion users API, then a generic label.
+    // Resolve the author's name and avatar. The Internal User IDs table maps
+    // the Notion user id to the name AND their Slack user id; the avatar is
+    // the author's own SLACK profile picture (users.info), so the mirrored
+    // message looks like them. Fallbacks: Notion users API for the name and,
+    // when there is no Slack mapping, the Notion avatar.
     let authorName = "";
+    let authorAvatar = "";
     if (createdBy) {
       const userRow = await ctx.step("find-author", async () => {
         const res = await sdk.runAction({
@@ -200,6 +205,7 @@ const workflow = defineDurable<Input, unknown>(
         });
         return extractRow((res as { data?: unknown }).data);
       });
+      const slackUserId = userRow ? firstString(userRow.data[UID_SLACK_USER]) : "";
       if (userRow) {
         authorName = [
           firstString(userRow.data[UID_FIRST_NAME]),
@@ -208,16 +214,39 @@ const workflow = defineDurable<Input, unknown>(
           .filter(Boolean)
           .join(" ");
       }
-      if (!authorName) {
-        authorName = await ctx.step("fetch-author", async () => {
+      if (slackUserId) {
+        authorAvatar = await ctx.step("fetch-slack-avatar", async () => {
+          const res = await sdk.fetch(
+            `https://slack.com/api/users.info?user=${slackUserId}`,
+            { connection: SLACK_CONNECTION },
+          );
+          if (!res.ok) return "";
+          const json = (await res.json()) as {
+            ok?: boolean;
+            user?: { profile?: { image_192?: string; image_512?: string } };
+          };
+          if (json.ok !== true) return "";
+          return (
+            firstString(json.user?.profile?.image_192) ||
+            firstString(json.user?.profile?.image_512)
+          );
+        });
+      }
+      if (!authorName || !authorAvatar) {
+        const notionUser = await ctx.step("fetch-author", async () => {
           const res = await sdk.fetch(`${NOTION_API}/users/${createdBy}`, {
             connection: NOTION_CONNECTION,
             headers: { "Notion-Version": NOTION_VERSION },
           });
-          if (!res.ok) return "";
+          if (!res.ok) return { name: "", avatarUrl: "" };
           const json = (await res.json()) as Record<string, unknown>;
-          return firstString(json.name);
+          return {
+            name: firstString(json.name),
+            avatarUrl: firstString(json.avatar_url),
+          };
         });
+        if (!authorName) authorName = notionUser.name;
+        if (!authorAvatar) authorAvatar = notionUser.avatarUrl;
       }
     }
     if (!authorName) authorName = "Notion user";
@@ -243,6 +272,9 @@ const workflow = defineDurable<Input, unknown>(
           text,
           as_bot: "yes",
           username: `${authorName} (via Notion)`,
+          // Author's avatar (Slack profile pic; Notion fallback) as the bot
+          // icon; omitted (Zapier default) when neither exists.
+          ...(authorAvatar ? { icon: authorAvatar } : {}),
           unfurl: "no",
           link_names: "no",
           reply_broadcast: "no",
