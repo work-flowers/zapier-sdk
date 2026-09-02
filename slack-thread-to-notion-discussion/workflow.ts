@@ -20,8 +20,9 @@ const THREAD_MAP_TABLE = "01M1DXXXH3E7K7JWDJYA1R50CF";
 const TM_CHANNEL = "f1"; // Slack Channel ID
 const TM_THREAD_TS = "f2"; // Slack Thread Ts
 const TM_DISCUSSION = "f3"; // Notion Discussion ID
-// f4 = Notion Page ID, f5 = Notion Block ID (per-thread anchor block) —
-// written via new__data__f4/f5 literals below.
+// f4 = Notion Page ID, f5 = Notion Block ID (empty: page-level discussion;
+// rows from the anchor-block era may carry a block id) — written via
+// new__data__f4/f5 literals below.
 const TM_STATE = "f6"; // active / resolved / deleted
 
 // message_map: one row per mirrored message; drives dedupe + echo suppression.
@@ -217,7 +218,7 @@ type NotionComment = { commentId: string; discussionId: string };
 async function postNotionComment(
   parent:
     | { discussion_id: string }
-    | { parent: { block_id: string } },
+    | { parent: { page_id: string } },
   markdown: string,
   displayName: string,
 ): Promise<NotionComment> {
@@ -437,57 +438,16 @@ async function linkThread(
     }
   }
 
-  // Each linked thread needs its OWN discussion, and page-parented comments all
-  // join the page's single open page-level discussion (verified live
-  // 2026-09-01: two page-parent comments shared one discussion_id, while each
-  // block-parent comment opened a fresh one). So: append a small anchor block
-  // per thread — it doubles as the in-page marker — and open the discussion on
-  // that block.
-  const anchorBlockId = await ctx.step("append-anchor-block", async () => {
-    const linkText = msg.permalink
-      ? {
-          type: "text",
-          text: { content: "open in Slack", link: { url: msg.permalink } },
-        }
-      : { type: "text", text: { content: `${msg.channelId}/${msg.threadTs}` } };
-    const res = await sdk.fetch(`${NOTION_API}/blocks/${pageId}/children`, {
-      connection: NOTION_CONNECTION,
-      method: "PATCH",
-      headers: {
-        "Notion-Version": NOTION_VERSION,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        children: [
-          {
-            object: "block",
-            type: "callout",
-            callout: {
-              icon: { type: "emoji", emoji: "💬" },
-              rich_text: [
-                { type: "text", text: { content: "Slack thread: " } },
-                linkText,
-              ],
-            },
-          },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Notion append anchor block failed (${res.status}): ${await res.text()}`,
-      );
-    }
-    const json = (await res.json()) as { results?: Array<{ id?: string }> };
-    const id = firstString(json.results?.[0]?.id);
-    if (!id) throw new Error("Notion append anchor block returned no block id");
-    return id;
-  });
-
-  // Open the discussion on the anchor block with a header comment.
+  // Open the discussion with a header comment linking back to Slack.
+  // KNOWN LIMITATION (accepted while TKT-825 is paused, 2026-09-02): the API
+  // cannot open a second page-level thread. A page-parented comment opens a
+  // fresh page-level discussion only when the page has none open; otherwise it
+  // joins the MOST RECENTLY CREATED open thread (verified live 2026-09-02
+  // against the multi-thread alpha). Replies by discussion_id always land in
+  // the captured discussion, so the sync stays consistent either way.
   const header = await ctx.step("create-discussion", async () =>
     postNotionComment(
-      { parent: { block_id: anchorBlockId } },
+      { parent: { page_id: pageId! } },
       msg.permalink
         ? `Linked Slack thread: [open in Slack](${msg.permalink})`
         : `Linked Slack thread ${msg.channelId}/${msg.threadTs}`,
@@ -506,7 +466,7 @@ async function linkThread(
         new__data__f2: msg.threadTs,
         new__data__f3: header.discussionId,
         new__data__f4: pageId,
-        new__data__f5: anchorBlockId,
+        new__data__f5: "",
         new__data__f6: "active",
       },
     });
