@@ -17,14 +17,15 @@ flowchart TD
     L -- "yes, resolved/deleted" --> S3[skip - thread closed]
     L -- "yes, active" --> D{comment_id in message_map?}
     D -- yes --> S4[skip - already mirrored]
-    D -- no --> A[resolve author name:\nInternal User IDs table, then users API]
-    A --> P[post Slack thread reply as_bot\nusername 'author via Notion']
+    D -- no --> A[resolve author name + avatar:\nInternal User IDs table, Slack users.info,\nNotion users API fallback]
+    A --> P[post Slack thread reply as_bot\nusername 'author via Notion'\nicon = author's Slack avatar]
     P --> W[write message_map row origin=notion]
 ```
 
 ## Behaviour notes
 
-- **Author resolution** uses the **Internal User IDs** Table first (`Notion User ID` → First/Last name), falling back to `GET /v1/users/{id}`, then to "Notion user".
+- **Author resolution** uses the **Internal User IDs** Table first (`Notion User ID` → First/Last name **and** `Slack User ID`), falling back to `GET /v1/users/{id}`, then to "Notion user".
+- **The bot icon is the author's own Slack profile picture** — `users.info` (`profile.image_192`) via `sdk.fetch` on the Slack connection, keyed off the Table's `Slack User ID` (`f3`). Verified live 2026-09-02 that the Slack connection's token accepts `users.info` through `sdk.fetch`. Falls back to the author's Notion `avatar_url` when there is no Slack mapping, and to the Zapier default icon when neither exists. (The reverse direction cannot do this: Notion's `display_name` on comments takes a custom *name* only — the API has no avatar field.)
 - Posting `as_bot` is load-bearing: the companion Zap's `user.is_bot` guard is what stops this post from echoing back into Notion.
 - The `message_map` row is written right after the post returns (the Slack `ts` isn't known before); the `is_bot` guard covers the seconds-wide gap.
 - Comment `rich_text` is flattened to plain text v1; mentions render as names, block-level formatting is dropped.
