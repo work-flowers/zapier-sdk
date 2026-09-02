@@ -1,6 +1,6 @@
 # slack-thread-to-notion-discussion
 
-Slack → Notion half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825, modelled on Linear's Slack integration). Mention a ticket ID (`TKT-###`) or paste a Notion page URL in any public Slack thread and the thread links itself to that Notion page: a 💬 anchor block is appended to the page and a discussion opens on it (page-parented comments all join one shared discussion, so a per-thread block is what keeps discussions distinct), the whole thread backfills into it, and from then on every human message in the thread mirrors as a Notion comment under the Slack author's own name (`display_name`, no name-prefix hack).
+Slack → Notion half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825, modelled on Linear's Slack integration). Mention a ticket ID (`TKT-###`) or paste a Notion page URL in any public Slack thread and the thread links itself to that Notion page: a page-level discussion opens (on a page that already has an open page-level thread it joins the most recently created one — the API cannot open a second thread; accepted while TKT-825 is paused), the whole thread backfills into it, and from then on every human message in the thread mirrors as a Notion comment under the Slack author's own name (`display_name`, no name-prefix hack).
 
 Companions: [`notion-comment-to-slack-thread`](../notion-comment-to-slack-thread/) (reverse direction) and [`slack-notion-thread-sync-sweep`](../slack-notion-thread-sync-sweep/) (resolve detection + self-healing backstop).
 
@@ -25,7 +25,7 @@ flowchart TD
     R -- no --> S4[skip - not opted in]
     R -- yes --> Q[resolve page: unique_id query / URL parse]
     Q -- not found --> N[post warning reply in Slack thread]
-    Q -- found --> P[append anchor block\n+ open discussion on it]
+    Q -- found --> P[create page-level discussion\nwith Slack permalink header]
     P --> M[write thread_map row state=active]
     M --> F[fetch full thread via thread_replies]
     F --> BF[backfill each human message in order\n+ message_map rows]
