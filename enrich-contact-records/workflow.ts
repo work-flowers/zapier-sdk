@@ -1,7 +1,6 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/enrich-contact-records
-import { defineDurable } from "@zapier/zapier-durable";
+import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
-import { z } from "zod";
 
 const sdk = createZapierSdk();
 
@@ -44,12 +43,10 @@ const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 // 2026-07-24). Every email this workflow adds to a contact must be indexed.
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 
-// The webhook payload shape varies (Notion DB automation → Zapier webhook),
-// so accept anything and extract defensively.
-const InputSchema = z.unknown();
-
 // --- Pure helpers ----------------------------------------------------------
 
+// The webhook payload shape varies (Notion DB automation → Zapier webhook),
+// so the workflow accepts anything and extracts defensively.
 function normalizeInput(rawInput: unknown): unknown {
   // The trigger pipeline can deliver input double-encoded (a JSON string of a
   // JSON string), while run-durable delivers it single-encoded. Parse until we
@@ -797,7 +794,13 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
 
 // --- Durable context type --------------------------------------------------
 
-type DurableCtx = Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0];
+// The runtime's own context type. This used to be derived as
+// `Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0]`, which
+// fails to type-check — `defineDurable`'s input generic is constrained to
+// `Record<string, unknown>`, so `<unknown, unknown>` is rejected and the alias
+// collapsed to `never`, taking every `ctx.step` in the helpers below with it.
+// Nothing on the publish path runs `tsc`, so it shipped and ran fine anyway.
+type DurableCtx = DurableContext;
 
 // --- Inline sub-zap: update contact record ---------------------------------
 //
@@ -1294,9 +1297,9 @@ async function addOutcomeComment(
 
 // --- Workflow --------------------------------------------------------------
 
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "enrich-contact-records",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const norm = normalizeInput(rawInput);
 
     // A bare touch of the catch URL (Notion automation "test" button, browser
