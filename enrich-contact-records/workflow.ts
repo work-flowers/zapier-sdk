@@ -266,6 +266,42 @@ interface EnrichedData {
   employerDomain: string;
 }
 
+// --- Placeholder photos ----------------------------------------------------
+//
+// When a LinkedIn profile has no photo, Apollo does not return `photo_url:
+// null` — it returns LinkedIn's generic grey silhouette, verbatim:
+//
+//   https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
+//
+// That is a 489-byte SVG on LinkedIn's *static asset* CDN. Real photos live on
+// `media.licdn.com/dms/image/…` and arrive as multi-kilobyte JPEGs. Truthiness
+// cannot tell them apart, so until 2026-09-03 the silhouette was imported and
+// attached as icon and cover exactly like a real photo — 7 of the 43 most
+// recent runs did so — displacing the data source's default icon with a
+// picture of nobody.
+//
+// Two guards, because they fail differently:
+//   1. `realPhotoUrl` below rejects by host, at extraction, for free. It covers
+//      every observed case and never costs an API call.
+//   2. `storeProfilePhoto` rejects by content after Notion has imported the
+//      file — SVG, or under `MIN_PHOTO_BYTES` — which catches a placeholder
+//      whose URL we have not seen (NinjaPear's, or a new LinkedIn one) at the
+//      cost of one import. The unattached upload expires on its own.
+// An empty `profilePicUrl` then takes the same route as a Lusha result: the
+// icon and cover are left alone, so a contact with a real photo keeps it.
+
+/** Hosts that serve site assets, never a user's uploaded photo. */
+const PLACEHOLDER_PHOTO_HOSTS = new Set(["static.licdn.com"]);
+
+/** A source's photo URL, or "" when there is none or it is a known placeholder. */
+function realPhotoUrl(v: unknown): string {
+  const url = firstString(v);
+  if (!url) return "";
+  const host = url.match(/^https?:\/\/([^/?#]+)/i)?.[1]?.toLowerCase() ?? "";
+  if (PLACEHOLDER_PHOTO_HOSTS.has(host)) return "";
+  return url;
+}
+
 function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   // work_experience is an array of objects with description fields; join them.
   const we = enriched?.work_experience;
@@ -278,7 +314,7 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   const workExperience = Array.isArray(we) ? we : [];
 
   return {
-    profilePicUrl: firstString(enriched?.profile_pic_url) ?? "",
+    profilePicUrl: realPhotoUrl(enriched?.profile_pic_url),
     linkedinUrl: firstString(enriched?.linkedin_profile_url) ?? "",
     country: firstString(enriched?.country_name) ?? "",
     city: firstString(enriched?.city_name) ?? "",
@@ -454,7 +490,7 @@ function apolloPersonUsable(person: any): boolean {
       person.name ||
       person.linkedin_url ||
       person.title ||
-      person.photo_url ||
+      realPhotoUrl(person.photo_url) ||
       apolloRealEmail(person.email),
   );
 }
@@ -473,7 +509,7 @@ function extractEnrichedFromApollo(person: any): EnrichedData {
     : (firstString(person?.headline) ?? "");
 
   return {
-    profilePicUrl: firstString(person?.photo_url) ?? "",
+    profilePicUrl: realPhotoUrl(person?.photo_url),
     linkedinUrl: firstString(person?.linkedin_url) ?? "",
     country: firstString(person?.country) ?? "",
     city: firstString(person?.city) ?? "",
@@ -659,6 +695,20 @@ function normalizeLinkedin(url: string | null | undefined): string {
  *  attempts are headroom, not the expected path. */
 const PHOTO_UPLOAD_POLL_ATTEMPTS = 6;
 
+/** Smallest file accepted as a real photo. LinkedIn's silhouette is 489 bytes;
+ *  the smallest genuine 200×200 JPEG in the run history is about 7.8 KB. */
+const MIN_PHOTO_BYTES = 1024;
+
+/** Thrown by `storeProfilePhoto` when the imported file is a placeholder, not
+ *  a photo (see "Placeholder photos"). Distinct from a failed import so Path C
+ *  can skip quietly instead of reporting a storage failure that never was. */
+class PlaceholderPhotoError extends Error {
+  constructor(detail: string) {
+    super(`placeholder image (${detail})`);
+    this.name = "PlaceholderPhotoError";
+  }
+}
+
 /** A filename for the stored photo. `external_url` mode *requires* one (a
  *  create without it is rejected `400 validation_error`), but the photo URLs
  *  Apollo and NinjaPear hand back are LinkedIn CDN links with no extension in
@@ -672,9 +722,10 @@ function photoFilename(photoUrl: string): string {
 }
 
 /** Hand `photoUrl` to Notion to fetch and store, returning the file upload id
- *  to attach as icon/cover. Throws on any failure; the caller catches inside
- *  its own step so a dead photo URL never spins the step-retry loop or sinks
- *  an otherwise good enrichment.
+ *  to attach as icon/cover. Throws on any failure — `PlaceholderPhotoError`
+ *  when the file Notion fetched is a silhouette rather than a photo — and the
+ *  caller catches inside its own step so a dead photo URL never spins the
+ *  step-retry loop or sinks an otherwise good enrichment.
  *
  *  MUST be called from inside a `ctx.step` — it makes network calls. */
 async function storeProfilePhoto(photoUrl: string): Promise<string> {
@@ -701,7 +752,8 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
   if (!uploadId) throw new Error("file_upload create returned no id");
 
   // The import is asynchronous — `pending` until Notion has pulled the bytes.
-  let status = firstString(created?.status) ?? "pending";
+  let upload: any = created;
+  let status = firstString(upload?.status) ?? "pending";
   for (let i = 0; i < PHOTO_UPLOAD_POLL_ATTEMPTS && status === "pending"; i++) {
     const pollRes = await sdk.fetch(`${NOTION_API}/file_uploads/${uploadId}`, {
       connection: NOTION_CONNECTION,
@@ -713,13 +765,32 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
         `file_upload poll failed (${pollRes.status}): ${await pollRes.text()}`,
       );
     }
-    status = firstString((await pollRes.json())?.status) ?? "pending";
+    upload = await pollRes.json();
+    status = firstString(upload?.status) ?? "pending";
   }
 
   if (status !== "uploaded") {
     // `failed` means Notion could not fetch the URL — an already-expired link,
     // or a host that refuses Notion's fetcher. Nothing to retry.
     throw new Error(`Notion could not import the photo (status: ${status})`);
+  }
+
+  // Content guard — see "Placeholder photos". `content_type` and
+  // `content_length` describe the bytes Notion actually fetched, not the
+  // `.jpg` filename invented above, so this judges the real file. No genuine
+  // profile photo is an SVG, and none is smaller than a kilobyte.
+  const contentType = (firstString(upload?.content_type) ?? "").toLowerCase();
+  const contentLength =
+    typeof upload?.content_length === "number" ? upload.content_length : null;
+  if (contentType.includes("svg")) {
+    throw new PlaceholderPhotoError(
+      `${contentType}, ${contentLength ?? "?"} bytes`,
+    );
+  }
+  if (contentLength !== null && contentLength < MIN_PHOTO_BYTES) {
+    throw new PlaceholderPhotoError(
+      `${contentType || "unknown type"}, ${contentLength} bytes`,
+    );
   }
   return uploadId;
 }
@@ -966,6 +1037,13 @@ async function updateContactRecord(
       try {
         uploadId = await storeProfilePhoto(enriched.profilePicUrl);
       } catch (err) {
+        if (err instanceof PlaceholderPhotoError) {
+          return {
+            ok: false as const,
+            placeholder: true as const,
+            detail: err.message,
+          };
+        }
         return {
           ok: false as const,
           error: String((err as Error)?.message ?? err),
@@ -994,6 +1072,13 @@ async function updateContactRecord(
 
     if (outcome.ok) {
       iconUpdated = true;
+    } else if ("placeholder" in outcome) {
+      // Not a failure: the source had no photo and said so with a picture of
+      // nobody. Logged so the run history shows it was seen; the outcome
+      // comment then reads as a photo-less enrichment, same as a Lusha result.
+      console.log(
+        `Placeholder photo skipped for ${contact.pageId}: ${outcome.detail}`,
+      );
     } else {
       // Surfaced in the outcome comment rather than swallowed — a photo that
       // never stored is worth seeing on the page, just not worth failing over.

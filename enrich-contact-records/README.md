@@ -96,7 +96,10 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      the resulting upload as both the page icon and cover. **The URL is never
      stored as the icon** — see [Profile photos are uploaded, not
      linked](#profile-photos-are-uploaded-not-linked). A photo that fails to
-     import is reported in the outcome comment and never fails the run.
+     import is reported in the outcome comment and never fails the run. A
+     photo that turns out to be LinkedIn's grey silhouette is skipped and the
+     icon left alone — see [Placeholder silhouettes are
+     filtered](#placeholder-silhouettes-are-filtered).
    - **Index the email in the email→contact Zapier Table**
      (`01JYEPSEARXB2Z6BJRCMFGXBC2`): whenever a new email lands on the contact
      (Path G secondary, or a first-ever primary via Path D), upsert-if-missing a
@@ -231,6 +234,47 @@ which is blocked while Apollo is out of lead credits (see below). Re-running
 A further 40 contacts hold a LinkedIn URL whose expiry is `2147483647` (the
 int32 maximum, i.e. "never"). Those still render and are not urgent, though they
 are still `external` links and would be made permanent by a re-enrichment.
+
+## Placeholder silhouettes are filtered
+
+When a LinkedIn profile has no photo, Apollo does not return `photo_url: null`.
+It returns LinkedIn's generic grey silhouette, verbatim:
+
+```
+https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
+```
+
+That is a 489-byte `image/svg+xml` on LinkedIn's *static asset* CDN; real
+photos live on `media.licdn.com/dms/image/…` and arrive as multi-kilobyte
+JPEGs. Until 2026-09-03 Path C only checked that the URL was non-empty, so the
+silhouette was imported and attached as icon and cover like any photo — 7 of the
+43 most recent Apollo runs did exactly that, displacing the Contacts data
+source's default blue icon with a picture of nobody.
+
+Two guards now sit in front of the icon update, because they fail differently:
+
+1. **By host, at extraction** — `realPhotoUrl` returns `""` for any URL on
+   `static.licdn.com` (the `PLACEHOLDER_PHOTO_HOSTS` set). Free, and it covers
+   every observed case. It also feeds `apolloPersonUsable`, so a match whose
+   only "signal" is the placeholder no longer counts as a usable Apollo hit.
+2. **By content, after import** — `storeProfilePhoto` reads `content_type` and
+   `content_length` off the finished file upload (they describe the bytes
+   Notion actually fetched, not the invented `.jpg` filename) and throws
+   `PlaceholderPhotoError` for any SVG or any file under 1 KB. This catches a
+   placeholder whose URL we have not seen — NinjaPear's, or a new LinkedIn one —
+   at the cost of one import. The unattached upload expires on its own.
+
+A skipped placeholder is **not a failure**: it is logged
+(`Placeholder photo skipped for <page>: …`) and the outcome comment reads as a
+photo-less enrichment, the same as a Lusha result. An empty `profilePicUrl`
+leaves the icon and cover untouched, so a contact that already has a real photo
+keeps it when a later re-enrichment returns the silhouette.
+
+Contacts that already carry the silhouette do not fix themselves. Their icon is
+a stored `type: "file"` whose bytes are the SVG, so
+`scripts/audit-contact-icon-urls.mjs` (which inspects URLs, not content) does
+not see them; finding them means fetching each stored icon and checking its
+content type.
 
 > **Apollo is out of lead credits** as of 2026-08-12: `people/match` returns
 > `422 — You have insufficient credits!`. The cascade falls through to Lusha
