@@ -464,23 +464,11 @@ async function linkThread(
       pageAccessible(pageId!),
     );
     if (!accessible) {
-      await ctx.step("post-external-page-note", async () =>
-        sdk.runAction({
-          appKey: SLACK_APP_KEY,
-          actionType: "write",
-          actionKey: "channel_message",
-          connection: SLACK_CONNECTION,
-          inputs: {
-            channel: msg.channelId,
-            thread_ts: msg.threadTs,
-            text: `:warning: That Notion page isn't in the work.flowers workspace — thread not linked.`,
-            as_bot: "yes",
-            username: "Notion Sync",
-            unfurl: "no",
-            link_names: "no",
-            reply_broadcast: "no",
-          },
-        }),
+      // Unlike a mistyped TKT-###, this isn't something the poster did wrong
+      // — a link to another workspace's Notion is a normal thing to paste in
+      // Slack. No reply needed; just don't link the thread.
+      console.log(
+        `Notion page ${pageId} not accessible to notion_wf (external workspace) — not linking ${msg.channelId}/${msg.threadTs}`,
       );
       return { handled: "external-notion-page" };
     }
