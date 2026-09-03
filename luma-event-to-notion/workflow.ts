@@ -222,6 +222,11 @@ function eventProps(ev: LumaEvent): Record<string, unknown> {
 }
 
 // --- Workflow ----------------------------------------------------------------
+// `rawInput` is typed `unknown` on purpose: the trigger pipeline can deliver
+// the payload as a (sometimes double-encoded) JSON string, so `normalizeInput`
+// does the parsing. `defineDurable`'s input generic is left to its default —
+// the runtime constrains it to a plain object, which the plausible
+// `defineDurable<unknown, unknown>` form violates and fails to type-check.
 const workflow = defineDurable(
   "luma-event-to-notion",
   async (ctx, rawInput: unknown) => {

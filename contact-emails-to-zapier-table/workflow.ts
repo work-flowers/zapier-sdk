@@ -320,39 +320,6 @@ async function rowsOwnedBy(pageId: string): Promise<any[]> {
   return rows;
 }
 
-/**
- * How long to let a trashed contact settle before re-checking its addresses.
- *
- * A separate, older automation (not in this repo) DELETES a contact's rows from
- * this Table about 30-90s after the contact is trashed. On an ordinary delete
- * that is correct. On a merge it is the bug: the addresses now belong to the
- * survivor, and once their rows are gone the next Luma registration with one of
- * them finds nothing in the Table and creates a fresh duplicate contact — which
- * is how the 2026-07-26 Tun Shu pair kept regenerating.
- *
- * RETIRED 2026-07-26: that Zap's Contacts branch (path A) has been turned off
- * and the `page.deleted` subscription now points at this workflow, so nothing
- * races the hand-over any more and the second pass is dead weight. Set back to
- * 300 if path A is ever revived — the second pass is an idempotent upsert, so it
- * is only ever a cost, never a risk.
- */
-const MERGE_SETTLE_SECONDS = 0;
-
-/**
- * How long to keep watching an address that another live contact already owns.
- *
- * A cross-contact collision is the first visible sign of a merge in progress:
- * the addresses land on the survivor before the loser is trashed. This existed
- * because the trash event did not reach this workflow, so the merge path never
- * ran and a collision was the only handle on a merge.
- *
- * RETIRED 2026-07-26: `page.deleted` now arrives here, so trashing the loser
- * drives the merge path directly and the deferred re-check is redundant — along
- * with the fifteen-minute lingering run it caused on every collision. Set back
- * to 900 if the subscription is ever pointed away again.
- */
-const CONFLICT_SETTLE_SECONDS = 0;
-
 /** How the survivor holds an address, so a handed-over row is typed the way the
  *  contact actually reads — after a merge the loser's Primary is usually one of
  *  the survivor's Secondaries. */
@@ -706,13 +673,20 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
 
   // First pass, immediately: hand the rows over. This closes the window in
   // which an address belongs to nobody, and moves the rows out of reach of the
-  // deleting automation described on MERGE_SETTLE_SECONDS.
+  // row-deleting automation described in the README ("Why the hand-over runs
+  // twice").
   const first = await handOverAddresses(
     ctx, "merge-handover", addresses, pageId, survivor, beforeState,
   );
 
-  // Zero disables the wait — see the cutover notes in the README.
-  if (MERGE_SETTLE_SECONDS > 0) await ctx.wait("merge-settle", MERGE_SETTLE_SECONDS);
+  // There used to be a settle wait here (`MERGE_SETTLE_SECONDS`, 300 s) so the
+  // second pass ran after the row-deleting automation's path A had swept. Path A
+  // was retired 2026-07-26 and the constant sat at 0 behind a `> 0` guard until
+  // 2026-09-03, when Zapier's publish-time analyzer began rejecting a
+  // `ctx.wait` whose seconds resolve to 0 — guard or no guard. If path A is
+  // ever revived, put `await ctx.wait("merge-settle", 300);` back right here.
+  // The second pass is an idempotent upsert, so the wait is only ever a cost,
+  // never a risk.
 
   // Second pass: put back anything that got deleted in the meantime.
   const afterState = await ctx.step("merge-recheck-survivor", async () =>
@@ -743,6 +717,101 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
   return { pageId, inTrash: true, movedTo: survivor, addresses, first, second };
 }
 
+// --- Per-address indexing ---------------------------------------------------
+//
+// One address of a live contact: find its Table row and index / heal / reclaim
+// it, or report the living contact that already owns it. This is a helper
+// rather than inline in the workflow body because the step ids carry the loop
+// index (`find-email-3`): the runtime needs that, since two steps with the same
+// id in one run collide, but Zapier's publish-time analyzer rejects a
+// template-literal step id in the body itself (it wants a string literal there,
+// and it does not follow `ctx` into a helper). Same arrangement as
+// `handOverAddresses` / `claimAddresses` above; the step ids are unchanged.
+
+type IndexOutcome =
+  | { kind: "indexed" }
+  | { kind: "unchanged" }
+  | { kind: "healed" }
+  | { kind: "reclaimed"; fromPageId: string }
+  | { kind: "duplicate"; ownerPageId: string };
+
+async function indexAddress(
+  ctx: DurableContext,
+  i: number,
+  pageId: string,
+  email: string,
+  type: "Primary" | "Secondary",
+): Promise<IndexOutcome> {
+  const hit = await ctx.step(`find-email-${i}`, async () =>
+    sdk.listTableRecords({
+      table: CONTACT_EMAIL_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: "Email", operator: "exact", value: email }],
+      pageSize: 1,
+    }),
+  );
+  const row = hit?.data?.[0] ?? null;
+  const rowPageId = firstString(row?.data?.["Page ID"]);
+
+  if (!row) {
+    // New address -> index it. "Trigger Contact Creation" stays false: the
+    // contact already exists (true would let other automations create a
+    // duplicate).
+    await ctx.step(`create-row-${i}`, async () =>
+      sdk.createTableRecords({
+        table: CONTACT_EMAIL_TABLE,
+        keyMode: "names",
+        records: [
+          {
+            data: {
+              Email: email,
+              "Page ID": pageId,
+              Type: type,
+              "Trigger Contact Creation": false,
+            },
+          },
+        ],
+      }),
+    );
+    return { kind: "indexed" };
+  }
+  if (sameId(rowPageId, pageId)) return { kind: "unchanged" };
+  if (!rowPageId) {
+    // Row exists but points nowhere (the original Zap left these behind) —
+    // self-heal it onto this page.
+    await ctx.step(`heal-row-${i}`, async () =>
+      sdk.updateTableRecords({
+        table: CONTACT_EMAIL_TABLE,
+        keyMode: "names",
+        records: [{ id: row.id, data: { "Page ID": pageId, Type: type } }],
+      }),
+    );
+    return { kind: "healed" };
+  }
+
+  // The address is on another contact's row. Two very different cases.
+  const ownerGone = await ctx.step(`owner-state-${i}`, async () => {
+    const state = await readPageState(rowPageId);
+    return state?.gone === true;
+  });
+  if (ownerGone) {
+    // The owner is in the trash — the leftover half of a merge that happened
+    // before this workflow could hand the row over (or one the trash trigger
+    // never fired for). This contact holds the address now.
+    await ctx.step(`reclaim-row-${i}`, async () =>
+      sdk.updateTableRecords({
+        table: CONTACT_EMAIL_TABLE,
+        keyMode: "names",
+        records: [{ id: row.id, data: { "Page ID": pageId, Type: type } }],
+      }),
+    );
+    return { kind: "reclaimed", fromPageId: rowPageId };
+  }
+  // A living contact already holds the address: leave the row with its first
+  // owner and report it so the caller can flag this contact as a duplicate.
+  return { kind: "duplicate", ownerPageId: rowPageId };
+}
+
 // --- Workflow ----------------------------------------------------------------
 // Durable port of "Update Zapier Table When Email Address Updated in Contacts
 // Database". Trigger: Notion DB automation on the Contacts DB (Primary or
@@ -761,6 +830,11 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
 //
 // And when the triggering contact is itself in the trash, it is the losing half
 // of a merge: its addresses are handed to the surviving contact (see mergeAway).
+// `rawInput` is typed `unknown` on purpose: the trigger pipeline can deliver
+// the payload as a (sometimes double-encoded) JSON string, so `normalizeInput`
+// does the parsing. `defineDurable`'s input generic is left to its default —
+// the runtime constrains it to a plain object, which the plausible
+// `defineDurable<unknown, unknown>` form violates and fails to type-check.
 const workflow = defineDurable(
   "contact-emails-to-zapier-table",
   async (ctx, rawInput: unknown) => {
@@ -819,75 +893,23 @@ const workflow = defineDurable(
 
     for (let i = 0; i < contact.emails.length; i++) {
       const [email, type] = contact.emails[i];
-
-      const hit = await ctx.step(`find-email-${i}`, async () =>
-        sdk.listTableRecords({
-          table: CONTACT_EMAIL_TABLE,
-          keyMode: "names",
-          filters: [{ fieldKey: "Email", operator: "exact", value: email }],
-          pageSize: 1,
-        }),
-      );
-      const row = hit?.data?.[0] ?? null;
-      const rowPageId = firstString(row?.data?.["Page ID"]);
-
-      if (!row) {
-        // New address -> index it. "Trigger Contact Creation" stays false:
-        // the contact already exists (true would let other automations create
-        // a duplicate).
-        await ctx.step(`create-row-${i}`, async () =>
-          sdk.createTableRecords({
-            table: CONTACT_EMAIL_TABLE,
-            keyMode: "names",
-            records: [
-              {
-                data: {
-                  Email: email,
-                  "Page ID": contact.pageId,
-                  Type: type,
-                  "Trigger Contact Creation": false,
-                },
-              },
-            ],
-          }),
-        );
-        indexed.push(email);
-      } else if (sameId(rowPageId, contact.pageId)) {
-        unchanged.push(email);
-      } else if (!rowPageId) {
-        // Row exists but points nowhere (the original Zap left these behind) —
-        // self-heal it onto this page.
-        await ctx.step(`heal-row-${i}`, async () =>
-          sdk.updateTableRecords({
-            table: CONTACT_EMAIL_TABLE,
-            keyMode: "names",
-            records: [{ id: row.id, data: { "Page ID": contact.pageId, Type: type } }],
-          }),
-        );
-        healed.push(email);
-      } else {
-        // The address is on another contact's row. Two very different cases.
-        const ownerGone = await ctx.step(`owner-state-${i}`, async () => {
-          const state = await readPageState(rowPageId);
-          return state?.gone === true;
-        });
-        if (ownerGone) {
-          // The owner is in the trash — the leftover half of a merge that
-          // happened before this workflow could hand the row over (or one the
-          // trash trigger never fired for). This contact holds the address now.
-          await ctx.step(`reclaim-row-${i}`, async () =>
-            sdk.updateTableRecords({
-              table: CONTACT_EMAIL_TABLE,
-              keyMode: "names",
-              records: [{ id: row.id, data: { "Page ID": contact.pageId, Type: type } }],
-            }),
-          );
-          reclaimed.push({ email, fromPageId: rowPageId });
-        } else {
-          // A living contact already holds the address: leave the row with its
-          // first owner and mark this contact as a duplicate of that one.
-          duplicates.push({ email, ownerPageId: rowPageId });
-        }
+      const outcome = await indexAddress(ctx, i, contact.pageId, email, type);
+      switch (outcome.kind) {
+        case "indexed":
+          indexed.push(email);
+          break;
+        case "unchanged":
+          unchanged.push(email);
+          break;
+        case "healed":
+          healed.push(email);
+          break;
+        case "reclaimed":
+          reclaimed.push({ email, fromPageId: outcome.fromPageId });
+          break;
+        case "duplicate":
+          duplicates.push({ email, ownerPageId: outcome.ownerPageId });
+          break;
       }
     }
 
@@ -933,21 +955,16 @@ const workflow = defineDurable(
       );
     }
 
-    // A collision is usually a merge caught in the act — the addresses reach the
-    // survivor before the loser is trashed. Come back once the dust has settled
-    // and claim anything whose owner has gone. See CONFLICT_SETTLE_SECONDS.
-    let settledConflicts: Awaited<ReturnType<typeof claimAddresses>> | null = null;
-    if (duplicates.length > 0 && CONFLICT_SETTLE_SECONDS > 0) {
-      await ctx.wait("conflict-settle", CONFLICT_SETTLE_SECONDS);
-      const conflicted = duplicates.map(
-        (d) =>
-          contact.emails.find(([email]) => email === d.email) ??
-          ([d.email, "Secondary"] as [string, "Primary" | "Secondary"]),
-      );
-      settledConflicts = await claimAddresses(
-        ctx, "conflict-recheck", contact.pageId, conflicted,
-      );
-    }
+    // Until 2026-07-26 a collision waited 15 minutes here
+    // (`CONFLICT_SETTLE_SECONDS`) and then re-ran the collided addresses through
+    // `claimAddresses`, because the trash event did not reach this workflow and
+    // a collision was the only handle on a merge in progress. `page.deleted`
+    // now arrives here and drives the merge path directly, so the re-check was
+    // retired; its 0-second constant was removed 2026-09-03 when Zapier's
+    // publish-time analyzer began rejecting a `ctx.wait` that resolves to 0. If
+    // the subscription is ever pointed away again, put back
+    // `await ctx.wait("conflict-settle", 900);` followed by
+    // `claimAddresses(ctx, "conflict-recheck", contact.pageId, <collided pairs>)`.
 
     return {
       pageId: contact.pageId,
@@ -957,7 +974,6 @@ const workflow = defineDurable(
       reclaimed,
       duplicates,
       markedPossibleDuplicateOf,
-      settledConflicts,
     };
   },
 );

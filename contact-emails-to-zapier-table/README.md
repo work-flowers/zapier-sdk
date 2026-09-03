@@ -84,10 +84,8 @@ flowchart TD
     R --> H
     G --> H{"Any conflicts?"}
     H -- yes --> I["Add owning page to<br/>'Possible duplicate of' on this contact<br/>(union, never replace)"]
-    I --> K["ctx.wait 15 min"]
-    K --> L["Re-check each collided address:<br/>owner gone or row swept away →<br/>claim it for this contact"]
-    L --> J
-    H -- no --> J(["Return indexed / unchanged / healed /<br/>reclaimed / duplicates / settled"])
+    I --> J
+    H -- no --> J(["Return indexed / unchanged / healed /<br/>reclaimed / duplicates"])
 ```
 
 ## Why the flag is not `Duplicate of` (2026-07-28)
@@ -180,7 +178,9 @@ behind it, a retry, a slow tick. It re-checks each address and recreates any row
 went missing. Both passes are the same idempotent upsert (move the row / recreate it /
 leave it alone if a *third* contact has since claimed the address), so running it twice
 is harmless, and if the deleting automation is ever retired the second pass simply finds
-everything already correct. The durable is suspended for the wait, so it costs nothing.
+everything already correct. The settle wait that used to sit between the two passes was
+retired on 2026-07-26 and removed from the code on 2026-09-03 (see the cutover table);
+the two passes now run back to back.
 
 ### Merge vs genuine delete
 
@@ -258,11 +258,12 @@ reversing:
 |---|---|
 | `page.deleted` / `page.undeleted` subscriptions point at this workflow's webhook | ✅ done — first live `page.deleted` received 12:59:40Z |
 | Path A (Contacts) of "Delete Contact, Company or Meeting Note Page from Zapier Table" paused | ✅ done — paths B/C/D (Company, Meeting Note, Setup Sessions) migrated to [`notion-page-deleted-to-zapier-tables`](../notion-page-deleted-to-zapier-tables/) on 2026-08-14 (its cutover retires the whole classic Zap) |
-| `MERGE_SETTLE_SECONDS` and `CONFLICT_SETTLE_SECONDS` set to `0` | ✅ done |
+| `MERGE_SETTLE_SECONDS` and `CONFLICT_SETTLE_SECONDS` set to `0` | ✅ done — and **removed outright on 2026-09-03**: Zapier's publish-time analyzer rejects a `ctx.wait` whose seconds resolve to `0`, even behind a `> 0` guard (`out-of-range-durable-option`), and blocked the republish. The dead waits are gone; the code comments at each site say exactly what to put back |
 
-Both constants are guarded by a `> 0` check. They exist only to work around path A
-sweeping rows and the trash event not arriving here; if either situation returns, set
-them back to `300` and `900` and republish. Neither is ever a correctness risk — the
+The waits existed only to work around path A sweeping rows and the trash event not
+arriving here. If either situation returns, put the `ctx.wait` calls back with **literal**
+seconds (`300` for `merge-settle`, `900` for `conflict-settle`, plus the
+`claimAddresses` re-check pass) where the code comments mark the spot, and republish. Neither is ever a correctness risk — the
 work they trigger is an idempotent upsert — only a cost.
 
 ## Gaps in the original Zap this port fixes
@@ -298,10 +299,6 @@ duplicate rows are benign (lookups take the first hit, both point at the same pa
   still points at the contact who once held the address — acceptable; delete manually
   if an address genuinely changes hands.
 - The `Possible duplicate of` flag uses the **first** conflicting email only.
-- **A collision makes the run linger 15 minutes** (`CONFLICT_SETTLE_SECONDS`) before it
-  finishes. The durable is suspended for the wait, so it costs nothing, but a bulk edit
-  that collides on many contacts leaves that many runs open for a quarter of an hour.
-  Goes away at step 3 of the cutover.
 - **A restore only recovers addresses the contact still holds.** Rows are rebuilt from
   the page's own `Primary Email` / `Secondary Email`, so an address that was removed from
   the contact before it was trashed does not come back. That is the right outcome, but
@@ -335,10 +332,9 @@ needs the id and the flag, since the addresses are also recovered from the Table
 --input '{"data":{"id":"<trashed-loser-page-id>","in_trash":true,"properties":{"Primary Email":{"email":"test@example.test"}}}}'
 ```
 
-The **collision re-check** needs two live contacts sharing an address: run the workflow
-against the survivor, wait for `mark-possible-duplicate` to complete, trash the other contact
-while the run sits in `conflict-settle`, and check the row 15 minutes later. Use
-`get-durable-run <run-id>` to watch the operations list.
+The **collision re-check** was retired with the settle waits (see the cutover table). A
+collision now only flags `Possible duplicate of`; the hand-over itself is exercised by the
+trash path above.
 
 Both paths write to the real Table and real Notion — use throwaway `@example.test`
 addresses and clean up afterwards.

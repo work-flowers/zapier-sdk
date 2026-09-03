@@ -339,6 +339,11 @@ function resolveAttendanceStatus(status: string | null, checkedIn: boolean): str
 // That's an update, not a create, and it's the only path that catches a guest
 // EDITING their work-email answer after registering — `guest_registered` has
 // already fired by then, so only `guest_updated` sees the change.
+// `rawInput` is typed `unknown` on purpose: the trigger pipeline can deliver
+// the payload as a (sometimes double-encoded) JSON string, so `normalizeInput`
+// does the parsing. `defineDurable`'s input generic is left to its default —
+// the runtime constrains it to a plain object, which the plausible
+// `defineDurable<unknown, unknown>` form violates and fails to type-check.
 const workflow = defineDurable(
   "luma-guest-updated-to-event-attendance",
   async (ctx, rawInput: unknown) => {
