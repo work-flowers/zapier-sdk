@@ -222,9 +222,9 @@ function eventProps(ev: LumaEvent): Record<string, unknown> {
 }
 
 // --- Workflow ----------------------------------------------------------------
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "luma-event-to-notion",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const ev = extractEvent(InputSchema.parse(normalizeInput(rawInput)));
     if (!ev) {
       console.log("skipping: no event id in payload (empty/test delivery)");

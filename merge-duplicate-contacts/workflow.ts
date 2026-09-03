@@ -516,9 +516,9 @@ function corroborate(source: PageState, target: PageState): Verdict {
 // --- Workflow --------------------------------------------------------------
 // Trigger: Notion DB automation on Contacts, "Duplicate of edited" -> catch
 // hook. Replaces the "Contact Merger" Custom Agent.
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "merge-duplicate-contacts",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const parsed: any = InputSchema.parse(normalizeInput(rawInput));
     const data = parsed?.data ?? parsed;
     const sourceId = firstString(data?.id, data?.page_id, data?.pageId);

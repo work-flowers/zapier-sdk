@@ -761,9 +761,9 @@ async function mergeAway(ctx: DurableContext, contact: ContactEmails) {
 //
 // And when the triggering contact is itself in the trash, it is the losing half
 // of a merge: its addresses are handed to the surviving contact (see mergeAway).
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "contact-emails-to-zapier-table",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const contact = extractContact(InputSchema.parse(normalizeInput(rawInput)));
     if (!contact) {
       // Also the shape of Notion's subscription-verification ping, which carries

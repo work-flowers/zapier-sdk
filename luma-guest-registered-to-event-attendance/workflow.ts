@@ -668,9 +668,9 @@ function resolveAttendanceStatus(status: string | null, checkedIn: boolean): str
 // once the contact exists and its addresses are indexed, because a sibling
 // automation turns new Buttondown subscribers into Notion Contacts and would
 // otherwise create a duplicate. See step 4.
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "luma-guest-registered-to-event-attendance",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const guest = extractGuest(InputSchema.parse(normalizeInput(rawInput)));
     if (!guest) {
       console.log("skipping: no guest email/event in payload (empty/test delivery)");
