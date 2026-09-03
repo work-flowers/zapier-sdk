@@ -1,7 +1,6 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/enrich-contact-records
-import { defineDurable } from "@zapier/zapier-durable";
+import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
-import { z } from "zod";
 
 const sdk = createZapierSdk();
 
@@ -44,12 +43,10 @@ const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 // 2026-07-24). Every email this workflow adds to a contact must be indexed.
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 
-// The webhook payload shape varies (Notion DB automation → Zapier webhook),
-// so accept anything and extract defensively.
-const InputSchema = z.unknown();
-
 // --- Pure helpers ----------------------------------------------------------
 
+// The webhook payload shape varies (Notion DB automation → Zapier webhook),
+// so the workflow accepts anything and extracts defensively.
 function normalizeInput(rawInput: unknown): unknown {
   // The trigger pipeline can deliver input double-encoded (a JSON string of a
   // JSON string), while run-durable delivers it single-encoded. Parse until we
@@ -266,6 +263,42 @@ interface EnrichedData {
   employerDomain: string;
 }
 
+// --- Placeholder photos ----------------------------------------------------
+//
+// When a LinkedIn profile has no photo, Apollo does not return `photo_url:
+// null` — it returns LinkedIn's generic grey silhouette, verbatim:
+//
+//   https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
+//
+// That is a 489-byte SVG on LinkedIn's *static asset* CDN. Real photos live on
+// `media.licdn.com/dms/image/…` and arrive as multi-kilobyte JPEGs. Truthiness
+// cannot tell them apart, so until 2026-09-03 the silhouette was imported and
+// attached as icon and cover exactly like a real photo — 7 of the 43 most
+// recent runs did so — displacing the data source's default icon with a
+// picture of nobody.
+//
+// Two guards, because they fail differently:
+//   1. `realPhotoUrl` below rejects by host, at extraction, for free. It covers
+//      every observed case and never costs an API call.
+//   2. `storeProfilePhoto` rejects by content after Notion has imported the
+//      file — SVG, or under `MIN_PHOTO_BYTES` — which catches a placeholder
+//      whose URL we have not seen (NinjaPear's, or a new LinkedIn one) at the
+//      cost of one import. The unattached upload expires on its own.
+// An empty `profilePicUrl` then takes the same route as a Lusha result: the
+// icon and cover are left alone, so a contact with a real photo keeps it.
+
+/** Hosts that serve site assets, never a user's uploaded photo. */
+const PLACEHOLDER_PHOTO_HOSTS = new Set(["static.licdn.com"]);
+
+/** A source's photo URL, or "" when there is none or it is a known placeholder. */
+function realPhotoUrl(v: unknown): string {
+  const url = firstString(v);
+  if (!url) return "";
+  const host = url.match(/^https?:\/\/([^/?#]+)/i)?.[1]?.toLowerCase() ?? "";
+  if (PLACEHOLDER_PHOTO_HOSTS.has(host)) return "";
+  return url;
+}
+
 function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   // work_experience is an array of objects with description fields; join them.
   const we = enriched?.work_experience;
@@ -278,7 +311,7 @@ function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
   const workExperience = Array.isArray(we) ? we : [];
 
   return {
-    profilePicUrl: firstString(enriched?.profile_pic_url) ?? "",
+    profilePicUrl: realPhotoUrl(enriched?.profile_pic_url),
     linkedinUrl: firstString(enriched?.linkedin_profile_url) ?? "",
     country: firstString(enriched?.country_name) ?? "",
     city: firstString(enriched?.city_name) ?? "",
@@ -454,7 +487,7 @@ function apolloPersonUsable(person: any): boolean {
       person.name ||
       person.linkedin_url ||
       person.title ||
-      person.photo_url ||
+      realPhotoUrl(person.photo_url) ||
       apolloRealEmail(person.email),
   );
 }
@@ -473,7 +506,7 @@ function extractEnrichedFromApollo(person: any): EnrichedData {
     : (firstString(person?.headline) ?? "");
 
   return {
-    profilePicUrl: firstString(person?.photo_url) ?? "",
+    profilePicUrl: realPhotoUrl(person?.photo_url),
     linkedinUrl: firstString(person?.linkedin_url) ?? "",
     country: firstString(person?.country) ?? "",
     city: firstString(person?.city) ?? "",
@@ -659,6 +692,20 @@ function normalizeLinkedin(url: string | null | undefined): string {
  *  attempts are headroom, not the expected path. */
 const PHOTO_UPLOAD_POLL_ATTEMPTS = 6;
 
+/** Smallest file accepted as a real photo. LinkedIn's silhouette is 489 bytes;
+ *  the smallest genuine 200×200 JPEG in the run history is about 7.8 KB. */
+const MIN_PHOTO_BYTES = 1024;
+
+/** Thrown by `storeProfilePhoto` when the imported file is a placeholder, not
+ *  a photo (see "Placeholder photos"). Distinct from a failed import so Path C
+ *  can skip quietly instead of reporting a storage failure that never was. */
+class PlaceholderPhotoError extends Error {
+  constructor(detail: string) {
+    super(`placeholder image (${detail})`);
+    this.name = "PlaceholderPhotoError";
+  }
+}
+
 /** A filename for the stored photo. `external_url` mode *requires* one (a
  *  create without it is rejected `400 validation_error`), but the photo URLs
  *  Apollo and NinjaPear hand back are LinkedIn CDN links with no extension in
@@ -672,9 +719,10 @@ function photoFilename(photoUrl: string): string {
 }
 
 /** Hand `photoUrl` to Notion to fetch and store, returning the file upload id
- *  to attach as icon/cover. Throws on any failure; the caller catches inside
- *  its own step so a dead photo URL never spins the step-retry loop or sinks
- *  an otherwise good enrichment.
+ *  to attach as icon/cover. Throws on any failure — `PlaceholderPhotoError`
+ *  when the file Notion fetched is a silhouette rather than a photo — and the
+ *  caller catches inside its own step so a dead photo URL never spins the
+ *  step-retry loop or sinks an otherwise good enrichment.
  *
  *  MUST be called from inside a `ctx.step` — it makes network calls. */
 async function storeProfilePhoto(photoUrl: string): Promise<string> {
@@ -701,7 +749,8 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
   if (!uploadId) throw new Error("file_upload create returned no id");
 
   // The import is asynchronous — `pending` until Notion has pulled the bytes.
-  let status = firstString(created?.status) ?? "pending";
+  let upload: any = created;
+  let status = firstString(upload?.status) ?? "pending";
   for (let i = 0; i < PHOTO_UPLOAD_POLL_ATTEMPTS && status === "pending"; i++) {
     const pollRes = await sdk.fetch(`${NOTION_API}/file_uploads/${uploadId}`, {
       connection: NOTION_CONNECTION,
@@ -713,7 +762,8 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
         `file_upload poll failed (${pollRes.status}): ${await pollRes.text()}`,
       );
     }
-    status = firstString((await pollRes.json())?.status) ?? "pending";
+    upload = await pollRes.json();
+    status = firstString(upload?.status) ?? "pending";
   }
 
   if (status !== "uploaded") {
@@ -721,12 +771,36 @@ async function storeProfilePhoto(photoUrl: string): Promise<string> {
     // or a host that refuses Notion's fetcher. Nothing to retry.
     throw new Error(`Notion could not import the photo (status: ${status})`);
   }
+
+  // Content guard — see "Placeholder photos". `content_type` and
+  // `content_length` describe the bytes Notion actually fetched, not the
+  // `.jpg` filename invented above, so this judges the real file. No genuine
+  // profile photo is an SVG, and none is smaller than a kilobyte.
+  const contentType = (firstString(upload?.content_type) ?? "").toLowerCase();
+  const contentLength =
+    typeof upload?.content_length === "number" ? upload.content_length : null;
+  if (contentType.includes("svg")) {
+    throw new PlaceholderPhotoError(
+      `${contentType}, ${contentLength ?? "?"} bytes`,
+    );
+  }
+  if (contentLength !== null && contentLength < MIN_PHOTO_BYTES) {
+    throw new PlaceholderPhotoError(
+      `${contentType || "unknown type"}, ${contentLength} bytes`,
+    );
+  }
   return uploadId;
 }
 
 // --- Durable context type --------------------------------------------------
 
-type DurableCtx = Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0];
+// The runtime's own context type. This used to be derived as
+// `Parameters<Parameters<typeof defineDurable<unknown, unknown>>[1]>[0]`, which
+// fails to type-check — `defineDurable`'s input generic is constrained to
+// `Record<string, unknown>`, so `<unknown, unknown>` is rejected and the alias
+// collapsed to `never`, taking every `ctx.step` in the helpers below with it.
+// Nothing on the publish path runs `tsc`, so it shipped and ran fine anyway.
+type DurableCtx = DurableContext;
 
 // --- Inline sub-zap: update contact record ---------------------------------
 //
@@ -966,6 +1040,13 @@ async function updateContactRecord(
       try {
         uploadId = await storeProfilePhoto(enriched.profilePicUrl);
       } catch (err) {
+        if (err instanceof PlaceholderPhotoError) {
+          return {
+            ok: false as const,
+            placeholder: true as const,
+            detail: err.message,
+          };
+        }
         return {
           ok: false as const,
           error: String((err as Error)?.message ?? err),
@@ -994,6 +1075,13 @@ async function updateContactRecord(
 
     if (outcome.ok) {
       iconUpdated = true;
+    } else if ("placeholder" in outcome) {
+      // Not a failure: the source had no photo and said so with a picture of
+      // nobody. Logged so the run history shows it was seen; the outcome
+      // comment then reads as a photo-less enrichment, same as a Lusha result.
+      console.log(
+        `Placeholder photo skipped for ${contact.pageId}: ${outcome.detail}`,
+      );
     } else {
       // Surfaced in the outcome comment rather than swallowed — a photo that
       // never stored is worth seeing on the page, just not worth failing over.
@@ -1042,6 +1130,18 @@ interface WorkflowResult {
   /** Why the profile photo could not be stored, when one was offered. Kept
    *  distinct from `reasons` — the enrichment itself succeeded. */
   iconError?: string;
+  /** Whether the outcome comment reached the page. `false` means Notion
+   *  definitively rejected it (see `commentError`); a transient failure is
+   *  retried and, if it never clears, fails the run instead of hiding here. */
+  commentPosted?: boolean;
+  commentError?: string;
+}
+
+/** HTTP statuses worth retrying: the request may well succeed a moment later,
+ *  and nothing was written. 429 is Notion's rate limit, 409 its
+ *  `conflict_error` under concurrent saves, 408 a timeout, 5xx its problem. */
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 /** A single source's failure reason parsed into a source label ("Lusha",
@@ -1080,7 +1180,7 @@ async function addOutcomeComment(
   ctx: DurableCtx,
   contact: ContactData,
   result: WorkflowResult,
-): Promise<void> {
+): Promise<{ posted: boolean; error?: string }> {
   // Build a brief summary of the outcome.
   let summary: string;
   if (result.enriched) {
@@ -1145,38 +1245,61 @@ async function addOutcomeComment(
     });
   }
 
-  await ctx.step("add-outcome-comment", async () => {
-    try {
-      const res = await sdk.fetch(`${NOTION_API}/comments`, {
-        connection: NOTION_CONNECTION,
-        method: "POST",
-        headers: {
-          "Notion-Version": NOTION_VERSION,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          parent: { page_id: contact.pageId },
-          rich_text: richText,
-        }),
-      });
-      if (!res.ok) {
-        console.log(
-          `Failed to add outcome comment (${res.status}): ${await res.text()}`,
-        );
-      }
-    } catch (err) {
-      console.log(
-        `Failed to add outcome comment: ${String((err as Error)?.message ?? err)}`,
+  // Post it. This is the LAST Notion call of every run, so when several runs
+  // fire at once — the Contacts automation enriches new pages in batches of
+  // four or five — it is the call most exposed to Notion's transient answers:
+  // 429 rate_limited, 409 conflict_error, the odd 5xx. Until 2026-09-03 any
+  // non-OK response was logged and swallowed: the step "completed", the run
+  // finished green, and the page simply had no comment. Two bursts on
+  // 2026-09-02 lost 3 of 4 and 3 of 5 comments that way, while every
+  // single-run button trigger posted fine.
+  //
+  // A transient status now THROWS, so the durable's step retry (5 attempts,
+  // ~155s of backoff — comfortably past any Retry-After Notion sends) posts it
+  // again; a network error thrown by the fetch itself retries the same way,
+  // which is why there is no try/catch here. The record updates above are
+  // memoised steps, so a retry re-posts the comment and nothing else. If five
+  // attempts all fail, the run goes red — the repo's chosen alert channel —
+  // rather than pretending it succeeded.
+  //
+  // A definite rejection (400 malformed body, 403 missing the "Insert
+  // comments" capability, 404 page gone) cannot succeed on retry and is not
+  // worth failing an otherwise-good run over, so it returns `posted: false`
+  // with the reason, which the workflow carries into its output as
+  // `commentPosted`/`commentError` where the run history shows it.
+  return await ctx.step("add-outcome-comment", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/comments`, {
+      connection: NOTION_CONNECTION,
+      method: "POST",
+      headers: {
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parent: { page_id: contact.pageId },
+        rich_text: richText,
+      }),
+    });
+    if (res.ok) return { posted: true };
+
+    const detail = `${res.status}: ${await res.text()}`;
+    if (isTransientStatus(res.status)) {
+      const retryAfter = res.headers.get("retry-after");
+      throw new Error(
+        `Outcome comment POST failed transiently (${detail})` +
+          (retryAfter ? ` — Retry-After ${retryAfter}s` : ""),
       );
     }
+    console.log(`Failed to add outcome comment (${detail})`);
+    return { posted: false, error: detail };
   });
 }
 
 // --- Workflow --------------------------------------------------------------
 
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "enrich-contact-records",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const norm = normalizeInput(rawInput);
 
     // A bare touch of the catch URL (Notion automation "test" button, browser
@@ -1523,9 +1646,9 @@ const workflow = defineDurable<unknown, unknown>(
     // 3. Add a brief comment to the triggering page stating the outcome.
     //    If the webhook was triggered by a button click and the payload
     //    included a user ID, the comment mentions that user.
-    await addOutcomeComment(ctx, contact, result);
+    const comment = await addOutcomeComment(ctx, contact, result);
 
-    return result;
+    return { ...result, commentPosted: comment.posted, commentError: comment.error };
   },
 );
 
