@@ -1127,6 +1127,18 @@ interface WorkflowResult {
   /** Why the profile photo could not be stored, when one was offered. Kept
    *  distinct from `reasons` — the enrichment itself succeeded. */
   iconError?: string;
+  /** Whether the outcome comment reached the page. `false` means Notion
+   *  definitively rejected it (see `commentError`); a transient failure is
+   *  retried and, if it never clears, fails the run instead of hiding here. */
+  commentPosted?: boolean;
+  commentError?: string;
+}
+
+/** HTTP statuses worth retrying: the request may well succeed a moment later,
+ *  and nothing was written. 429 is Notion's rate limit, 409 its
+ *  `conflict_error` under concurrent saves, 408 a timeout, 5xx its problem. */
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
 /** A single source's failure reason parsed into a source label ("Lusha",
@@ -1165,7 +1177,7 @@ async function addOutcomeComment(
   ctx: DurableCtx,
   contact: ContactData,
   result: WorkflowResult,
-): Promise<void> {
+): Promise<{ posted: boolean; error?: string }> {
   // Build a brief summary of the outcome.
   let summary: string;
   if (result.enriched) {
@@ -1230,30 +1242,53 @@ async function addOutcomeComment(
     });
   }
 
-  await ctx.step("add-outcome-comment", async () => {
-    try {
-      const res = await sdk.fetch(`${NOTION_API}/comments`, {
-        connection: NOTION_CONNECTION,
-        method: "POST",
-        headers: {
-          "Notion-Version": NOTION_VERSION,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          parent: { page_id: contact.pageId },
-          rich_text: richText,
-        }),
-      });
-      if (!res.ok) {
-        console.log(
-          `Failed to add outcome comment (${res.status}): ${await res.text()}`,
-        );
-      }
-    } catch (err) {
-      console.log(
-        `Failed to add outcome comment: ${String((err as Error)?.message ?? err)}`,
+  // Post it. This is the LAST Notion call of every run, so when several runs
+  // fire at once — the Contacts automation enriches new pages in batches of
+  // four or five — it is the call most exposed to Notion's transient answers:
+  // 429 rate_limited, 409 conflict_error, the odd 5xx. Until 2026-09-03 any
+  // non-OK response was logged and swallowed: the step "completed", the run
+  // finished green, and the page simply had no comment. Two bursts on
+  // 2026-09-02 lost 3 of 4 and 3 of 5 comments that way, while every
+  // single-run button trigger posted fine.
+  //
+  // A transient status now THROWS, so the durable's step retry (5 attempts,
+  // ~155s of backoff — comfortably past any Retry-After Notion sends) posts it
+  // again; a network error thrown by the fetch itself retries the same way,
+  // which is why there is no try/catch here. The record updates above are
+  // memoised steps, so a retry re-posts the comment and nothing else. If five
+  // attempts all fail, the run goes red — the repo's chosen alert channel —
+  // rather than pretending it succeeded.
+  //
+  // A definite rejection (400 malformed body, 403 missing the "Insert
+  // comments" capability, 404 page gone) cannot succeed on retry and is not
+  // worth failing an otherwise-good run over, so it returns `posted: false`
+  // with the reason, which the workflow carries into its output as
+  // `commentPosted`/`commentError` where the run history shows it.
+  return await ctx.step("add-outcome-comment", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/comments`, {
+      connection: NOTION_CONNECTION,
+      method: "POST",
+      headers: {
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parent: { page_id: contact.pageId },
+        rich_text: richText,
+      }),
+    });
+    if (res.ok) return { posted: true };
+
+    const detail = `${res.status}: ${await res.text()}`;
+    if (isTransientStatus(res.status)) {
+      const retryAfter = res.headers.get("retry-after");
+      throw new Error(
+        `Outcome comment POST failed transiently (${detail})` +
+          (retryAfter ? ` — Retry-After ${retryAfter}s` : ""),
       );
     }
+    console.log(`Failed to add outcome comment (${detail})`);
+    return { posted: false, error: detail };
   });
 }
 
@@ -1608,9 +1643,9 @@ const workflow = defineDurable<unknown, unknown>(
     // 3. Add a brief comment to the triggering page stating the outcome.
     //    If the webhook was triggered by a button click and the payload
     //    included a user ID, the comment mentions that user.
-    await addOutcomeComment(ctx, contact, result);
+    const comment = await addOutcomeComment(ctx, contact, result);
 
-    return result;
+    return { ...result, commentPosted: comment.posted, commentError: comment.error };
   },
 );
 

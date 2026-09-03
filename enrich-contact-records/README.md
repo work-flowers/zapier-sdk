@@ -112,7 +112,11 @@ inline function (`updateContactRecord`) — no separate Durable needed.
      address in this Table is precisely how a stranger inherits a contact's
      identity across every other Zap.
 4. **Add outcome comment** — Posts a brief comment on the triggering Notion
-   page stating the outcome of the run:
+   page stating the outcome of the run. A transient Notion failure (429, 409,
+   5xx) is retried by the step; a definite rejection is reported in the run
+   output as `commentPosted: false` — see [The outcome comment retries
+   transient failures](#the-outcome-comment-retries-transient-failures). The
+   comment says:
    - which source did the enrichment (**Apollo**, **Lusha** or **NinjaPear**);
    - when a fallback source did the work, a short labelled note on **why each
      earlier source failed** (e.g. `(Apollo: HTTP 422 — You have insufficient
@@ -280,6 +284,44 @@ content type.
 > `422 — You have insufficient credits!`. The cascade falls through to Lusha
 > (which returns no photo at all) and NinjaPear (which does return
 > `profile_pic_url`), so photos still arrive, just only via NinjaPear.
+
+## The outcome comment retries transient failures
+
+The comment is the **last Notion call of every run**. When the Contacts
+automation enriches new pages in a batch, four or five runs fire within a
+second of each other and each makes six to ten Notion calls in about fifteen
+seconds — so the comment is the call most exposed to Notion's transient
+answers: `429 rate_limited`, `409 conflict_error` under concurrent saves, the
+odd 5xx.
+
+Until 2026-09-03 the step caught every failure, logged it and returned: the step
+"completed", the run finished green, and the page simply had no comment. Nothing
+distinguished that from success except the absence of the comment. Two bursts on
+2026-09-02 showed the cost:
+
+| Burst | Runs | Comments that landed |
+| --- | --- | --- |
+| 08:50 | 4 | 1 |
+| 23:30 | 5 | 2 |
+
+Every single-run button trigger in the same period posted fine. Every earlier
+Notion write in the run was already protected — those steps throw on a bad
+response and the durable retries them — so the comment was the one write that
+had opted out.
+
+Now:
+
+- A **transient** status (`isTransientStatus`: 408, 409, 429, 5xx) or a network
+  error **throws**, and the durable's step retry (5 attempts, ~155 s of
+  backoff, comfortably past any `Retry-After` Notion sends) posts it again. The
+  record updates are memoised steps, so a retry re-posts the comment and
+  nothing else. If all five attempts fail the run goes red — the repo's alert
+  channel — instead of pretending it succeeded.
+- A **definite** rejection (400 malformed body, 403 missing the *Insert
+  comments* capability, 404 page gone) cannot succeed on retry and is not worth
+  failing an otherwise-good run over. It returns `posted: false` and the
+  workflow output carries `commentPosted: false` with `commentError`, so the
+  miss is visible in the run history rather than only in a log line.
 
 ## Never send Lusha a name without a company
 
@@ -638,7 +680,7 @@ zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES"
 - **Outcome comment** — after every run, posts a brief comment on the
   triggering Notion page stating the outcome. If the webhook was triggered by a
   button click and the payload included the user's Notion ID, the comment
-  mentions that user.
+  mentions that user. Transient Notion failures are retried, not swallowed.
 
 ## References
 
