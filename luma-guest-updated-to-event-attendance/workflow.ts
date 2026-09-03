@@ -154,12 +154,6 @@ function firstResult(res: any): any {
   return res ?? null;
 }
 
-interface LumaEvent {
-  id: string;
-  name: string | null;
-  checkedIn?: boolean;
-}
-
 function extractEventId(o: Record<string, any>): string | null {
   const ev = (o.event ?? o) as Record<string, any>;
   return firstString(ev.id, ev.event_id, ev.api_id);
@@ -345,9 +339,9 @@ function resolveAttendanceStatus(status: string | null, checkedIn: boolean): str
 // That's an update, not a create, and it's the only path that catches a guest
 // EDITING their work-email answer after registering — `guest_registered` has
 // already fired by then, so only `guest_updated` sees the change.
-const workflow = defineDurable<unknown, unknown>(
+const workflow = defineDurable(
   "luma-guest-updated-to-event-attendance",
-  async (ctx, rawInput) => {
+  async (ctx, rawInput: unknown) => {
     const guest = extractGuest(InputSchema.parse(normalizeInput(rawInput)));
     if (!guest) {
       console.log("skipping: no guest email/event in payload (empty/test delivery)");
