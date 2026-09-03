@@ -4,7 +4,7 @@
     {
       "name": "luma-event-created-to-notion",
       "workflow_id": "019f8d52-07a7-7e6c-8e1a-d6f10c638110",
-      "current_version_id": "019f9e5e-88db-7b71-863e-a5242719cbe1",
+      "current_version_id": "01a064cc-e086-7a89-8a2a-12c226f0fd3b",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASwy-Q233onxs0M0_BJloQ",
       "enabled": true,
       "trigger": {
@@ -19,7 +19,7 @@
     {
       "name": "luma-event-updated-to-notion",
       "workflow_id": "019f8d52-20c0-7d50-97a5-ef16196f2dd8",
-      "current_version_id": "019f9e5e-c3be-7a0f-a30b-f23c871245e6",
+      "current_version_id": "01a064cd-096a-768c-8451-6dad43ecef54",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcsExOri_XFebS5Q9-JeqQ",
       "enabled": true,
       "trigger": {

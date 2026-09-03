@@ -1,7 +1,7 @@
 {
   "name": "merge-duplicate-contacts",
   "workflow_id": "019fa81d-19f4-793e-b8ef-a79c80b8be1c",
-  "current_version_id": "019fa81d-7005-78b6-b39c-37545ba4c184",
+  "current_version_id": "01a064cd-88ab-7745-b55f-061b1452c9c6",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQY03_v_QxmT9mID3tPnSw",
   "enabled": true,
   "is_private": true,

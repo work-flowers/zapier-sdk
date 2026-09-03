@@ -1,7 +1,7 @@
 {
   "name": "luma-guest-updated-to-event-attendance",
   "workflow_id": "019f8d53-5763-7a67-88d6-7a144729456b",
-  "current_version_id": "019ff887-749a-74ca-9ce4-45c9b514557a",
+  "current_version_id": "01a064cd-5dc9-792a-8546-81223b74a341",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AViOs3pxG6Gy0xQZmiUQ_g",
   "enabled": true,
   "trigger": {

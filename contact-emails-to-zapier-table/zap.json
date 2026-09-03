@@ -1,7 +1,7 @@
 {
   "name": "contact-emails-to-zapier-table",
   "workflow_id": "019f92d6-a6f8-758b-bed7-ae06760053cf",
-  "current_version_id": "019fa7fc-4b19-7929-a2d9-2f7247fe2829",
+  "current_version_id": "01a064cc-b74c-7cb5-87be-8de9d30cbcb2",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZ0f3jlPE-7tAjKM9g-Zpg",
   "enabled": true,
   "trigger": {
