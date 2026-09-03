@@ -668,6 +668,11 @@ function resolveAttendanceStatus(status: string | null, checkedIn: boolean): str
 // once the contact exists and its addresses are indexed, because a sibling
 // automation turns new Buttondown subscribers into Notion Contacts and would
 // otherwise create a duplicate. See step 4.
+// `rawInput` is typed `unknown` on purpose: the trigger pipeline can deliver
+// the payload as a (sometimes double-encoded) JSON string, so `normalizeInput`
+// does the parsing. `defineDurable`'s input generic is left to its default —
+// the runtime constrains it to a plain object, which the plausible
+// `defineDurable<unknown, unknown>` form violates and fails to type-check.
 const workflow = defineDurable(
   "luma-guest-registered-to-event-attendance",
   async (ctx, rawInput: unknown) => {
