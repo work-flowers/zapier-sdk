@@ -25,7 +25,9 @@ flowchart TD
     R -- no --> S4[skip - not opted in]
     R -- yes --> Q[resolve page: unique_id query / URL parse]
     Q -- not found --> N[post warning reply in Slack thread]
-    Q -- found --> P[create page-level discussion\nwith Slack permalink header]
+    Q -- found --> X{URL-provided page:\naccessible to notion_wf?}
+    X -- no --> N2[post warning reply in Slack thread]
+    X -- yes --> P[create page-level discussion\nwith Slack permalink header]
     P --> M[write thread_map row state=active]
     M --> F[fetch full thread via thread_replies]
     F --> BF[backfill each human message in order\n+ message_map rows]
@@ -37,6 +39,7 @@ flowchart TD
 - **Opt-in is a mention, no emoji or command** — deliberate, Linear-style. The ticket ID can arrive mid-thread; the backfill covers everything before it.
 - **Echo suppression** is two-layer: the companion Zap posts to Slack `as_bot`, so `user.is_bot` drops it here (the trigger's `listen_for_bots: no` is set too but has proven inconsistent — the code re-checks); `message_map` dedupe covers replays.
 - **A `TKT-###` that doesn't resolve** posts a `:warning:` reply into the thread — visible to the person who typed it, never a silent drop or a red run for a typo.
+- **A pasted Notion URL pointing at a page outside the work.flowers workspace** gets the same treatment: a `GET /v1/pages/{id}` against `notion_wf` returns 404 for a page it can't see, and that posts a `:warning:` reply instead of the Notion API call failing mid-discussion-creation and turning the run red.
 - **Backfill caps at 50 messages** (newest kept), logged loudly when hit; the sweep can pick up stragglers.
 - **Concurrency**: two first-messages racing the link can in theory both create a discussion (Tables have no atomic create-if-absent). Accepted as rare + cleanup-able per repo posture; everything is keyed on `thread_ts`.
 - Slack `text` is sent as Notion markdown as-is; Slack mrkdwn syntax differences (e.g. `*bold*`) are accepted v1 roughness.

@@ -248,6 +248,26 @@ async function postNotionComment(
   };
 }
 
+/**
+ * A page id parsed from a URL may belong to another Notion workspace entirely
+ * — our integration can't see it, and Notion returns 404 rather than a
+ * permissions error. Must be called inside a ctx.step.
+ */
+async function pageAccessible(pageId: string): Promise<boolean> {
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    connection: NOTION_CONNECTION,
+    method: "GET",
+    headers: { "Notion-Version": NOTION_VERSION },
+  });
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    throw new Error(
+      `Notion page lookup failed (${res.status}): ${await res.text()}`,
+    );
+  }
+  return true;
+}
+
 async function writeMessageMapRow(
   ctx: DurableContext,
   stepName: string,
@@ -435,6 +455,34 @@ async function linkThread(
         }),
       );
       return { handled: "ticket-not-found", ticketNumber };
+    }
+  } else {
+    // URL-provided page: a URL parses the same way regardless of which
+    // workspace it points at, so verify our connection can actually see the
+    // page before opening a discussion on it.
+    const accessible = await ctx.step("check-page-access", async () =>
+      pageAccessible(pageId!),
+    );
+    if (!accessible) {
+      await ctx.step("post-external-page-note", async () =>
+        sdk.runAction({
+          appKey: SLACK_APP_KEY,
+          actionType: "write",
+          actionKey: "channel_message",
+          connection: SLACK_CONNECTION,
+          inputs: {
+            channel: msg.channelId,
+            thread_ts: msg.threadTs,
+            text: `:warning: That Notion page isn't in the work.flowers workspace — thread not linked.`,
+            as_bot: "yes",
+            username: "Notion Sync",
+            unfurl: "no",
+            link_names: "no",
+            reply_broadcast: "no",
+          },
+        }),
+      );
+      return { handled: "external-notion-page" };
     }
   }
 
