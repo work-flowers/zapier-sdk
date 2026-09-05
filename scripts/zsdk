@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Zapier SDK CLI wrapper for machines that cannot run `zapier-sdk login`.
+#
+# `login` opens a browser and writes a token to
+# ~/.config/zapier-sdk-cli-nodejs/config.json. Neither survives a Claude Code
+# cloud environment: there is no browser, `--headless` still needs a human to
+# paste a code, and the sandbox filesystem is rebuilt every session. Client
+# credentials are the non-interactive path — but the CLI takes them ONLY as the
+# global flags below. Exporting ZAPIER_CLIENT_ID / ZAPIER_CLIENT_SECRET and
+# calling `npx zapier-sdk` directly does nothing: the CLI never reads them, and
+# the failure looks like an auth problem rather than a wiring one. This wrapper
+# is what turns the env vars into flags.
+#
+# Same env var names and same invocation shape as scripts/publish-changed-zaps.mjs
+# and .github/workflows/verify-zapier-credentials.yml, so there is one
+# convention across the laptop, CI and the cloud.
+#
+#   zsdk list-workflows --json
+#   zsdk get-workflow <workflow-id>
+#
+# `--experimental` is always on: the Code Workflows commands these Durables use
+# live behind it, and omitting it fails with an unhelpful "unknown command".
+#
+# NOTE: credentials are passed as argv, so they are visible to `ps` on this
+# machine for the life of the call. That is how CI already does it; keep these
+# credentials read-scoped (see the note on publishing at the bottom).
+set -euo pipefail
+
+if [ -z "${ZAPIER_CLIENT_ID:-}" ] || [ -z "${ZAPIER_CLIENT_SECRET:-}" ]; then
+  cat >&2 <<'MSG'
+zsdk: ZAPIER_CLIENT_ID and/or ZAPIER_CLIENT_SECRET are not set.
+
+Mint credentials from a machine where you are already logged in:
+
+  npx zapier-sdk create-client-credentials "claude-cloud" --allowed-scopes <scopes>
+
+then set both as secrets on the cloud environment (claude.ai -> Code ->
+environment settings). Locally, export them in your shell.
+MSG
+  exit 1
+fi
+
+# The CLI ships in @zapier/zapier-sdk-cli (bin: zapier-sdk); name the package so
+# `npx` resolves it without a local install.
+exec npx --yes --package @zapier/zapier-sdk-cli \
+  zapier-sdk --experimental \
+  "$@" \
+  --credentials-client-id "$ZAPIER_CLIENT_ID" \
+  --credentials-client-secret "$ZAPIER_CLIENT_SECRET"
+
+# Publishing deliberately has no shortcut here. In this repo a merge to `main`
+# is the deploy (.github/workflows/publish-zaps.yml); a direct
+# publish-workflow-version bypasses PR review AND the zap.json sync-back. Mint
+# the cloud credentials read-scoped so that command cannot be reached from a
+# sandbox by accident.
