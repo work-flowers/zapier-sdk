@@ -20,6 +20,8 @@ A Zap with an AI step additionally carries a `*-prompt.md` holding the prompt (r
 | --- | --- |
 | [`build-map.mjs`](scripts/build-map.mjs) | Regenerates the **[interactive workflow map](docs/map.html)** — a pan/zoomable atlas of every Zap and the shared assets (Zapier Tables, Notion data sources, Drive folders, external apps) that interconnect them. Facts (dirs, both `zap.json` shapes, every table ULID and data-source UUID in the sources) are extracted from the repo; read/write/own/trigger semantics are curated in [`docs/map-overlay.json`](docs/map-overlay.json). Layout is computed at build time (deterministic); the generator rewrites only the marker-delimited data block in `docs/map.html`. `--check` fails when the repo and the map drift (also validates the overlay both directions) and runs as a PR check via [`check-map.yml`](.github/workflows/check-map.yml); `--validate`, `--report`, `--debug-svg <out>` for development. |
 | [`check-prompts.mjs`](scripts/check-prompts.mjs) | Verifies every `*-prompt.md` matches the copy embedded in its Zap's source (`--fix` re-injects). A Zap with **more than one** prompt declares which literal each markdown owns via an `<!-- embed: NAME_PROMPT -->` marker — see [`drive-invoice-to-xero`](drive-invoice-to-xero/), which has two. |
+| [`cloud-setup.sh`](scripts/cloud-setup.sh) | Setup script for a **Claude Code cloud environment** — checks the Node version, puts `zsdk` on PATH, warms the npx cache, repairs the `.claude/skills` symlinks, then proves the credentials reach the durables API with the same read-only `list-workflows` check [`verify-zapier-credentials.yml`](.github/workflows/verify-zapier-credentials.yml) runs. Idempotent. See "Cloud environments" below. |
+| [`zsdk`](scripts/zsdk) | Thin wrapper around the Zapier SDK CLI for machines that cannot run `zapier-sdk login`: turns `ZAPIER_CLIENT_ID` / `ZAPIER_CLIENT_SECRET` into the `--credentials-client-id` / `--credentials-client-secret` flags the CLI actually reads, and pins `--experimental`. |
 | [`backfill-meeting-note-event-ids.mjs`](scripts/backfill-meeting-note-event-ids.mjs) | One-off: re-keys `[Table] Meeting Note IDs` from the event **series** (`iCalUID`) back to the per-**occurrence** Google event id, reading each occurrence id off the linked Notion page's `Google Calendar Event ID` so no calendar guessing is involved. Preserves the old value in the new `iCal UID` (f9) column rather than discarding it, flags rows whose Notion page is gone as `Archived`, and refuses to commit if two rows would claim the same key while pointing at *different* pages. Free to run (Notion reads are direct API calls; Table writes consume no tasks). Plan-only unless `--commit`. Ran 2026-07-31: 84 re-keyed, 3 redundant twins, 4 archived, 1 unresolved. |
 | [`backfill-zapier-partner-leads.mjs`](scripts/backfill-zapier-partner-leads.mjs) | One-off: replays the partner tool's existing referral leads through [`zapier-partner-lead-status-to-notion`](zapier-partner-lead-status-to-notion/) so historical leads get mirrored into the CRM instead of waiting for their next status change. Mirrors that workflow's adoption policy, so it fires only leads that can actually land (10 of 247 today, not 241). Plan-only unless `--commit`. |
 | [`audit-contact-icon-urls.mjs`](scripts/audit-contact-icon-urls.mjs) | Read-only: classifies every Notion Contact's page icon and cover as an already-expired signed URL, a signed URL still live, a plain external link, or a permanent Notion-hosted file. Written to size the damage from [`enrich-contact-records`](enrich-contact-records/) storing LinkedIn CDN links as `{type:"external"}` icons, which render as blank white space once the signature expires. First run 2026-08-12: **210 of 962 contacts broken**, 40 more on a `2147483647` ("never") expiry, and 445 on stable `assets.clay.earth` links that are fine. `--json` emits the per-page classification so a backfill can consume the affected page ids. Writes nothing; free to run. |
@@ -153,6 +155,26 @@ Reference docs:
 
 - [Zapier SDK API reference](https://docs.zapier.com/sdk/reference)
 - [SDK changelog](https://docs.zapier.com/sdk/changelog) (Zapier ships near-daily — check here when a command's behaviour seems off)
+
+### Cloud environments (Claude Code)
+
+A cloud environment has no browser and its filesystem is rebuilt every session, so `npx zapier-sdk login` is not an option there — `--headless` still needs a human to paste a code, and the token it writes to `~/.config/zapier-sdk-cli-nodejs/config.json` would not survive anyway. Use client credentials, the same way CI does.
+
+1. Mint them from a machine where you are already logged in, and keep them **read-scoped** (see below):
+
+   ```bash
+   npx zapier-sdk create-client-credentials "claude-cloud" --allowed-scopes <scopes>
+   ```
+
+2. Set `ZAPIER_CLIENT_ID` / `ZAPIER_CLIENT_SECRET` as secrets on the environment (claude.ai → Code → environment settings) — the same names [`publish-changed-zaps.mjs`](scripts/publish-changed-zaps.mjs) and [`verify-zapier-credentials.yml`](.github/workflows/verify-zapier-credentials.yml) already read.
+
+3. Point the environment's setup script at [`scripts/cloud-setup.sh`](scripts/cloud-setup.sh). It checks the Node version, puts [`scripts/zsdk`](scripts/zsdk) on PATH, warms the npx cache, repairs the `.claude/skills` symlinks, and finishes with the same read-only `list-workflows` check the verify workflow runs — so a broken environment fails during setup rather than halfway into a session.
+
+4. Allow egress to `registry.npmjs.org` and `*.zapier.com` (API, auth, and the durables host `code-substrate-workflows.zapier.com`). The durable *runtime* sandbox separately blocks `hooks.zapier.com`; that is Zapier's own restriction, which is why fan-out uses `sdk.triggerWorkflow`.
+
+**Why the wrapper.** The CLI accepts credentials only as the global `--credentials-client-id` / `--credentials-client-secret` flags — exporting the env vars and calling `npx zapier-sdk` directly does nothing, and the failure reads like an auth problem rather than a wiring one. `zsdk` turns the env vars into flags and pins `--experimental`, so `zsdk list-workflows --json` just works.
+
+**Keep the cloud credentials read-only.** In this repo a merge to `main` is the deploy; a direct `publish-workflow-version` bypasses PR review *and* the `zap.json` sync-back. Publishing rights belong to the GitHub Actions secrets, not to a sandbox.
 
 ### Agent skills
 
