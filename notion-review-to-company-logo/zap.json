@@ -1,0 +1,52 @@
+{
+  "name": "notion-review-to-company-logo",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "notion-review-to-company-logo",
+    "description": "Notion Customer Review webhook -> set the review page's icon to the reviewer company's logo from logo.dev, resolved via the review's Company rollup (Contact -> Related Company) and the company's Website. Migration of the classic 'Add Logo to Customer Review'. Empty pings skip; an unrecognised page shape throws.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "trigger_note": "Catch hook, matching the classic Zap's trigger. The sender is a Notion automation on the Customer Reviews data source. `webhook_url` is filled in by the publish pipeline on first publish and is the URL that automation must be repointed at; `trigger_url` is Zapier-internal and cannot be called by Notion."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "notion": {
+    "customer_reviews_data_source": "ff49c51a-79b1-4254-872a-d1934b8696f6",
+    "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
+    "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "api_version": "2026-03-11",
+    "note": "Pages are read with sdk.fetch and the icon is written with a PATCH to /v1/pages/{id}, matching the rest of this repo. The Notion actions cannot write an icon at all: `update_page` takes only page + content, and the classic Zap reached for a per-account Custom Action instead."
+  },
+  "logo_dev": {
+    "token": "pk_MgvuyiQuRe6IT_XWNAUgrA",
+    "note": "Publishable key (pk_), carried over from the classic Zap. Designed for client-side image URLs and already public — it is embedded in every review page icon this Zap has ever set. Not a secret."
+  },
+  "icon_policy": {
+    "mode": "always-overwrite",
+    "decided": "2026-09-06 by Dennis",
+    "note": "Every run sets the icon, replacing hand-picked custom emoji or uploaded-file icons on a re-trigger. The only skipped write is a byte-identical one. The alternative considered and rejected was fill-only (set when absent, refresh only our own logo.dev URL)."
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "zod": "4.3.6",
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "cutover": {
+    "classic_zap_state": "paused in full as of the 2026-09-06 export (every node paused: true), so there is no double-write window and this ships enabled",
+    "notion_automation_repointed": null,
+    "status": "pending — the Customer Reviews automation in Notion must be repointed at this Zap's webhook_url before anything reaches it"
+  },
+  "replaces_classic_zap": "Add Logo to Customer Review",
+  "classic_zap_note": "The classic Zap had been unable to resolve a company for some time: its step 3 searched Companies for a `Clay Contacts` relation containing the trigger's contact, and Companies carries no such property any more (the live relation is `Contacts`). Exactly one of 11 review pages carries a logo.dev icon, which is the only run it is known to have completed. Its final step was the per-account Custom Action ae:373967 'Add Page Icon to Notion Page'; the durable replaces it with a direct PATCH so nothing outside this repo has to stay configured."
+}
