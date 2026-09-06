@@ -10,7 +10,8 @@
         "email-contact-page-zap",
         "email-db-updates",
         "enrich-contact-records",
-        "merge-duplicate-contacts"
+        "merge-duplicate-contacts",
+        "notion-review-to-company-logo"
       ]
     },
     "newsletter-content": {
@@ -214,6 +215,11 @@
       "type": "notion_ds",
       "id": "21991b07-11ac-81a6-a894-000be4a09a67",
       "name": "Contacts"
+    },
+    "ds:customer-reviews": {
+      "type": "notion_ds",
+      "id": "ff49c51a-79b1-4254-872a-d1934b8696f6",
+      "name": "Customer Reviews"
     },
     "ds:companies": {
       "type": "notion_ds",
@@ -506,6 +512,26 @@
       "from": "merge-duplicate-contacts",
       "to": "ds:contacts",
       "kind": "write"
+    },
+    {
+      "from": "ds:customer-reviews",
+      "to": "notion-review-to-company-logo",
+      "kind": "trigger"
+    },
+    {
+      "from": "notion-review-to-company-logo",
+      "to": "ds:customer-reviews",
+      "kind": "write"
+    },
+    {
+      "from": "ds:contacts",
+      "to": "notion-review-to-company-logo",
+      "kind": "read"
+    },
+    {
+      "from": "ds:companies",
+      "to": "notion-review-to-company-logo",
+      "kind": "read"
     },
     {
       "from": "app:buttondown",
