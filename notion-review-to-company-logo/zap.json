@@ -1,12 +1,12 @@
 {
   "name": "notion-review-to-company-logo",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a07719-c174-780c-b700-5a9a8d342675",
+  "current_version_id": "01a07719-cf84-7db4-9269-600e51826930",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AV8iJGaTVUZlIQFfl-H5tQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "notion-review-to-company-logo",
     "description": "Notion Customer Review webhook -> set the review page's icon to the reviewer company's logo from logo.dev, resolved via the review's Company rollup (Contact -> Related Company) and the company's Website. Migration of the classic 'Add Logo to Customer Review'. Empty pings skip; an unrecognised page shape throws.",
     "enable_on_publish": true
