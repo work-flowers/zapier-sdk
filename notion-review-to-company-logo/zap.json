@@ -16,7 +16,8 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "trigger_note": "Catch hook, matching the classic Zap's trigger. The sender is a Notion automation on the Customer Reviews data source. `webhook_url` is filled in by the publish pipeline on first publish and is the URL that automation must be repointed at; `trigger_url` is Zapier-internal and cannot be called by Notion."
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/A8lQflzKn30SCB0y/",
+    "trigger_note": "Catch hook, matching the classic Zap's trigger. The sender is a Notion automation on the Customer Reviews data source. `webhook_url` is what that automation must POST to; `trigger_url` is Zapier-internal, needs a platform JWT, and answers an unauthenticated POST with 401. Recorded by hand after PR #153: the first publish DID read the URL back and printed it in the run summary, but the sync-back replaces a literal `\"webhook_url\": null` and this block never declared the key, so the value was dropped silently."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
