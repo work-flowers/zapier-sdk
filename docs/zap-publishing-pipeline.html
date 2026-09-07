@@ -839,6 +839,7 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
       <li><span class="x">refuse</span><span>Required <strong>metadata can't be read back</strong> — no deployed source files, no <code>current_version_id</code>, or the publish response returns no new version id.</span></li>
       <li><span class="x">refuse</span><span><code>zap.json</code> <strong>doesn't state a trigger</strong>, or states one whose <code>selected_api</code> isn't version-pinned. Publishing without a trigger silently unclaims it, and an unversioned app fails the claim silently — so "no trigger" has to be written as <code>"trigger": null</code>.</span></li>
       <li><span class="x">refuse</span><span>The published version's <strong>trigger isn't the one that was declared</strong>, after a trigger change. The claim succeeded on something else.</span></li>
+      <li><span class="x">refuse</span><span>A brand-new Zap's <strong>catch-hook trigger doesn't declare <code>"webhook_url": null</code></strong>. Zapier issues that URL at publish time and the sync-back writes it by replacing the null, so without the key the readback lands nowhere — leaving the repo holding only the Zapier-internal <code>trigger_url</code>, which answers an unauthenticated POST with <code>401</code>. Added 2026-09-07, after exactly that happened.</span></li>
     </ul>
     <p>
       The script has a plan/execute split: without <code>--execute</code> it prints the full plan
@@ -853,7 +854,8 @@ footer.colophon .m { background: none; padding: 0; color: var(--ink-subtle); }
     <p>
       After each successful publish, the script rewrites <strong>only</strong> the
       <code>current_version_id</code> value inside that Zap's <code>zap.json</code> (plus the
-      <code>webhook_url</code>, on the rare occasion a trigger change was issued a new catch URL) —
+      <code>webhook_url</code> — always on a first publish, which is when a catch URL is minted, and
+      on the rare occasion a trigger change is issued a new one) —
       a surgical regex replace, not a parse-and-re-serialise, so the diff is one line and the rest of
       the file stays byte-for-byte. The workflow then commits it as
       <code>github-actions[bot]</code> and pushes straight to <code>main</code>:

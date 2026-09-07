@@ -215,6 +215,14 @@ function validateTrigger(dir, trigger) {
   return trigger;
 }
 
+// A catch hook is the one trigger kind Zapier ISSUES a URL for, and that URL is
+// the only address an external sender (a Notion automation, Luma, Linear,
+// another Zap) can call. Everything else claims a trigger on the app side and
+// is handed no URL at all.
+function isCatchHookTrigger(trigger) {
+  return String(trigger?.selected_api || "").startsWith("WebHookCLIAPI");
+}
+
 // Where a deployment's trigger block lives in zap.json: per-deployment for a
 // multi-deployment dir (whatsapp-slack-bridge, esignatures-*, ...), top-level
 // otherwise. A MISSING key is a refusal, not a fallback — publishing without
@@ -275,6 +283,22 @@ function readCreateSpec(dir) {
   }
 
   const trigger = validateTrigger(dir, zap.trigger);
+
+  // The catch URL is READ BACK after publishing and written by replacing a
+  // literal `"webhook_url": null`, so the key has to be there before the
+  // publish or the readback lands nowhere. It is the only place the URL is
+  // recorded, and losing it is silent: the repo keeps `trigger_url`, which is
+  // Zapier-internal and answers an unauthenticated POST with 401, so the file
+  // reads as if it holds the URL when it does not. This is what happened to
+  // notion-review-to-company-logo on 2026-09-06 (PR #153) — published fine,
+  // catch URL printed in the run summary, nothing in zap.json.
+  if (trigger && isCatchHookTrigger(trigger) && trigger.webhook_url !== null) {
+    const what = "webhook_url" in trigger ? `already set to ${JSON.stringify(trigger.webhook_url)}` : "absent";
+    fail(
+      `${dir}: a catch-hook trigger must declare "webhook_url": null before its first publish (${what}) — ` +
+        `Zapier issues the URL at publish time and the sync-back needs the key to write it into.`,
+    );
+  }
 
   // publish wants { alias: { connectionId } }; zap.json stores { alias: id }.
   const connections = {};
@@ -587,16 +611,40 @@ function syncBackVersionId(dir, oldVersionId, newVersionId) {
 // what every external system POSTs to — so the readback has to land back in
 // zap.json. Same in-place, value-targeted replacement as above (a JSON
 // round-trip would re-encode every escape and reformat the whole file).
+//
+// Returns "changed" when it replaced a different URL, "recorded" when the repo
+// held no URL for this deployment and one was written in, false when there was
+// nothing to do. A deployment whose trigger is not a catch hook is handed no
+// URL at all, so it lands on false.
 export function syncBackWebhookUrl(dir, oldUrl, newUrl) {
-  if (!newUrl || !oldUrl || oldUrl === newUrl) return false;
+  if (!newUrl || oldUrl === newUrl) return false;
   const abs = join(REPO_ROOT, dir, "zap.json");
   const raw = readFileSync(abs, "utf8");
-  const re = new RegExp('("webhook_url":\\s*")' + oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '(")');
-  if (!re.test(raw)) {
-    fail(`${dir}: could not find webhook_url "${oldUrl}" in zap.json to sync back`);
+
+  if (oldUrl) {
+    const re = new RegExp('("webhook_url":\\s*")' + oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '(")');
+    if (!re.test(raw)) {
+      fail(`${dir}: could not find webhook_url "${oldUrl}" in zap.json to sync back`);
+    }
+    writeFileSync(abs, raw.replace(re, `$1${newUrl}$2`));
+    return "changed";
   }
-  writeFileSync(abs, raw.replace(re, `$1${newUrl}$2`));
-  return true;
+
+  // The repo holds no URL for this deployment — the pre-2026-09-06 first
+  // publish dropped it silently (PR #153), and a republish is the next chance
+  // to record it. Fill a declared null; refuse when there is no key to write
+  // into, or when a multi-deployment file offers more than one and the right
+  // one is ambiguous. Guessing would point the wrong Zap's senders at this URL.
+  const nulls = raw.match(/"webhook_url":\s*null/g) || [];
+  if (nulls.length !== 1) {
+    fail(
+      `${dir}: Zapier reports catch URL ${newUrl} but zap.json records none, and there ` +
+        `${nulls.length === 0 ? "is no \"webhook_url\": null to write it into" : `are ${nulls.length} candidates to write it into`}. ` +
+        `Add "webhook_url": "${newUrl}" to this deployment's trigger block by hand.`,
+    );
+  }
+  writeFileSync(abs, raw.replace(/("webhook_url":\s*)null/, '$1"' + newUrl + '"'));
+  return "recorded";
 }
 
 // Fill in the ids a first publish produced, and retire the `deploy` block's
@@ -620,7 +668,23 @@ function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl, webho
   setNull("workflow_id", workflowId, true);
   setNull("current_version_id", newVersionId, true);
   setNull("trigger_url", triggerUrl, false);
-  setNull("webhook_url", webhookUrl, false);
+
+  // NOT optional when Zapier issued one. readCreateSpec refuses a catch-hook
+  // trigger that does not declare `"webhook_url": null`, so a missing target
+  // here means the file changed between that refusal and this write. Fail
+  // naming the URL: it is live, it is what senders must call, and it exists
+  // nowhere else in the repo once this process exits.
+  if (webhookUrl) {
+    const hookRe = /("webhook_url":\s*)null/;
+    if (!hookRe.test(raw)) {
+      fail(
+        `${dir}: PUBLISHED, and Zapier issued catch URL ${webhookUrl}, but zap.json has no ` +
+          `"webhook_url": null to write it into. Add "webhook_url": "${webhookUrl}" to the trigger ` +
+          `block by hand — this URL is recorded nowhere else.`,
+      );
+    }
+    raw = raw.replace(hookRe, '$1"' + webhookUrl + '"');
+  }
 
   // Record what Zapier actually reports, so a parked Zap reads as parked.
   // Anchored to the top-level key (two-space indent) so a nested "enabled"
@@ -791,8 +855,11 @@ function main() {
       syncBackVersionId(dir, currentVersionId, newVersionId);
       synced.push({ dir, workflowId: dep.workflowId, newVersionId, triggerChanged: plan.triggerChanged });
       log(`- ✅ published new version \`${newVersionId}\`; zap.json updated`);
-      if (syncBackWebhookUrl(dir, result.declaredWebhookUrl, result.webhookUrl)) {
+      const hookSync = syncBackWebhookUrl(dir, result.declaredWebhookUrl, result.webhookUrl);
+      if (hookSync === "changed") {
         log(`- 🔗 catch URL changed to ${result.webhookUrl} — synced back; REPOINT anything that POSTs to the old one`);
+      } else if (hookSync === "recorded") {
+        log(`- 🔗 catch URL ${result.webhookUrl} was missing from zap.json — recorded now (unchanged on Zapier)`);
       }
     } else {
       log(`- would republish from \`${plan.fromVersion}\` carrying deps/connections/app-versions forward`);
