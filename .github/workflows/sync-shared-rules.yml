@@ -15,10 +15,20 @@
 # │ before it lands. Glance and merge is fine; silent auto-commit is not.       │
 # └─────────────────────────────────────────────────────────────────────────────┘
 #
-# Requires a `TEMPLATE_SYNC_TOKEN` secret: a fine-grained PAT with read-only
-# Contents access to the template repo. Without it the job exits cleanly with a
-# note rather than failing — a missing token should not turn every day's
-# Actions tab red.
+# NO CREDENTIAL NEEDED. The template repo is public, so the runner's built-in
+# GITHUB_TOKEN can read it — nothing to expire, nothing for an org to approve.
+# A `TEMPLATE_SYNC_TOKEN` secret is still honoured if one exists, so making the
+# template private again is a secret away rather than a workflow edit.
+#
+# ┌─ THIS JOB USED TO FAIL SILENTLY, AND DID ───────────────────────────────────┐
+# │ Every early exit here once wrote its reason to the step summary and exited  │
+# │ 0, so a misconfigured sync looked exactly like a quiet, healthy day. In     │
+# │ knoxx-code-zaps it ran daily for weeks against a missing token, skipping    │
+# │ its own Compare step every time, and nobody noticed until the two repos'    │
+# │ rules had visibly diverged. Every abnormal path now annotates and FAILS.    │
+# │ The protective refusals (empty listing, empty file) fail too: each one      │
+# │ means something is wrong upstream, not that there is nothing to do.         │
+# └─────────────────────────────────────────────────────────────────────────────┘
 #
 # Merging this PR does NOT deploy anything: no Zap source changes, so
 # `Publish Zaps` has nothing to republish.
@@ -54,51 +64,46 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Fetch upstream copy
-        id: fetch
         env:
-          GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_TOKEN }}
+          GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
-            echo "No TEMPLATE_SYNC_TOKEN set — skipping." >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
+          die() {
+            echo "::error::$1"
+            echo "$1" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
           rm -rf /tmp/upstream-rules && mkdir -p /tmp/upstream-rules
           if ! gh api "repos/$UPSTREAM_REPO/contents/$RULES_DIR" --jq '.[] | select(.name|endswith(".md")) | .name' > /tmp/names.txt; then
-            echo "Could not list $RULES_DIR in $UPSTREAM_REPO." >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            die "Could not list $RULES_DIR in $UPSTREAM_REPO — check the repo is still public and the path still exists."
           fi
           # An empty listing must never be read as "upstream deleted everything".
           if [ ! -s /tmp/names.txt ]; then
-            echo "Upstream listed no rules files — refusing to wipe local rules." >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            die "Upstream listed no rules files — refusing to wipe local rules."
           fi
           while read -r n; do
             [ -z "$n" ] && continue
             gh api "repos/$UPSTREAM_REPO/contents/$RULES_DIR/$n" \
-              -H "Accept: application/vnd.github.raw" > "/tmp/upstream-rules/$n" || {
-                echo "Failed fetching $n — skipping this run." >> "$GITHUB_STEP_SUMMARY"
-                echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+              -H "Accept: application/vnd.github.raw" > "/tmp/upstream-rules/$n" \
+              || die "Failed fetching $n from $UPSTREAM_REPO."
             # A truncated or empty file must never overwrite good local rules.
-            if [ ! -s "/tmp/upstream-rules/$n" ]; then
-              echo "Upstream $n was empty — refusing to overwrite." >> "$GITHUB_STEP_SUMMARY"
-              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-            fi
+            [ -s "/tmp/upstream-rules/$n" ] || die "Upstream $n was empty — refusing to overwrite."
           done < /tmp/names.txt
-          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Fetched from $UPSTREAM_REPO: $(tr '\n' ' ' < /tmp/names.txt)"
 
       - name: Compare
         id: diff
-        if: steps.fetch.outputs.skip == 'false'
         run: |
           mkdir -p "$RULES_DIR"
           if diff -rq /tmp/upstream-rules "$RULES_DIR" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Shared rules already match \`$UPSTREAM_REPO\`."
             echo "Shared rules already match \`$UPSTREAM_REPO\`." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           rm -f "$RULES_DIR"/*.md
           cp /tmp/upstream-rules/*.md "$RULES_DIR"/
           echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "Shared rules differ from $UPSTREAM_REPO — opening/updating a PR."
           {
             echo "## Shared rules changed"
             echo
@@ -114,6 +119,10 @@ jobs:
         if: steps.diff.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          # Only the rules belong in a sync PR — never anything the fetch or a
+          # previous step happened to leave in the working tree.
+          add-paths: |
+            .claude/rules/**
           branch: chore/sync-shared-rules
           base: main
           title: "chore: sync shared durables rules from template"
