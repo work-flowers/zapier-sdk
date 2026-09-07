@@ -1,0 +1,140 @@
+# Sync the shared durables rules from the template repo
+#
+# `.claude/rules/*.md` are the universal half of this repo's Claude Code
+# instructions — publish pipeline, trigger handling, the determinism guard, the
+# empty-ping guard, AI tiers, concurrency. It is deliberately BYTE-IDENTICAL
+# across every Zap repo so a lesson learned in one reaches all of them.
+#
+# This job checks the template's copy daily and opens a PR when it differs.
+# Daily doesn't mean a PR a day: `create-pull-request` reuses the fixed branch
+# `chore/sync-shared-rules`, so a run with new changes UPDATES the open PR
+# rather than opening another. An unchanged day exits before that step.
+#
+# ┌─ WHY A PR AND NOT AN AUTO-COMMIT ───────────────────────────────────────────┐
+# │ These rules govern how durables reach PRODUCTION. A human reads the diff    │
+# │ before it lands. Glance and merge is fine; silent auto-commit is not.       │
+# └─────────────────────────────────────────────────────────────────────────────┘
+#
+# Requires a `TEMPLATE_SYNC_TOKEN` secret: a fine-grained PAT with read-only
+# Contents access to the template repo. Without it the job exits cleanly with a
+# note rather than failing — a missing token should not turn every day's
+# Actions tab red.
+#
+# Merging this PR does NOT deploy anything: no Zap source changes, so
+# `Publish Zaps` has nothing to republish.
+
+name: Sync shared rules
+
+on:
+  schedule:
+    # Daily at 03:00 UTC (11:00 Singapore), an hour after the skills refresh so
+    # the two never contend for the same runner minute.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-shared-rules
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: work-flowers/zapier-durables-template
+  # The whole directory, not one file — the shared rules are a SET
+  # (durables.md + durables-sdk.md), and a new one can be added upstream.
+  RULES_DIR: .claude/rules
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # The template is the upstream; it must not try to sync from itself.
+    if: github.repository != 'work-flowers/zapier-durables-template'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch upstream copy
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.TEMPLATE_SYNC_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "No TEMPLATE_SYNC_TOKEN set — skipping." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          rm -rf /tmp/upstream-rules && mkdir -p /tmp/upstream-rules
+          if ! gh api "repos/$UPSTREAM_REPO/contents/$RULES_DIR" --jq '.[] | select(.name|endswith(".md")) | .name' > /tmp/names.txt; then
+            echo "Could not list $RULES_DIR in $UPSTREAM_REPO." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          # An empty listing must never be read as "upstream deleted everything".
+          if [ ! -s /tmp/names.txt ]; then
+            echo "Upstream listed no rules files — refusing to wipe local rules." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          while read -r n; do
+            [ -z "$n" ] && continue
+            gh api "repos/$UPSTREAM_REPO/contents/$RULES_DIR/$n" \
+              -H "Accept: application/vnd.github.raw" > "/tmp/upstream-rules/$n" || {
+                echo "Failed fetching $n — skipping this run." >> "$GITHUB_STEP_SUMMARY"
+                echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+            # A truncated or empty file must never overwrite good local rules.
+            if [ ! -s "/tmp/upstream-rules/$n" ]; then
+              echo "Upstream $n was empty — refusing to overwrite." >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+          done < /tmp/names.txt
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Compare
+        id: diff
+        if: steps.fetch.outputs.skip == 'false'
+        run: |
+          mkdir -p "$RULES_DIR"
+          if diff -rq /tmp/upstream-rules "$RULES_DIR" >/dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Shared rules already match \`$UPSTREAM_REPO\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          rm -f "$RULES_DIR"/*.md
+          cp /tmp/upstream-rules/*.md "$RULES_DIR"/
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Shared rules changed"
+            echo
+            echo "Upstream: \`$UPSTREAM_REPO\` — set version:"
+            head -1 "$RULES_DIR"/durables.md 2>/dev/null || true
+            echo
+            echo '```diff'
+            git diff --unified=2 -- "$RULES_DIR" | head -200
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/sync-shared-rules
+          base: main
+          title: "chore: sync shared durables rules from template"
+          commit-message: "chore: sync shared durables rules from template"
+          labels: rules
+          delete-branch: true
+          body: |
+            Automated sync of `.claude/rules/` from
+            `work-flowers/zapier-durables-template`.
+
+            This file is the universal half of this repo's Claude Code
+            instructions and is kept byte-identical across every Zap repo, so a
+            lesson learned in one repo reaches all of them.
+
+            **Read the diff before merging.** These rules govern how durables
+            reach production — trigger handling, the publish pipeline, the
+            determinism guard. See the run's Step Summary for the diff.
+
+            If a change here is wrong *for this repo specifically*, don't edit
+            this file to fix it — the next sync would revert you. Put the
+            repo-specific exception in `CLAUDE.md` instead, and fix the shared
+            file upstream.
+
+            No Zap source changed, so `Publish Zaps` has nothing to deploy.
