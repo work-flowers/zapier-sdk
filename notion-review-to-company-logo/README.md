@@ -137,8 +137,14 @@ The classic Zap is **paused in full** (every node `paused: true` in the
 enabled. It does nothing, however, until the Notion side is repointed:
 
 1. Open the **Customer Reviews** automation in Notion that POSTs to the classic
-   Zap's catch URL and change the URL to this Zap's `trigger.webhook_url` (see
-   `zap.json` — filled in by the publish pipeline on first publish).
+   Zap's catch URL and change the URL to this Zap's catch URL:
+
+   ```
+   https://hooks.zapier.com/hooks/catch/20495893/A8lQflzKn30SCB0y/
+   ```
+
+   **Not** the `trigger_url` in `zap.json` — that one is Zapier-internal, needs
+   a platform JWT, and answers an unauthenticated POST with `401`.
 2. Delete the classic Zap, or leave it paused. Classic Zaps are exposed by
    neither the SDK CLI nor the MCP connector, so this is a Zapier-UI step and
    is not machine-verifiable from this repo.
