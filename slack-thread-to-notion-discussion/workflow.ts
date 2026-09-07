@@ -211,6 +211,18 @@ async function findMessageMapRow(
 type NotionComment = { commentId: string; discussionId: string };
 
 /**
+ * Slack delivers emoji as :shortcode: syntax (e.g. ":ok_hand:"). Notion's
+ * markdown parser treats :word: as a custom_emoji mention and then rejects it
+ * with 400 validation_error ("Unsupported mention type in markdown:
+ * custom_emoji") because custom_emoji mentions are not supported in comment
+ * bodies. Strip the colon delimiters so the emoji name becomes plain text
+ * (:ok_hand: → ok_hand), preserving meaning without triggering the parser.
+ */
+function sanitizeForNotionMarkdown(text: string): string {
+  return text.replace(/:[a-zA-Z0-9_+\-]+:/g, (m) => m.slice(1, -1));
+}
+
+/**
  * POST /v1/comments with a custom display_name so the comment renders under the
  * Slack author's own name (verified live 2026-09-01 — Spike C). Must be called
  * inside a ctx.step.
@@ -223,7 +235,7 @@ async function postNotionComment(
   displayName: string,
 ): Promise<NotionComment> {
   const body: Record<string, unknown> = {
-    markdown,
+    markdown: sanitizeForNotionMarkdown(markdown),
     display_name: { type: "custom", custom: { name: displayName } },
   };
   Object.assign(body, parent);
