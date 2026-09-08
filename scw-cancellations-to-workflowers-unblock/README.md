@@ -20,6 +20,7 @@ flowchart TD
 
 ## Maintainer notes
 
+- **A truncated series never reaches this trigger either.** A "this and following" edit puts an `UNTIL` on the old series; Google emits a cancelled tombstone only for occurrences that had been individually edited, and the plain instances simply vanish (proven 2026-09-08: the AI COE Weekly Long Sync reschedule delivered one tombstone out of five). The orphaned mirrors are removed by [`gcal-block-sweep`](../gcal-block-sweep/)'s daily reconcile pass, not by this Zap.
 - **Loop guard**: deleting a mirror fires `event_cancelled` on the mirror's own calendar — for this trigger's calendar, that's the reverse direction's Busy blocks being deleted. The `Mirror Event ID` table lookup (free) swallows those echoes.
 - Task cost: 0 for every skip path; 1 `delete_event` per real unblock. `never-mirrored` is the overwhelmingly common outcome (all-day, Free, declined, beyond-horizon, or pre-cutover events).
 - The `event_updated` Zaps keep their own cancel branch as a belt — harmless if a tombstone ever does arrive there.

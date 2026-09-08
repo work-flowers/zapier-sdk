@@ -32,6 +32,7 @@ flowchart TD
 
 ## Maintainer notes
 
+- **A series truncated with "this and following" leaves its future mirrors standing.** The old series gets an `UNTIL`, the vanished occurrences produce no `event_updated` and (mostly) no `event_cancelled`, so neither this Zap nor its unblock companion can react. [`gcal-block-sweep`](../gcal-block-sweep/) reconciles the coming week daily and deletes those orphans; a reschedule more than a week out is caught as it rolls in.
 - **The horizon guard is load-bearing.** `expand_recurring: true` expanded a weekly series ~14 years (~730 instances) in one observed poll (2026-08-28). Without the 30-day create-horizon, one open-ended series would burn ~700 tasks. Zapier's dedupe means a skipped occurrence never re-fires — that gap is exactly what [`gcal-block-sweep`](../gcal-block-sweep/) exists to fill. Keep `HORIZON_DAYS` in lockstep across all three workflows.
 - **Task cost per run**: 0 for every skip path (Table reads are free), 1 for a create/update/delete.
 - **Change guard**: `event_updated` fires on every touch (other people's RSVPs, description edits, Gemini attaching notes — the meeting-note Zap sees ~60/day). Only a move or rename spends the update task.
