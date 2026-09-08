@@ -1,6 +1,6 @@
 # workflowers-events-to-scw-busy
 
-One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. Updates move the block. **Cancellations do NOT reach this trigger** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31, when a deleted 9 AM work.flowers event left its SCW block standing), so deletion propagation lives in [`workflowers-cancellations-to-scw-unblock`](../workflowers-cancellations-to-scw-unblock/); the cancel branch here is kept as a belt.
+One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. **In practice this Zap only ever sees an occurrence once** — `event_updated` does not re-fire for an occurrence it has already delivered (proven across this repo's three `event_updated` Zaps on 2026-09-08; see [`gcal-block-sweep`](../gcal-block-sweep/)), so the move/delete branches below are dead code kept as a belt and every later move, decline or Free/all-day switch is propagated by the sweep's daily reconcile pass instead. **Cancellations do NOT reach this trigger either** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31, when a deleted 9 AM work.flowers event left its SCW block standing), so deletion propagation lives in [`workflowers-cancellations-to-scw-unblock`](../workflowers-cancellations-to-scw-unblock/); the cancel branch here is kept as a belt.
 
 Replaces **Notion Calendar's built-in event blocking**, which SCW IT cut off on 2026-08-28 (its old frozen blocks are cleaned up by the sweep's `cleanup_notion_blocks` mode).
 
@@ -37,7 +37,7 @@ Same three layers as the sibling — structural (one direction per Zap), the sha
 ## Maintainer notes
 
 - **The horizon guard is load-bearing** — see the sibling README; keep `HORIZON_DAYS` (30) in lockstep across all three workflows.
-- Task cost: 0 for every skip path, 1 per create/move/delete. Only a *moved* occurrence spends the update task — renames and description edits on the source change nothing on a bare Busy block.
+- Task cost: 0 for every skip path, 1 per create (and, if the trigger ever does re-fire, per move/delete). Renames and description edits on the source change nothing on a bare Busy block, so the sweep's reconcile pass compares times only in this direction.
 - Skip-worthy transitions (declined later, changed to all-day, changed to Free) delete an existing block.
 - This Zap polls the same calendar as [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/); they coexist (separate workflows, separate dedupe).
 
