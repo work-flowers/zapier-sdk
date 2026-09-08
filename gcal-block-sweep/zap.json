@@ -1,7 +1,7 @@
 {
   "name": "gcal-block-sweep",
   "workflow_id": "01a04796-9a82-7b73-8d69-db9979743c78",
-  "current_version_id": "01a04796-a748-7857-a69b-80d0a246b5b4",
+  "current_version_id": "01a07e81-7d90-7750-b74e-bfd31184ad33",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUj2fEs1hoxR4VmsBw5Njg",
   "enabled": true,
   "is_private": false,
