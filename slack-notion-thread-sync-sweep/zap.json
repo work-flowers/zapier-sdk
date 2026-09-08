@@ -1,7 +1,7 @@
 {
   "name": "slack-notion-thread-sync-sweep",
   "workflow_id": "01a05bff-15bd-726c-bf83-ca56967bf5cc",
-  "current_version_id": "01a05c0c-fc52-717d-9af3-3736a1ab13e9",
+  "current_version_id": "01a07e5e-65ab-710c-85ba-89adbce8afd8",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AezPhnKoN0URfqLhM6t97Q",
   "enabled": true,
   "is_private": false,
