@@ -101,6 +101,18 @@ function parseSlackMessage(raw: Record<string, unknown>): SlackMessage | null {
   };
 }
 
+/**
+ * Slack delivers emoji as :shortcode: syntax (e.g. ":ok_hand:"). Notion's
+ * markdown parser treats :word: as a custom_emoji mention and then rejects it
+ * with 400 validation_error ("Unsupported mention type in markdown:
+ * custom_emoji") because custom_emoji mentions are not supported in comment
+ * bodies. Strip the colon delimiters so the emoji name becomes plain text
+ * (:ok_hand: → ok_hand), preserving meaning without triggering the parser.
+ */
+function sanitizeForNotionMarkdown(text: string): string {
+  return text.replace(/:[a-zA-Z0-9_+\-]+:/g, (m) => m.slice(1, -1));
+}
+
 // --- Workflow -------------------------------------------------------------------
 
 const workflow = defineDurable<Record<string, unknown>, unknown>(
@@ -260,7 +272,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
               },
               body: JSON.stringify({
                 discussion_id: row.discussionId,
-                markdown: m.text || "(empty message)",
+                markdown: sanitizeForNotionMarkdown(m.text || "(empty message)"),
                 display_name: {
                   type: "custom",
                   custom: { name: `${m.authorName} (via Slack)` },
