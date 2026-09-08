@@ -217,8 +217,17 @@ function validateTrigger(dir, trigger) {
 
 // A catch hook is the one trigger kind Zapier ISSUES a URL for, and that URL is
 // the only address an external sender (a Notion automation, Luma, Linear,
-// another Zap) can call. Everything else claims a trigger on the app side and
-// is handed no URL at all.
+// another Zap) can call. Everything else claims a trigger on the app side.
+//
+// "Handed no URL at all" is NOT true of the readback, though: a Schedule
+// trigger comes back from get-workflow with `details.webhook_url` set to a
+// `/hooks/standard/...` endpoint — Zapier-internal plumbing that nothing
+// external calls. The sync-back must therefore filter on trigger kind rather
+// than on the presence of a URL. Before it did (2026-09-08, PR #160),
+// republishing gcal-block-sweep published fine and then died in the sync-back
+// with "Zapier reports catch URL ... but zap.json records none", leaving the
+// repo one version behind and the run summary red. Every Schedule-triggered
+// deployment would have failed the same way on its next republish.
 function isCatchHookTrigger(trigger) {
   return String(trigger?.selected_api || "").startsWith("WebHookCLIAPI");
 }
@@ -413,8 +422,9 @@ function createAndPublish(dir, dep, execute) {
     workflowId,
     newVersionId,
     triggerUrl: after?.trigger_url || created?.trigger_url || null,
-    // Present only for catch-hook triggers; this is the URL external services call.
-    webhookUrl: afterTriggers[0]?.details?.webhook_url || null,
+    // Only a catch hook is handed a URL (Schedule triggers report a /hooks/standard/ one that
+    // nothing external calls — see isCatchHookTrigger); this is the URL external services call.
+    webhookUrl: isCatchHookTrigger(afterTriggers[0]) ? afterTriggers[0]?.details?.webhook_url || null : null,
     enabled: typeof after?.enabled === "boolean" ? after.enabled : spec.enableOnPublish,
   };
 }
@@ -582,9 +592,9 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     plan,
     newVersionId,
     triggerChanged,
-    // Present only for catch-hook triggers; a changed trigger can be issued a
+    // Only a catch hook is handed a URL (see isCatchHookTrigger); a changed trigger can be issued a
     // NEW catch URL, which has to land back in zap.json.
-    webhookUrl: afterTriggers[0]?.details?.webhook_url || null,
+    webhookUrl: isCatchHookTrigger(afterTriggers[0]) ? afterTriggers[0]?.details?.webhook_url || null : null,
     declaredWebhookUrl: desired?.webhook_url ?? null,
   };
 }
