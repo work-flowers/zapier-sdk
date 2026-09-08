@@ -12,21 +12,32 @@
 // missing. Rows that already exist are free Table reads, so a quiet day
 // costs approximately nothing.
 //
-// It is also the RECONCILER for the coming week (days 0..7 by default): a
-// recurring series that is truncated or moved with "this and following"
-// gets an UNTIL on the old series instead of a cancellation per occurrence,
-// so neither trigger Zap ever hears about the occurrences that vanished and
-// their mirrors stand at the old time indefinitely (first seen 2026-09-08:
-// the AI COE Weekly Long Sync moved from 11:30 to 09:30 and left four
-// orphaned blocks). Each run compares the active mapping rows whose Start
-// falls in the reconcile window against the source events the searches
-// actually returned, deletes any mirror whose source occurrence is gone, and
-// marks the row deleted. Cost: one extra search per direction per day.
+// It is also the RECONCILER for the coming week (days 0..7 by default), and
+// since 2026-09-08 that is where every post-creation change propagates:
+//
+//   - Zapier's `event_updated` trigger never re-fires for an occurrence it
+//     has already delivered — 300 runs across the three event_updated Zaps
+//     in this repo, 300 distinct event ids, and a live reschedule that the
+//     trigger's own poll returned first yet never produced a run. So a
+//     moved or renamed occurrence, a decline, a switch to all-day or Free
+//     never reaches the trigger Zaps' update/delete branches.
+//   - A recurring series truncated or moved with "this and following" gets
+//     an UNTIL on the old series instead of a cancellation per occurrence,
+//     so even `event_cancelled` never hears about the vanished occurrences.
+//
+// Each run therefore compares every ACTIVE mapping row whose Start falls in
+// the reconcile window against the source events the searches actually
+// returned: source gone or cancelled -> delete the mirror, mark the row
+// deleted; source no longer block-worthy (declined, Free, all-day) -> same;
+// source moved or renamed -> update the mirror and refresh the row. A row
+// previously marked deleted whose source is block-worthy again is revived by
+// the create pass. Cost: one extra search per direction per day, plus one
+// task per mirror actually changed.
 //
 // It is also the BACKFILL: run it by hand over the whole horizon —
 //   trigger-workflow <id> --input '{"from_days":0,"to_days":30}'
 // — to mirror every existing future event at cutover. Add '"dryRun":true' to
-// see what it would create/delete without writing, and
+// see what it would create/update/delete without writing, and
 // '"cleanup_notion_blocks":true' to also delete the orphaned "Event blocked
 // with Notion Calendar" blocks on the SCW calendar (SCW IT cut Notion
 // Calendar off, so those blocks are frozen and must go).
@@ -59,9 +70,9 @@ const DEFAULT_FROM_DAYS = HORIZON_DAYS - 7;
 const CHUNK_DAYS = 7;
 
 /**
- * Reconcile the coming week by default (days 0..7). A truncated series that
- * this run misses is caught by the next six, and an orphan further out is
- * caught as it rolls into the window. Manual runs may override or disable
+ * Reconcile the coming week by default (days 0..7). A change that this run
+ * misses is caught by the next six, and a change further out is caught as it
+ * rolls into the window. Manual runs may override or disable
  * (`reconcile_days: 0`).
  */
 const DEFAULT_RECONCILE_DAYS = 7;
@@ -82,7 +93,7 @@ const TABLE_START_UTC_OFFSET_MINUTES = 8 * 60;
  * truncated results page would read as a mass cancellation, so a chunk that
  * comes back this full is treated as untrustworthy and reconciliation is
  * skipped for that direction, loudly. The busiest week observed so far
- * returned 20 events.
+ * returned 43 events across the merged windows.
  */
 const RECONCILE_MAX_EVENTS_PER_CHUNK = 100;
 
@@ -229,6 +240,14 @@ function epochMsFromRfc3339(value: unknown): number | null {
   return epoch;
 }
 
+/** True when both parse and land on the same instant. An unparseable side is "different". */
+function sameInstant(a: unknown, b: unknown): boolean {
+  const left = epochMsFromRfc3339(a);
+  const right = epochMsFromRfc3339(b);
+  if (left === null || right === null) return false;
+  return left === right;
+}
+
 interface Interval {
   afterMs: number;
   beforeMs: number;
@@ -308,6 +327,7 @@ interface MappingRow {
   mirrorEventId: string | null;
   status: string | null;
   start: string | null;
+  end: string | null;
   summary: string | null;
 }
 
@@ -325,6 +345,7 @@ function parseRows(result: unknown): MappingRow[] {
       mirrorEventId: firstString(data.f2),
       status: firstString(data.f4),
       start: firstString(data.f5),
+      end: firstString(data.f6),
       summary: firstString(data.f7),
     });
   }
@@ -352,6 +373,59 @@ function classifySkip(event: FoundEvent, mode: "title" | "busy"): string | null 
   // Calendar block; only the scw_to_wf ("title") direction reads that calendar.
   if (mode === "title" && firstString(event.summary) === "Busy") return "busy-block";
   return null;
+}
+
+/** What the mirror of `event` should look like in this direction. */
+function mirrorSpec(dir: Direction, eventId: string, event: FoundEvent) {
+  const sourceSummary = firstString(event.summary) ?? "(no title)";
+  const startDateTime = firstString(event.start?.dateTime)!;
+  const endDateTime = firstString(event.end?.dateTime)!;
+  const mirrorSummary = dir.mode === "busy" ? "Busy" : sourceSummary;
+  const description =
+    dir.mode === "busy"
+      ? null
+      : `${SYNC_MARKER} source:${eventId}\nMirrored from ${dir.sourceCalendar} by gcal-block-sweep. Edits here will be overwritten.`;
+  return { sourceSummary, startDateTime, endDateTime, mirrorSummary, description };
+}
+
+type MirrorSpec = ReturnType<typeof mirrorSpec>;
+
+function createInputs(dir: Direction, spec: MirrorSpec): Record<string, unknown> {
+  return {
+    calendarid: dir.destCalendar,
+    summary: spec.mirrorSummary,
+    ...(spec.description ? { description: spec.description } : {}),
+    start__dateTime: spec.startDateTime,
+    end__dateTime: spec.endDateTime,
+    transparency: "opaque",
+    visibility: dir.mode === "busy" ? "private" : "default",
+    all_day: false,
+    reminders__useDefault: false,
+  };
+}
+
+function updateInputs(dir: Direction, mirrorEventId: string, spec: MirrorSpec): Record<string, unknown> {
+  return {
+    calendarid: dir.destCalendar,
+    eventid: mirrorEventId,
+    summary: spec.mirrorSummary,
+    ...(spec.description ? { description: spec.description } : {}),
+    start__dateTime: spec.startDateTime,
+    end__dateTime: spec.endDateTime,
+    send_notifications: false,
+  };
+}
+
+/** The row fields that describe a live mirror of `spec`. */
+function rowFields(spec: MirrorSpec, mirrorEventId: string, sourceUpdated: string | null): Record<string, unknown> {
+  return {
+    new__data__f2: mirrorEventId,
+    new__data__f4: "active",
+    new__data__f5: spec.startDateTime,
+    new__data__f6: spec.endDateTime,
+    new__data__f7: spec.sourceSummary,
+    ...(sourceUpdated ? { new__data__f8: sourceUpdated } : {}),
+  };
 }
 
 // --- Steps ---------------------------------------------------------------------
@@ -392,6 +466,36 @@ async function searchEvents(
     if (parsed.success) events.push(parsed.data);
   }
   return events;
+}
+
+/**
+ * One task: fetch a single occurrence by id from the source calendar. Used only
+ * when an ACTIVE row's source did not come back from the window search, to tell
+ * "moved outside the searched window" (a confirmed event comes back, at its new
+ * time) from "gone" (not found, or a cancelled tombstone — a truncated series'
+ * vanished occurrences read back as `status: cancelled` with a sparse body).
+ */
+async function getEventById(
+  ctx: DurableContext,
+  stepId: string,
+  connection: string,
+  calendarId: string,
+  eventId: string,
+): Promise<FoundEvent | null> {
+  const found = await ctx.step(stepId, async () =>
+    sdk.runAction({
+      appKey: GCAL_APP_KEY,
+      actionType: "search",
+      actionKey: "event_by_id",
+      connection,
+      inputs: { calendarid: calendarId, event_id: eventId, _zap_search_success_on_miss: true },
+    }),
+  );
+  const raw = ((found as { data?: unknown[] }).data ?? [])[0];
+  if (!raw) return null;
+  const parsed = FoundEventSchema.safeParse(raw);
+  if (!parsed.success || firstString(parsed.data.id) !== eventId) return null;
+  return parsed.data;
 }
 
 /** Free: the row whose Mirror Event ID is `eventId`, i.e. the sync's own output. */
@@ -498,6 +602,31 @@ async function createMirror(
   return firstString((made as { data?: Array<{ id?: unknown }> }).data?.[0]?.id);
 }
 
+/** One task: move/rename an existing mirror. A hand-deleted mirror reports `mirrorGone` instead of spinning retries. */
+async function updateMirror(
+  ctx: DurableContext,
+  stepId: string,
+  connection: string,
+  inputs: Record<string, unknown>,
+): Promise<{ mirrorGone: boolean }> {
+  return ctx.step(stepId, async () => {
+    try {
+      await sdk.runAction({
+        appKey: GCAL_APP_KEY,
+        actionType: "write",
+        actionKey: "update_event",
+        connection,
+        inputs,
+      });
+      return { mirrorGone: false };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (MIRROR_GONE_PATTERN.test(message)) return { mirrorGone: true };
+      throw error;
+    }
+  });
+}
+
 /** Free: record a new mapping row. */
 async function createRow(ctx: DurableContext, stepId: string, fields: Record<string, unknown>): Promise<void> {
   await ctx.step(stepId, async () =>
@@ -506,6 +635,18 @@ async function createRow(ctx: DurableContext, stepId: string, fields: Record<str
       actionType: "write",
       actionKey: "create_record",
       inputs: { table_id: SYNC_MAP_TABLE, ...fields },
+    }),
+  );
+}
+
+/** Free: overwrite fields on an existing mapping row. */
+async function updateRow(ctx: DurableContext, stepId: string, recordId: string, fields: Record<string, unknown>): Promise<void> {
+  await ctx.step(stepId, async () =>
+    sdk.runAction({
+      appKey: "TableCLIAPI",
+      actionType: "write",
+      actionKey: "update_record",
+      inputs: { table_id: SYNC_MAP_TABLE, record_id: recordId, ...fields },
     }),
   );
 }
@@ -534,23 +675,6 @@ async function deleteEvent(
       throw error;
     }
   });
-}
-
-/** Free: flip a mapping row to Status=deleted. */
-async function markRowDeleted(ctx: DurableContext, stepId: string, recordId: string, sourceUpdated: string): Promise<void> {
-  await ctx.step(stepId, async () =>
-    sdk.runAction({
-      appKey: "TableCLIAPI",
-      actionType: "write",
-      actionKey: "update_record",
-      inputs: {
-        table_id: SYNC_MAP_TABLE,
-        record_id: recordId,
-        new__data__f4: "deleted",
-        new__data__f8: sourceUpdated,
-      },
-    }),
-  );
 }
 
 // --- Workflow --------------------------------------------------------------------
@@ -615,10 +739,12 @@ const workflow = defineDurable<Input, unknown>(
       }
       const events = [...eventsById.values()];
 
-      // --- Create: mirror anything in the window the map has never seen ------
+      // --- Create / revive: mirror anything block-worthy in the window that
+      // has no ACTIVE row ------------------------------------------------------
       const skipped: Record<string, number> = {};
       const alreadyMapped: string[] = [];
       const created: Array<{ eventId: string; start: string | null; summary: string | null }> = [];
+      const revived: Array<{ eventId: string; start: string | null; summary: string | null }> = [];
 
       for (const event of events) {
         const eventId = firstString(event.id)!;
@@ -634,115 +760,138 @@ const workflow = defineDurable<Input, unknown>(
           continue;
         }
         const row = await findRowBySourceId(ctx, `${dir.direction}-${eventId}-lookup`, eventId, dir.direction);
-        if (row) {
-          // Mapped (active or deliberately unmirrored) — the trigger Zaps own
-          // updates and revivals; the sweep only fills never-seen gaps.
+        if (row && row.status === "active") {
+          // Live mirror on record — the reconcile pass below owns its accuracy.
           alreadyMapped.push(eventId);
           continue;
         }
-
-        const sourceSummary = firstString(event.summary) ?? "(no title)";
-        const startDateTime = firstString(event.start?.dateTime)!;
-        const endDateTime = firstString(event.end?.dateTime)!;
+        // No row, or a row previously marked deleted (source was cancelled,
+        // declined, made Free or all-day at the time) whose source is
+        // block-worthy again: create a fresh mirror and (re)record it. The
+        // trigger Zaps' own revive path never runs, because event_updated does
+        // not re-fire for an occurrence it has already delivered.
+        const spec = mirrorSpec(dir, eventId, event);
         const updatedAt = firstString(event.updated);
+        const entry = { eventId, start: spec.startDateTime, summary: spec.mirrorSummary };
 
         if (dryRun) {
-          created.push({ eventId, start: startDateTime, summary: dir.mode === "busy" ? "Busy" : sourceSummary });
+          (row ? revived : created).push(entry);
           continue;
         }
 
-        const mirrorInputs =
-          dir.mode === "busy"
-            ? {
-                calendarid: dir.destCalendar,
-                summary: "Busy",
-                start__dateTime: startDateTime,
-                end__dateTime: endDateTime,
-                transparency: "opaque",
-                visibility: "private",
-                all_day: false,
-                reminders__useDefault: false,
-              }
-            : {
-                calendarid: dir.destCalendar,
-                summary: sourceSummary,
-                description: `${SYNC_MARKER} source:${eventId}\nMirrored from ${dir.sourceCalendar} by gcal-block-sweep. Edits here will be overwritten.`,
-                start__dateTime: startDateTime,
-                end__dateTime: endDateTime,
-                transparency: "opaque",
-                visibility: "default",
-                all_day: false,
-                reminders__useDefault: false,
-              };
-
-        const mirrorEventId = await createMirror(ctx, `${dir.direction}-${eventId}-create`, dir.destConnection, mirrorInputs);
+        const mirrorEventId = await createMirror(ctx, `${dir.direction}-${eventId}-create`, dir.destConnection, createInputs(dir, spec));
         if (!mirrorEventId) {
           throw new Error(`detailed_event returned no event id for ${eventId} — refusing to record a bad mapping`);
         }
 
-        await createRow(ctx, `${dir.direction}-${eventId}-record`, {
-          new__data__f1: eventId,
-          new__data__f2: mirrorEventId,
-          new__data__f3: dir.direction,
-          new__data__f4: "active",
-          new__data__f5: startDateTime,
-          new__data__f6: endDateTime,
-          new__data__f7: sourceSummary,
-          ...(updatedAt ? { new__data__f8: updatedAt } : {}),
-        });
-        created.push({ eventId, start: startDateTime, summary: dir.mode === "busy" ? "Busy" : sourceSummary });
+        if (row) {
+          await updateRow(ctx, `${dir.direction}-${eventId}-revive-row`, row.recordId, rowFields(spec, mirrorEventId, updatedAt));
+          revived.push(entry);
+        } else {
+          await createRow(ctx, `${dir.direction}-${eventId}-record`, {
+            new__data__f1: eventId,
+            new__data__f3: dir.direction,
+            ...rowFields(spec, mirrorEventId, updatedAt),
+          });
+          created.push(entry);
+        }
       }
 
       console.log(
-        `${dir.direction}: ${events.length} events in window, ${created.length} ${dryRun ? "would be " : ""}mirrored, ${alreadyMapped.length} already mapped`,
+        `${dir.direction}: ${events.length} events in window, ${created.length} ${dryRun ? "would be " : ""}mirrored, ${revived.length} revived, ${alreadyMapped.length} already mapped`,
       );
 
-      // --- Reconcile: unmirror anything the map still thinks is live but the
-      // source calendar no longer has ------------------------------------------
-      // A truncated series ("this and following" edits set an UNTIL on the old
-      // series) produces no per-occurrence cancellation, so the trigger Zaps
-      // never see the vanished occurrences. Any ACTIVE row whose Start is in
-      // the reconcile window and whose source occurrence did not come back from
-      // the search is an orphan. A row whose source was merely declined, made
-      // free or moved still comes back and is left to the trigger Zaps. If the
-      // trigger Zap has not yet processed a move that took the source outside
-      // the window, this deletes the mirror one poll early and the trigger Zap
-      // revives it — the row goes `deleted` -> `active` with a fresh mirror.
-      const orphans: Array<{ sourceEventId: string; mirrorEventId: string; start: string | null; summary: string | null }> = [];
+      // --- Reconcile: bring every ACTIVE row in the coming week into line with
+      // its source -----------------------------------------------------------
+      // The trigger Zaps only ever see an occurrence once (see the header), so
+      // everything that happens to it afterwards is caught here: gone or
+      // cancelled -> unmirror; no longer block-worthy (declined, Free,
+      // all-day) -> unmirror; moved or renamed -> update the mirror. A source
+      // that did not come back from the searches is fetched by id before it is
+      // declared gone, so an occurrence moved beyond the searched windows is
+      // updated to its new time rather than deleted.
+      type Change = { sourceEventId: string; mirrorEventId: string; start: string | null; summary: string | null };
+      const orphans: Change[] = [];
+      const unmirrored: Array<Change & { reason: string }> = [];
+      const updated: Array<Change & { to: { start: string; end: string; summary: string } }> = [];
       let rowsChecked = 0;
       if (reconcileDays > 0 && reconcileUnsafe) {
         console.log(`${dir.direction}: reconciliation SKIPPED — ${reconcileUnsafe}`);
       } else if (reconcileDays > 0) {
+        const seenRows = new Set<string>();
         for (let d = 0; d < reconcileDays; d++) {
           const prefix = localDatePrefix(nowMs + d * DAY_MS, TABLE_START_UTC_OFFSET_MINUTES);
           const rows = await findActiveRowsStartingOn(ctx, `${dir.direction}-reconcile-rows-${d}`, dir.direction, prefix);
           for (const row of rows) {
             if (!row.sourceEventId || !row.mirrorEventId) continue;
+            if (seenRows.has(row.recordId)) continue;
+            seenRows.add(row.recordId);
             // The day prefix is a coarse filter; the search only covers
             // [now, now + reconcileDays), so hold rows to exactly that.
             const startMs = epochMsFromRfc3339(row.start);
             if (startMs === null || startMs < reconcileWindow.afterMs || startMs >= reconcileWindow.beforeMs) continue;
             rowsChecked += 1;
-            const source = eventsById.get(row.sourceEventId);
-            if (source && firstString(source.status) !== "cancelled") continue;
-            if (orphans.some((o) => o.sourceEventId === row.sourceEventId)) continue;
-            orphans.push({ sourceEventId: row.sourceEventId, mirrorEventId: row.mirrorEventId, start: row.start, summary: row.summary });
+
+            const change: Change = { sourceEventId: row.sourceEventId, mirrorEventId: row.mirrorEventId, start: row.start, summary: row.summary };
+            let source = eventsById.get(row.sourceEventId) ?? null;
+            if (!source) {
+              // Not in any searched window: either moved further out than the
+              // searches reach, or gone. One task to tell them apart — deleting
+              // a block for a meeting that merely moved to next month would be
+              // wrong, and this branch is rare.
+              source = await getEventById(ctx, `${dir.direction}-${row.sourceEventId}-lookup-by-id`, dir.sourceConnection, dir.sourceCalendar, row.sourceEventId);
+            }
+            const skip = source ? classifySkip(source, dir.mode) : "gone";
+
+            if (skip) {
+              if (skip === "gone" || skip === "cancelled") orphans.push(change);
+              else unmirrored.push({ ...change, reason: skip });
+              if (dryRun) continue;
+              await deleteEvent(ctx, `${dir.direction}-${row.sourceEventId}-unmirror`, dir.destConnection, dir.destCalendar, row.mirrorEventId);
+              await updateRow(ctx, `${dir.direction}-${row.sourceEventId}-mark-deleted`, row.recordId, {
+                new__data__f4: "deleted",
+                new__data__f8: firstString(source?.updated) ?? nowIso,
+              });
+              continue;
+            }
+
+            const spec = mirrorSpec(dir, row.sourceEventId, source!);
+            const unchanged =
+              sameInstant(spec.startDateTime, row.start) &&
+              sameInstant(spec.endDateTime, row.end) &&
+              (dir.mode === "busy" || spec.sourceSummary === row.summary);
+            if (unchanged) continue;
+
+            updated.push({ ...change, to: { start: spec.startDateTime, end: spec.endDateTime, summary: spec.mirrorSummary } });
             if (dryRun) continue;
-            await deleteEvent(ctx, `${dir.direction}-${row.sourceEventId}-unmirror`, dir.destConnection, dir.destCalendar, row.mirrorEventId);
-            await markRowDeleted(ctx, `${dir.direction}-${row.sourceEventId}-mark-deleted`, row.recordId, nowIso);
+
+            const updatedAt = firstString(source!.updated);
+            const result = await updateMirror(ctx, `${dir.direction}-${row.sourceEventId}-update`, dir.destConnection, updateInputs(dir, row.mirrorEventId, spec));
+            let mirrorEventId = row.mirrorEventId;
+            if (result.mirrorGone) {
+              // Hand-deleted on the destination: recreate rather than leave the
+              // row pointing at nothing.
+              const recreated = await createMirror(ctx, `${dir.direction}-${row.sourceEventId}-recreate`, dir.destConnection, createInputs(dir, spec));
+              if (!recreated) {
+                throw new Error(`detailed_event returned no event id recreating the mirror of ${row.sourceEventId} — refusing to record a bad mapping`);
+              }
+              mirrorEventId = recreated;
+            }
+            await updateRow(ctx, `${dir.direction}-${row.sourceEventId}-refresh-row`, row.recordId, rowFields(spec, mirrorEventId, updatedAt));
           }
         }
         console.log(
-          `${dir.direction}: reconciled ${rowsChecked} active rows in the coming ${reconcileDays}d, ${orphans.length} orphaned mirror(s) ${dryRun ? "would be " : ""}deleted`,
+          `${dir.direction}: reconciled ${rowsChecked} active rows in the coming ${reconcileDays}d — ${orphans.length} orphaned, ${unmirrored.length} no longer block-worthy, ${updated.length} moved/renamed${dryRun ? " (dry run, nothing written)" : ""}`,
         );
       }
 
       summary[dir.direction] = {
         eventsInWindow: events.length,
         created,
+        revived,
         alreadyMapped: alreadyMapped.length,
         skipped,
-        reconciled: reconcileDays > 0 ? { rowsChecked, orphans, skippedBecause: reconcileUnsafe } : null,
+        reconciled: reconcileDays > 0 ? { rowsChecked, orphans, unmirrored, updated, skippedBecause: reconcileUnsafe } : null,
       };
     }
 
