@@ -88,7 +88,7 @@
       "ANSWERED 2026-08-18 (Yanolja acceptance): an ACCEPTED payload DOES resolve the sentinels to the real email and names. See accepted_request_2026_08_18.",
       "ANSWERED 2026-08-18: Pending -> Accepted advances updated_project_request's composite id exactly like Pending -> Declined did (02700000000002X00hE_2026-08-18T11:40:21).",
       "Keys absent from any real payload and so still guessed: phone_number, job_title, project_name, timeline, zapier_account_email. The last matters — register-zapier-partner-lead needs it — and SPOT may simply not carry it.",
-      "The `properties|||<name>|||<type>` key forms for Primary Phone (phone_number), Country (select, both data sources), Account Owner Email Override (email) and First Contacted (date__start). No run has yet written to Notion, so they remain unexercised."
+      "MOSTLY RESOLVED 2026-09-14 (Well Organised acceptance, first main-path run): the Company create succeeded (Company Name/Website/Size/Country/Industry/Account Owner Email Override/Zapier Client Id all valid on Companies), and the Contact create failed on First Contacted ONLY — proving create_database_item's cached schema IS consulted and 'First Contacted' genuinely does not exist on Contacts (live schema has only 'Last Contacted', a read-only formula). Removed both First Contacted writes. Still unexercised: Primary Phone (payload carried none) and the Deals create (run died before it). See first_contacted_bug_2026_09_14."
     ]
   },
   "accepted_request_2026_08_18": {
@@ -117,6 +117,18 @@
       "durable_run_id": "01a03631-0f37-7ffa-b066-55088a2df036",
       "outcome": "companyVia=contact-relation (reused existing Company 3c691b07-11ac-81ea-… Copperwood Holdings Pty Ltd t/a Commercial Laundry Solutions, COM-812), contactVia=email-table (reused existing Contact 3c691b07-11ac-8154-… Leonard Mwenda), contactFilled=[Last Name, Country, Lead Source, First Contacted], created Deal 3c691b07-11ac-8174-… at Lead, wrote dedupe row. No duplicates. The enriched Company+Contact pre-existed via the email->CRM pipeline (both created 23:38Z off the introduction email); only the Deal was missing. (Page ids truncated so the map-overlay id sweep does not treat these one-off lead records as unregistered assets — same convention as accepted_request_2026_08_18.)"
     }
+  },
+  "trigger_delivery_fixed_2026_09_14": {
+    "milestone": "FIRST trigger-fired acceptance ever. Request 02700000000006L00hE (Well Organised, Charlie Evans, charlie@wellorganised.com.au; Directory match). Pending poll run 01a09e84-2ad1-… at 06:04Z skipped on the sentinel; a SECOND run 01a09e9d-eec2-… fired at 06:32Z carrying the accepted identity (real email + names). This confirms SPOT 1.5.2 fixed the project_request_id-as-primary-key dedupe defect (see acceptance_delivery_broken_2026_08_24 / zapier_fix_shipped_2026_08_26) — the trigger now DOES re-fire on Pending->Accepted.",
+    "but_the_run_failed": "The 06:32Z accepted run failed at step contact-create with 'First Contacted is not a property that exists' — a workflow bug, not a delivery bug. See first_contacted_bug_2026_09_14.",
+    "sweep_retirement": "The documented condition to retire spot-accepted-sweep-to-notion — 'a real acceptance observed to fire this trigger' — is now MET. Retire the sweep only AFTER Well Organised is re-filed and the fix is deployed. NOTE the sweep shared the identical First Contacted bug (fixed in the same change). Retirement is Dennis's call; not done here."
+  },
+  "first_contacted_bug_2026_09_14": {
+    "error": "Action execution failed: First Contacted is not a property that exists. (NotionCLIAPI create_database_item, step contact-create, run 01a09e9d-eec2-79ab-94e2-0f123e9ae217 / durable 01a09e9d-f112-…)",
+    "root_cause": "resolveContact wrote properties|||First Contacted|||date__start (create path) and a First Contacted date (patch path), but Contacts data source 21991b07-11ac-81a6-a894-000be4a09a67 has no such property. Live schema (notion-fetch) confirms only 'Last Contacted', a read-only formula. The create path uses create_database_item (cached schema) which surfaced Notion's 'not a property that exists' error; the patch path uses raw sdk.fetch and evidently tolerated the bad key silently (which is why the 2026-08-24 Commercial Laundry replay's `filled` list wrongly named First Contacted).",
+    "fix": "Removed both First Contacted writes from workflow.ts (this Zap) AND from spot-accepted-sweep-to-notion/workflow.ts (identical shared code). created_on is still preserved on the dedupe Table (Created On) and the Deal page body. tsc --strict clean.",
+    "state_left_behind": "The failed run created Company 'Well Organised' 3db91b07-11ac-8136-… (company-create completed) before dying; no Contact, no Deal, no dedupe row (dedupe row is written last). Well Organised must be re-filed after the fix deploys; on replay resolveCompany should reuse 3db9… via the live Website query — verify companyVia and delete an orphan if a duplicate Company appears.",
+    "deploy": "Not yet deployed — awaiting Dennis's go-ahead on the PR (merge = deploy)."
   },
   "stage_change_trigger": {
     "action": "updated_project_request",
