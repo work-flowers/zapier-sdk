@@ -4,7 +4,9 @@ An **accepted project request** in the Zapier **Solution Partner Operations Tool
 
 Third workflow against the same private partner app. Its siblings are [`register-zapier-partner-lead`](../register-zapier-partner-lead/) (push a company *to* Zapier as a referral lead) and [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/) (track what Zapier does with it). This one runs the other way: an inbound opportunity Zapier hands *us*.
 
-**Status:** ✅ Published and enabled, but ⚠️ **acceptances do not reach it automatically** — the 2026-08-18 trigger swap did **not** fix the "fires once, at `Pending`" problem it was meant to solve, so an accepted request has to be filed by a manual replay. Confirmed 2026-08-24 against a real acceptance (Commercial Laundry Solutions). See [⚠️ 2026-08-24: the swap did not fix acceptance delivery](#-2026-08-24-the-swap-did-not-fix-acceptance-delivery--acceptances-still-must-be-filed-by-hand) before trusting this Zap to fire on its own.
+**Status:** ✅ Published and enabled. 🎉 **2026-09-14: the trigger fired automatically on a real `Pending → Accepted` transition for the first time** (Well Organised, request `02700000000006L00hE`) — the `Pending` poll at 06:04Z skipped on the sentinel, and a *second* run fired at 06:32Z carrying the accepted identity. This is the first confirmation that **SPOT `1.5.2` fixed the dedupe defect** that had made acceptances undeliverable — the whole reason for the manual-replay workaround below. **However that run failed** on a workflow bug (`First Contacted` — a Contacts property that does not exist), now fixed; see [The First Contacted bug](#the-first-contacted-bug-2026-09-14). Well Organised must be re-filed once the fix deploys. **The [reconciliation sweep](../spot-accepted-sweep-to-notion/) backstop can now be retired** — a real acceptance has been observed to fire this trigger — but only *after* Well Organised is filed and the fix is live (the sweep shared the same `First Contacted` bug, also now fixed).
+
+Historically (before 1.5.2) ⚠️ **acceptances did not reach it automatically** — the 2026-08-18 trigger swap did **not** fix the "fires once, at `Pending`" problem, so accepted requests were filed by manual replay. Confirmed 2026-08-24 against Commercial Laundry Solutions. See [⚠️ 2026-08-24: the swap did not fix acceptance delivery](#-2026-08-24-the-swap-did-not-fix-acceptance-delivery--acceptances-still-must-be-filed-by-hand) for the full history.
 
 **Zapier shipped a fix — re-pinning `1.5.1 → 1.5.2` (2026-08-26):** the `1.5.0 → 1.5.1` pin was a confirmed dead end (Zapier Product Escalations verified 1.5.1 keeps the same dedupe field), but they then **merged and approved a fix** (ticket `9NPEKP-739EJ`), and SPOT app **`1.5.2`** appeared — almost certainly carrying it. This change re-pins the trigger to `@1.5.2` by editing `trigger.selected_api` and letting the merge pipeline republish (a `zap.json` trigger change is compared against the deployed trigger and the declared one wins — the sanctioned, no-CLI way to change a trigger). **Still unverified on our deployment** until the next real `Pending → Accepted` fires a run; per Zapier's cutover note the workflow is toggled off→on after re-pin to reset the polling dedupe table. The **[reconciliation sweep](../spot-accepted-sweep-to-notion/)** (live, **daily** — trimmed from hourly 2026-08-26 to save tasks) **stays enabled as the backstop** until a real acceptance is observed to fire this trigger — only then is the sweep retired. The manual-replay runbook below remains for immediate one-offs.
 
@@ -60,8 +62,25 @@ When an acceptance email arrives but no Deal appears, file it by hand. The durab
 
 ### Filed by replay
 
-- **Commercial Laundry Solutions** `02700000000003A00hE`, accepted 2026-08-24 23:06:50Z. Replayed 23:53Z (durable run `01a03631-0f37-…`). Reused the existing Company `3c691b07-11ac-81ea-…` (Copperwood Holdings Pty Ltd t/a Commercial Laundry Solutions, `COM-812`, matched via the contact relation) and Contact `3c691b07-11ac-8154-…` (Leonard Mwenda, matched via the email Table); filled its blank Last Name / Country / Lead Source / First Contacted; created Deal `3c691b07-11ac-8174-…` at `Lead`; wrote the dedupe row. The enriched Company + Contact already existed because the introduction email had been processed by the email→CRM pipeline ~30 min after acceptance — only the Deal was missing, since creating it is this Zap's job alone.
+- **Commercial Laundry Solutions** `02700000000003A00hE`, accepted 2026-08-24 23:06:50Z. Replayed 23:53Z (durable run `01a03631-0f37-…`). Reused the existing Company `3c691b07-11ac-81ea-…` (Copperwood Holdings Pty Ltd t/a Commercial Laundry Solutions, `COM-812`, matched via the contact relation) and Contact `3c691b07-11ac-8154-…` (Leonard Mwenda, matched via the email Table); filled its blank Last Name / Country / Lead Source (the run's `filled` list also named `First Contacted`, but that property does not exist on Contacts — see [The First Contacted bug](#the-first-contacted-bug-2026-09-14); the patch path evidently tolerated the non-existent key where the create path did not); created Deal `3c691b07-11ac-8174-…` at `Lead`; wrote the dedupe row. The enriched Company + Contact already existed because the introduction email had been processed by the email→CRM pipeline ~30 min after acceptance — only the Deal was missing, since creating it is this Zap's job alone.
 - **Yanolja Cloud Solution** `02700000000002X00hE`, accepted 2026-08-18 — filed by manual replay the same day (durable run `01a014b3-ea87-…`). This was originally read as a one-off caused by the *old* trigger; the Commercial Laundry case shows it is the steady-state behaviour of the swapped trigger too.
+
+## The First Contacted bug (2026-09-14)
+
+The first request the trigger ever delivered on acceptance — **Well Organised** (`02700000000006L00hE`, Charlie Evans, `charlie@wellorganised.com.au`), a Directory match accepted 2026-09-14 06:31Z — **failed at the `contact-create` step**:
+
+```
+Action execution failed: First Contacted is not a property that exists.
+  (NotionCLIAPI / create_database_item, step "contact-create")
+```
+
+`resolveContact`'s create path wrote `properties|||First Contacted|||date__start`, and the patch path wrote a `First Contacted` date, but **Contacts has no such property.** The live data-source schema (`21991b07-11ac-81a6-a894-000be4a09a67`) carries only `Last Contacted`, a read-only formula — there is no writable "first contacted" date field. The property was one of the `properties|||…` key forms listed as *unproven* below; every prior run had either skipped (no email) or reused an existing contact, so the create path was never exercised until a real acceptance was finally delivered. Fixed by removing both writes; `created_on` is still captured on the dedupe Table and the Deal page body.
+
+**The sibling sweep [`spot-accepted-sweep-to-notion`](../spot-accepted-sweep-to-notion/) shared the identical bug** (same `resolveContact` code) and was fixed in the same change. It runs daily at 01:00Z and had not yet reached Well Organised (accepted at 06:31Z, after that day's sweep), so it never actually failed on it — but its next run would have.
+
+### State left behind, and the re-file
+
+The failed run created the **Company** (`Well Organised`, `3db91b07-11ac-8136-…`) before dying at contact-create; **no Contact, no Deal, no dedupe row** were written (the dedupe row is written last). So Well Organised must be re-filed once the fix is live. On replay `resolveCompany` should **reuse** the existing Company via the live Website query (path 3), not mint a second — verify `companyVia` in the run output and delete the orphan if a duplicate appears.
 
 ## The first run
 
@@ -242,8 +261,9 @@ Claiming the new trigger banks its first poll as already-seen — the three hist
 | `Primary Phone` | the request's phone number | **only if empty** |
 | `Country` (select) | the request, as a **full name** | **only if empty.** `United States` stays `United States` here — the opposite of Companies |
 | `Lead Source` | `Zapier Partner Directory` | **only if empty** — it records how we *first* met someone, so an earlier value is the truer one |
-| `First Contacted` | the request's `created_on` | **only if empty** |
 | `Related Company` | the resolved company | **unioned**, never replaced |
+
+There is deliberately **no `First Contacted` write.** An earlier revision wrote the request's `created_on` to a `First Contacted` date property, but that property does not exist on Contacts (the live schema's only "Contacted" field is `Last Contacted`, a read-only formula). It cost the first real create — see [The First Contacted bug](#the-first-contacted-bug-2026-09-14). The request's `created_on` is still preserved on the dedupe Table (`Created On`) and the Deal page body.
 
 `Zapier Partner Directory` was already an option on `Lead Source` before this workflow existed — the flow was manual. Nothing new is minted.
 
@@ -295,7 +315,7 @@ Two things, and both resolve themselves on the first real request.
 
 **1. The payload key spellings.** The field *set* is evidenced (above), but the snake_case keys SPOT uses are inferred, so `extractRequest` reads each field from a candidate list. A miss leaves a property empty rather than writing a wrong value, and the raw payload is preserved three ways — the Deal page body, the request Table's `Payload` column, and the run output — so the true spellings are readable off the first run without opening Notion.
 
-**2. The `properties|||<name>|||<type>` key forms** for `Primary Phone` (`phone_number`), `Country` (`select`, on both data sources), `Account Owner Email Override` (`email`) and `First Contacted` (`date__start`). These go through `create_database_item`'s **cached** schema, which is the staleness that pushed both sibling workflows onto the raw Notion API for *updates*. Creates still need the action, because it is what applies the default template (repo rule 5).
+**2. ~~The `properties|||<name>|||<type>` key forms~~ — largely resolved 2026-09-14.** The Well Organised acceptance run exercised the create path for the first time: the **Company create succeeded** (proving `Company Name`/`Website`/`Size`/`Country`/`Industry`/`Account Owner Email Override`/`Zapier Client Id` on Companies), and the **Contact create failed on `First Contacted` only** — which proved the cached schema *is* consulted and the property genuinely does not exist (see [The First Contacted bug](#the-first-contacted-bug-2026-09-14)). `First Contacted` is now removed. Still not directly exercised: `Primary Phone` (the payload carried none) and the Deals create (never reached). Both use key forms already proven by other Zaps in this repo.
 
 An attempt was made to prove those key forms without writing anything, by resolving the action's `dynamic_properties_schema` for each data source. It came back **empty** — which means the Zapier MCP server's own Notion connection cannot see Core CRM Objects, **not** that the keys are wrong. The forms themselves (`title`, `rich_text`, `select`, `email`, `phone_number`, `url`, `checkbox`, `relation`, `date__start`) are all used by other Zaps in this repo; what is unverified is whether the cache lists these *specific properties* for these data sources.
 
@@ -307,7 +327,7 @@ When the first request lands, three things are worth two minutes:
 2. **Compare the Deal page's "Raw request payload" block against the mapped properties.** An empty property next to a populated payload key means a candidate spelling missed — fix `extractRequest` and republish.
 3. **Confirm no new select option appeared** on Companies `Country` / `Industry` / `Size`, or Contacts `Country`. Nothing should have been minted; that is what the exact-match rules are for.
 
-If you would rather not wait, a smoke test costs one run and writes real records — see [`zap.json`](zap.json) → `first_run` and `still_unproven`. Use a payload that reaches the main path (a request id *and* a real email); a skip-path test proves nothing about the code after the guard, which is how `drive-invoice-to-xero` shipped a bug that killed 100% of its runs. **The one real run so far was a skip-path run**, so everything past the email guard — company resolution, contact resolution, deal creation, the `properties|||…` key forms — is still entirely unexercised. Then delete the Deal and its Table row.
+If you would rather not wait, a smoke test costs one run and writes real records — see [`zap.json`](zap.json) → `first_run` and `still_unproven`. Use a payload that reaches the main path (a request id *and* a real email); a skip-path test proves nothing about the code after the guard, which is how `drive-invoice-to-xero` shipped a bug that killed 100% of its runs. **The Well Organised acceptance (2026-09-14) was the first main-path run** — it created the Company but died at contact-create on the `First Contacted` bug (now fixed), so contact resolution, deal creation and the dedupe row are still unexercised until the re-file. Then delete the Deal and its Table row.
 
 ## How it was published
 
@@ -328,7 +348,7 @@ To republish after a change, the CLI path in the sibling READMEs applies unchang
 - **The company domain is dropped for consumer mailboxes.** A `@gmail.com` requester's email host is the mailbox provider's, not their employer's; treating it as a domain would file every Gmail requester under a company called Gmail. The freemail list is copied from `enrich-contact-records`, which asks the same question. Such a request still resolves a company if the requester is already in the CRM (path 2) or named a website.
 - **An existing contact is only ever filled in, never overwritten.** Someone curated those fields; a lead form did not. `Related Company` is unioned for the same reason — a person can legitimately sit against more than one company.
 - **A skip is a `return`, not a `throw`.** No email, or a request already filed, are permanent conditions; throwing would spin the durable's retry loop to no purpose. The one place that *does* throw is the dedupe read, and the Deal create.
-- **No `new Date` anywhere.** `First Contacted` comes from the payload's own `created_on`, which is both deterministic and truer than "when this Zap happened to run" — so this workflow needs no clock read at all, and cannot hit the `DeterminismViolation` that cost `drive-invoice-to-xero` 100% of its runs.
+- **No `new Date` anywhere.** The only date this workflow stores — the dedupe Table's `Created On` — comes from the payload's own `created_on`, which is both deterministic and truer than "when this Zap happened to run" — so this workflow needs no clock read at all, and cannot hit the `DeterminismViolation` that cost `drive-invoice-to-xero` 100% of its runs.
 - **Ambiguity is never resolved by picking.** Two companies on one domain, or a contact linked to several companies, both fall through rather than choosing.
 
 ## Open questions

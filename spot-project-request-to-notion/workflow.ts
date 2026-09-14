@@ -1023,9 +1023,6 @@ async function resolveContact(
       if (!props["Lead Source"]?.select) {
         patch["Lead Source"] = { select: { name: CONTACT_LEAD_SOURCE } };
       }
-      if (req.createdOn && !props["First Contacted"]?.date) {
-        patch["First Contacted"] = { date: { start: req.createdOn } };
-      }
       // Relations are unioned, never replaced: a contact may legitimately sit
       // against more than one company.
       if (companyPageId) {
@@ -1067,9 +1064,6 @@ async function resolveContact(
   const newContactCountry = matchOption(req.country, CONTACT_COUNTRY_OPTIONS);
   if (newContactCountry) {
     props["properties|||Country|||select"] = newContactCountry;
-  }
-  if (req.createdOn) {
-    props["properties|||First Contacted|||date__start"] = req.createdOn;
   }
   if (companyPageId) {
     props["properties|||Related Company|||relation"] = [companyPageId];
