@@ -3,7 +3,9 @@
 // Peter's copy of scw-events-to-workflowers-block (Dennis's), repointed at
 // Peter's two calendars, Peter's connections and Peter's own GCal Sync Map
 // table. The logic is deliberately identical — only the constants below and
-// the names differ — so a fix in either file can be ported by diff.
+// the names differ — so a fix in either file can be ported by diff, with ONE
+// deliberate deviation: SCW Focus time / Out of office / working-location
+// events are never mirrored (see EXCLUDED_SOURCE_EVENT_TYPES).
 //
 // One half of the two-way calendar-blocking pair (the other half is
 // workflowers-events-to-scw-busy-peter; gcal-block-sweep-peter is the shared horizon
@@ -54,6 +56,18 @@ const SYNC_MAP_TABLE = "01M2HT9XPZEASFV09J4A3QTDGT";
 const SYNC_MARKER = "[gcal-block]";
 
 /**
+ * PETER-SPECIFIC DEVIATION from Dennis's copy (decided by Peter 2026-09-15):
+ * Google's special event types on the SCW calendar — Focus time
+ * (`focusTime`), Out of office (`outOfOffice`, which is also what Peter's
+ * recurring "Unavailable on Fridays" is) and working-location markers
+ * (`workingLocation`) — are NEVER mirrored to work.flowers, full stop.
+ * Matched on Google's `eventType`, not on the title, so a renamed block stays
+ * excluded and a real meeting that merely mentions "out of office" is not.
+ * Applies to the SCW -> wf direction only (Dennis's copy has no such rule).
+ */
+const EXCLUDED_SOURCE_EVENT_TYPES = new Set(["focusTime", "outOfOffice", "workingLocation"]);
+
+/**
  * Mirror only occurrences starting within this window. `expand_recurring:
  * true` expands an open-ended weekly series ~14 years out (730 instances in
  * one observed poll), so an unguarded create path would burn ~700 tasks on a
@@ -94,6 +108,7 @@ const InputSchema = z
     summary: z.string().optional().nullable(),
     description: z.string().optional().nullable(),
     transparency: z.string().optional().nullable(),
+    eventType: z.string().optional().nullable(),
     updated: z.string().optional().nullable(),
     recurringEventId: z.string().optional().nullable(),
     start: EventTimeSchema.optional().nullable(),
@@ -294,22 +309,27 @@ const workflow = defineDurable<Input, unknown>(
     const activeMirrorId = row && row.status === "active" ? row.mirrorEventId : null;
 
     // Delete the mirror when the source is gone or stops deserving a block:
-    // cancelled, turned all-day (start.date instead of dateTime), marked Free,
-    // or declined by Peter after previously being mirrored.
+    // cancelled, turned all-day (start.date instead of dateTime), turned into
+    // Focus time / OOO (Peter-specific), marked Free, or declined by Peter
+    // after previously being mirrored.
     const selfDeclined = (event.attendees ?? []).some(
       (a) => a?.self === true && firstString(a.responseStatus) === "declined",
     );
     const transparent = firstString(event.transparency) === "transparent";
     const notTimed = !startDateTime || !endDateTime;
+    // Peter-specific: Focus time / OOO / working location are never block-worthy here.
+    const excludedType = EXCLUDED_SOURCE_EVENT_TYPES.has(firstString(event.eventType) ?? "");
     const skipReason = cancelled
       ? "event-cancelled"
       : notTimed
         ? "not-a-timed-event"
-        : transparent
-          ? "event-is-free"
-          : selfDeclined
-            ? "declined-by-self"
-            : null;
+        : excludedType
+          ? "excluded-event-type"
+          : transparent
+            ? "event-is-free"
+            : selfDeclined
+              ? "declined-by-self"
+              : null;
 
     if (skipReason) {
       if (!activeMirrorId) {

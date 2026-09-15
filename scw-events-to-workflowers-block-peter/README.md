@@ -1,6 +1,6 @@
 # scw-events-to-workflowers-block-peter
 
-**Peter's copy of [`scw-events-to-workflowers-block`](../scw-events-to-workflowers-block/)** — the same workflow, repointed at Peter's two Google Calendars, Peter's two connections and Peter's own **GCal Sync Map (Peter)** Zapier Table. The logic is deliberately identical to Dennis's file (only the constants block and the names differ), so a fix in either copy should be ported to the other by diff. Read the original's README for the full war stories; this one records what is specific to Peter's deployment.
+**Peter's copy of [`scw-events-to-workflowers-block`](../scw-events-to-workflowers-block/)** — the same workflow, repointed at Peter's two Google Calendars, Peter's two connections and Peter's own **GCal Sync Map (Peter)** Zapier Table. The logic is identical to Dennis's file apart from the constants block, the names and **one deliberate deviation** (Focus time / Out of office are never mirrored — see below), so a fix in either copy should be ported to the other by diff. Read the original's README for the full war stories; this one records what is specific to Peter's deployment.
 
 One half of the two-way calendar-blocking pair between Peter's two calendars. Watches **pgao@securecodewarrior.com** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **peter@work.flowers** **with its full title**, so Peter's SCW meetings visibly block work.flowers time — and so Dennis can see Peter's availability when booking joint meetings. As on Dennis's pair, this trigger only ever sees an occurrence once (Zapier durables dedupe on the raw event id — ticket W6ZE93-VMEWP) and never receives cancellations (`expand_recurring: true` drops them), so the update/delete branches are belts: every later move, rename, decline or Free/all-day switch is propagated by [`gcal-block-sweep-peter`](../gcal-block-sweep-peter/), and deletions by [`scw-cancellations-to-workflowers-unblock-peter`](../scw-cancellations-to-workflowers-unblock-peter/).
 
@@ -15,7 +15,7 @@ flowchart TD
     G1 -- no --> G2{{Table: id found as\nMirror Event ID?}}
     G2 -- yes --> S2[skip: created-by-sync]
     G2 -- no --> L{{Table: mapping row for\nid + scw_to_wf?}}
-    L --> C{cancelled / all-day /\nfree / declined?}
+    L --> C{cancelled / all-day / focus-time or\nOOO type / free / declined?}
     C -- "yes, active mirror" --> D[delete_event mirror on\npeter@work.flowers] --> DR[(row: Status=deleted)]
     C -- "yes, no mirror" --> S3[skip]
     C -- no --> H{no mirror yet and start\n> 30d after updated?}
@@ -34,6 +34,7 @@ flowchart TD
 
 ## What is Peter-specific
 
+- **Deliberate deviation from Dennis's copy — Focus time / Out of office are never mirrored.** Decided by Peter on 2026-09-15: SCW events whose Google `eventType` is `focusTime`, `outOfOffice` (which is also what Peter's recurring "Unavailable on Fridays" is) or `workingLocation` are skipped as `excluded-event-type`, and an existing mirror whose source turns into one of those types is deleted like any other skip-worthy transition. Matched on `eventType`, deliberately not on the title. This is the **only** logic difference from `scw-events-to-workflowers-block`; `gcal-block-sweep-peter` carries the same rule in its `scw_to_wf` direction so the two agree. Verified 2026-09-15: a `focusTime` and an `outOfOffice` payload both skipped, a `default` one still mirrored.
 - **Calendars**: source `pgao@securecodewarrior.com`, destination `peter@work.flowers`.
 - **Connections**: the trigger carries Peter's SCW Google Calendar connection; `gcal_wf` is Peter's work.flowers connection. Neither is one of Dennis's (`02cb5353-…` / `02a752ba-…`) — see `zap.json`.
 - **Table**: `GCal Sync Map (Peter)`, identical 8-column schema (`Source Event ID` f1 … `Source Updated` f8).
@@ -57,5 +58,8 @@ flowchart TD
 | Description carrying the `[gcal-block]` marker | `skipped: sync-artifact-not-mirrored` |
 | Occurrence starting 90 days out | `skipped: beyond-horizon` |
 | Self `responseStatus: declined` | `skipped: declined-by-self` |
+| `eventType: focusTime` ("Focus time") | `skipped: excluded-event-type` — Peter-specific |
+| `eventType: outOfOffice` ("Unavailable on Fridays") | `skipped: excluded-event-type` — Peter-specific |
+| `eventType: default` meeting after the exclusion was added | still `created: true` (mirror + row), then removed again by the cancellation Zap |
 
 The all-day and `transparent` skips share their code with [`workflowers-events-to-scw-busy-peter`](../workflowers-events-to-scw-busy-peter/), where they were exercised the same day. The test mirror and its row were then removed by the [`scw-cancellations-to-workflowers-unblock-peter`](../scw-cancellations-to-workflowers-unblock-peter/) tests and a `delete-table-records`, so the table starts empty at cutover.

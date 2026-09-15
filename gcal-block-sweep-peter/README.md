@@ -1,6 +1,6 @@
 # gcal-block-sweep-peter
 
-**Peter's copy of [`gcal-block-sweep`](../gcal-block-sweep/)** — the same workflow, repointed at Peter's two Google Calendars, Peter's two connections and Peter's own **GCal Sync Map (Peter)** Zapier Table (`01M2HT9XPZEASFV09J4A3QTDGT`). The logic is deliberately identical to Dennis's file (only the constants block and the names differ), so a fix in either copy should be ported to the other by diff. The original's README carries the full account of *why* every pass exists; this one records what is specific to Peter's deployment.
+**Peter's copy of [`gcal-block-sweep`](../gcal-block-sweep/)** — the same workflow, repointed at Peter's two Google Calendars, Peter's two connections and Peter's own **GCal Sync Map (Peter)** Zapier Table (`01M2HT9XPZEASFV09J4A3QTDGT`). The logic is identical to Dennis's file apart from the constants block, the names and **one deliberate deviation** (in the `scw_to_wf` direction, SCW Focus time / Out of office / working-location events are never mirrored — see below), so a fix in either copy should be ported to the other by diff. The original's README carries the full account of *why* every pass exists; this one records what is specific to Peter's deployment.
 
 Daily horizon backstop, **coming-week reconciler**, and manual cutover backfill for Peter's two-way calendar-blocking pair ([`scw-events-to-workflowers-block-peter`](../scw-events-to-workflowers-block-peter/) / [`workflowers-events-to-scw-busy-peter`](../workflowers-events-to-scw-busy-peter/)).
 
@@ -12,7 +12,7 @@ flowchart TD
     T[Trigger: Schedule everyDay 7:00 AM\ntick id = RFC 3339 fire time = 'now'] --> W[search plan = create window now+23d..30d\n∪ reconcile window now..now+7d\nor manual from_days/to_days/reconcile_days\nmerged, sliced into 7-day chunks]
     W --> D1[direction scw_to_wf:\nevent_v2 search on pgao@securecodewarrior.com]
     W --> D2[direction wf_to_scw:\nevent_v2 search on peter@work.flowers]
-    D1 --> F{per event: cancelled / all-day / free /\ndeclined / sync artifact / 'Busy'?}
+    D1 --> F{per event: cancelled / all-day / free /\ndeclined / sync artifact / 'Busy' /\nSCW focus-time or OOO type?}
     D2 --> F
     F -- yes --> SK[skip, counted]
     F -- no --> M{{Table: created-by-sync,\nor row already ACTIVE?}}
@@ -51,6 +51,7 @@ The scheduled tick needs no input. Manual runs (`trigger-workflow <workflow-id> 
 
 ## What is Peter-specific
 
+- **Deliberate deviation from Dennis's copy — SCW Focus time / Out of office are never mirrored.** Decided by Peter on 2026-09-15: in the `scw_to_wf` direction, events whose Google `eventType` is `focusTime`, `outOfOffice` (Peter's recurring "Unavailable on Fridays" included) or `workingLocation` are skipped as `excluded-event-type` by the create pass, and the reconcile pass unmirrors an already-mirrored occurrence whose source has turned into one of those types. Same rule as in [`scw-events-to-workflowers-block-peter`](../scw-events-to-workflowers-block-peter/), so the two never disagree. The `wf_to_scw` direction is untouched.
 - **Calendars / connections**: `gcal_wf` = Peter's work.flowers Google Calendar connection, `gcal_scw` = Peter's SCW one — never Dennis's ids. Both are read (`event_v2` window search on the source side) and written (`detailed_event` on the destination side).
 - **`TABLE_START_UTC_OFFSET_MINUTES`** — the per-day reconcile row lookup filters `Start` (f5) on its `YYYY-MM-DD` prefix, and f5 is stored exactly as Google returned `start.dateTime`, in the calendar's own zone. Dennis's copy hard-codes `+08:00` (Asia/Singapore), and **the same value is correct for Peter**: a read-only `event_v2` probe of `pgao@securecodewarrior.com` on 2026-09-15 returned every `start.dateTime` with a `+08:00` offset, including events whose own `timeZone` is Australia/Sydney or Asia/Kolkata — Zapier renders them in the calendar's zone. Re-verify if Peter's calendar timezone ever changes; a wrong offset is not fatal (the window is a week wide and the sweep runs daily), it just costs a day of latency around midnight.
 - **Trigger**: `ScheduleCLIAPI@1.7.0` `everyDay` at 7:00 AM account time, weekends included — same tick as Dennis's, so both sweeps run together.
@@ -71,4 +72,6 @@ The scheduled tick needs no input. Manual runs (`trigger-workflow <workflow-id> 
 | --- | --- |
 | Manual `{"from_days":0,"to_days":30,"reconcile_days":30,"dryRun":true}` (run-durable, 2026-09-15 06:13Z, pre-publish, durable run `01a0a3b3-49d4-7ae4-b9cf-b0c6403a8fd1`, empty table apart from one test row) | Clean finish in 8½ minutes, nothing written. `scw_to_wf`: **85 events** in the 30-day window, **62 would be mirrored** onto work.flowers (18× *Focus time*, 18× *AI COE: MCP Daily Sync*, 9× *Out of office*, 4× *Unavailable on Fridays*, 4× *MCP sync*, 4× *AI COE - Weekly Long Sync*, 4× *Weekly - Peter / Jaap*, 1× *LP Team <> MCP - Follow up #3*), 23 skipped as `free`. `wf_to_scw`: **7 events**, **6 would become Busy blocks** on SCW, 1 skipped as `sync-artifact` (the scw→wf test mirror). Reconcile pass: 1 active row checked (the scw→wf test row, whose synthetic source id exists on no calendar) → `event_by_id` fallback ran once, returned nothing → reported as **1 orphan**, exactly the path a truncated series relies on. Neither direction came near the 100-event trust cap. |
 
-Those 62 + 6 mirrors are what the real backfill will create at cutover — about 68 tasks, then steady state.
+| Same manual dryRun **after the Focus time / OOO exclusion** (2026-09-15 07:19Z, durable run `01a0a3dc-072b-7cad-9799-a33ee761b14c`) | Clean finish, nothing written. `scw_to_wf`: same 85 events, now **31 would be mirrored** (18× *AI COE: MCP Daily Sync*, 4× *MCP sync*, 4× *AI COE - Weekly Long Sync*, 4× *Weekly - Peter / Jaap*, 1× *LP Team <> MCP - Follow up #3*) and **54 skipped as `excluded-event-type`** — every *Focus time*, *Out of office*, *Unavailable on Fridays* and *Home* entry (the 23 *Home* working-location markers used to fall out as `free`; the type check now catches them first). `wf_to_scw` unchanged: 7 events, 6 would become Busy blocks. Reconcile again found the one synthetic test row as an orphan. |
+
+Those **31 + 6** mirrors are what the real backfill will create at cutover — about 37 tasks, then steady state.

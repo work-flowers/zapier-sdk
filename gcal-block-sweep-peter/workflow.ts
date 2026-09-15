@@ -3,7 +3,11 @@
 // Peter's copy of gcal-block-sweep (Dennis's), repointed at Peter's two
 // calendars, Peter's connections and Peter's own GCal Sync Map table. The
 // logic is deliberately identical — only the constants below and the names
-// differ — so a fix in either file can be ported by diff. That includes the
+// differ — so a fix in either file can be ported by diff, with ONE deliberate
+// deviation: in the scw_to_wf direction, SCW Focus time / Out of office /
+// working-location events are never mirrored (EXCLUDED_SOURCE_EVENT_TYPES;
+// the reconcile pass also unmirrors one that turns into such a type). That
+// diffability includes the
 // `cleanup_notion_blocks` mode, which is inert here: Peter never used Notion
 // Calendar's blocking, so its self-organised "Event blocked with" match can
 // find nothing on Peter's SCW calendar.
@@ -67,6 +71,18 @@ const SCW_CALENDAR = "pgao@securecodewarrior.com";
 /** See scw-events-to-workflowers-block-peter/workflow.ts for the column map. */
 const SYNC_MAP_TABLE = "01M2HT9XPZEASFV09J4A3QTDGT";
 const SYNC_MARKER = "[gcal-block]";
+
+/**
+ * PETER-SPECIFIC DEVIATION from Dennis's copy (decided by Peter 2026-09-15):
+ * Google's special event types on the SCW calendar — Focus time
+ * (`focusTime`), Out of office (`outOfOffice`, which is also what Peter's
+ * recurring "Unavailable on Fridays" is) and working-location markers
+ * (`workingLocation`) — are NEVER mirrored to work.flowers, full stop.
+ * Matched on Google's `eventType`, not on the title, so a renamed block stays
+ * excluded and a real meeting that merely mentions "out of office" is not.
+ * Applies to the SCW -> wf direction only (Dennis's copy has no such rule).
+ */
+const EXCLUDED_SOURCE_EVENT_TYPES = new Set(["focusTime", "outOfOffice", "workingLocation"]);
 
 const DAY_MS = 86400000;
 
@@ -303,6 +319,7 @@ const FoundEventSchema = z
     summary: z.string().optional().nullable(),
     description: z.string().optional().nullable(),
     transparency: z.string().optional().nullable(),
+    eventType: z.string().optional().nullable(),
     updated: z.string().optional().nullable(),
     start: EventTimeSchema.optional().nullable(),
     end: EventTimeSchema.optional().nullable(),
@@ -368,6 +385,8 @@ function hasRow(result: unknown): MappingRow | null {
 function classifySkip(event: FoundEvent, mode: "title" | "busy"): string | null {
   if (firstString(event.status) === "cancelled") return "cancelled";
   if (!firstString(event.start?.dateTime) || !firstString(event.end?.dateTime)) return "not-timed";
+  // Peter-specific: only the scw_to_wf ("title") direction reads the SCW calendar.
+  if (mode === "title" && EXCLUDED_SOURCE_EVENT_TYPES.has(firstString(event.eventType) ?? "")) return "excluded-event-type";
   if (firstString(event.transparency) === "transparent") return "free";
   const declined = (event.attendees ?? []).some(
     (a) => a?.self === true && firstString(a.responseStatus) === "declined",

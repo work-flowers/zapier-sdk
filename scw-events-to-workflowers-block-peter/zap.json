@@ -8,7 +8,7 @@
   "deploy": {
     "state": "pending-create",
     "workflow_name": "scw-events-to-workflowers-block-peter",
-    "description": "Peter's copy of scw-events-to-workflowers-block. One half of the two-way calendar-blocking pair for Peter's calendars (with workflowers-events-to-scw-busy-peter; gcal-block-sweep-peter is the horizon backstop). Mirrors every timed, busy, non-declined event on the pgao@securecodewarrior.com Google Calendar onto peter@work.flowers WITH ITS FULL TITLE, keyed through Peter's own GCal Sync Map table so updates move/rename the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out (expand_recurring fires an open-ended series ~14 years ahead); the sweep fills those in as they approach.",
+    "description": "Peter's copy of scw-events-to-workflowers-block. One half of the two-way calendar-blocking pair for Peter's calendars (with workflowers-events-to-scw-busy-peter; gcal-block-sweep-peter is the horizon backstop). Mirrors every timed, busy, non-declined event on the pgao@securecodewarrior.com Google Calendar onto peter@work.flowers WITH ITS FULL TITLE, keyed through Peter's own GCal Sync Map table so updates move/rename the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out (expand_recurring fires an open-ended series ~14 years ahead); the sweep fills those in as they approach. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): SCW events whose Google eventType is focusTime, outOfOffice or workingLocation (Focus time, Out of office, 'Unavailable on Fridays', 'Home') are never mirrored, and an existing mirror is deleted if its source turns into one of those types.",
     "enable_on_publish": true
   },
   "trigger": {
@@ -37,5 +37,14 @@
     "01M2HT9XPZEASFV09J4A3QTDGT": "GCal Sync Map (Peter) — source occurrence id -> mirror event id, both directions. SHARED with workflowers-events-to-scw-busy-peter, the two -cancellations- companions and gcal-block-sweep-peter, and with NOTHING of Dennis's: a table shared across the two people would cross-contaminate loop guards and mirror maps. Same 8-column schema as Dennis's GCal Sync Map: Source Event ID (f1), Mirror Event ID (f2), Direction (f3, scw_to_wf|wf_to_scw), Status (f4, active|deleted), Start (f5), End (f6), Summary (f7), Source Updated (f8)."
   },
   "replicates": "scw-events-to-workflowers-block",
-  "description": "Peter's copy: mirror Peter's SCW calendar events onto Peter's work.flowers calendar with full titles, so SCW meetings visibly block work.flowers time. Creates, moves, renames and deletes the mirror in step with the source."
+  "description": "Peter's copy: mirror Peter's SCW calendar events onto Peter's work.flowers calendar with full titles, so SCW meetings visibly block work.flowers time. Creates, moves, renames and deletes the mirror in step with the source. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): SCW events whose Google eventType is focusTime, outOfOffice or workingLocation (Focus time, Out of office, 'Unavailable on Fridays', 'Home') are never mirrored, and an existing mirror is deleted if its source turns into one of those types.",
+  "peter_deviation": {
+    "decided": "2026-09-15 by Peter",
+    "rule": "never mirror SCW eventType in {focusTime, outOfOffice, workingLocation} to work.flowers; matched on Google's eventType, not the title",
+    "applies_to": "scw_to_wf only",
+    "mirrored_in": [
+      "scw-events-to-workflowers-block-peter",
+      "gcal-block-sweep-peter"
+    ]
+  }
 }

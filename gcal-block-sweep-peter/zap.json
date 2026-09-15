@@ -8,7 +8,7 @@
   "deploy": {
     "state": "pending-create",
     "workflow_name": "gcal-block-sweep-peter",
-    "description": "Peter's copy of gcal-block-sweep. Daily horizon backstop, coming-week reconciler and manual backfill for Peter's two-way calendar-blocking pair (scw-events-to-workflowers-block-peter / workflowers-events-to-scw-busy-peter). Those Zaps refuse to create mirrors for occurrences starting more than 30 days out, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own — so this sweep scans the week rolling INTO the horizon (days 23..30) each morning, in both directions, and creates any mirror Peter's GCal Sync Map table says is missing. It also reconciles the coming week (days 0..7), which is where every change to an already-mirrored occurrence propagates: source gone/cancelled or no longer block-worthy (declined, Free, all-day) -> delete the mirror and mark the row deleted; source moved or renamed -> update the mirror and refresh the row; a row previously marked deleted whose source is block-worthy again is revived. Manual runs take a window override for the cutover backfill ({\"from_days\":0,\"to_days\":30}), a reconcile_days override (0 disables) and a dryRun flag. The inherited cleanup_notion_blocks flag is inert for Peter.",
+    "description": "Peter's copy of gcal-block-sweep. Daily horizon backstop, coming-week reconciler and manual backfill for Peter's two-way calendar-blocking pair (scw-events-to-workflowers-block-peter / workflowers-events-to-scw-busy-peter). Those Zaps refuse to create mirrors for occurrences starting more than 30 days out, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own — so this sweep scans the week rolling INTO the horizon (days 23..30) each morning, in both directions, and creates any mirror Peter's GCal Sync Map table says is missing. It also reconciles the coming week (days 0..7), which is where every change to an already-mirrored occurrence propagates: source gone/cancelled or no longer block-worthy (declined, Free, all-day) -> delete the mirror and mark the row deleted; source moved or renamed -> update the mirror and refresh the row; a row previously marked deleted whose source is block-worthy again is revived. Manual runs take a window override for the cutover backfill ({\"from_days\":0,\"to_days\":30}), a reconcile_days override (0 disables) and a dryRun flag. The inherited cleanup_notion_blocks flag is inert for Peter. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): in the scw_to_wf direction, SCW events whose Google eventType is focusTime, outOfOffice or workingLocation are never mirrored, and the reconcile pass unmirrors one whose source has turned into such a type.",
     "enable_on_publish": true
   },
   "trigger": {
@@ -39,5 +39,14 @@
     "01M2HT9XPZEASFV09J4A3QTDGT": "GCal Sync Map (Peter) — source occurrence id -> mirror event id, both directions. SHARED with Peter's four trigger Zaps, never with Dennis's: read to skip everything already mapped (free), written with a row for each mirror this sweep creates. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7), Source Updated (f8)."
   },
   "replicates": "gcal-block-sweep",
-  "description": "Peter's copy: daily sweep that mirrors calendar events newly rolling into the 30-day blocking horizon, reconciles the coming week against Peter's source calendars (updating moved/renamed mirrors, deleting mirrors whose occurrence vanished or stopped being block-worthy, reviving ones that are block-worthy again), and doubles as the manual cutover backfill."
+  "description": "Peter's copy: daily sweep that mirrors calendar events newly rolling into the 30-day blocking horizon, reconciles the coming week against Peter's source calendars (updating moved/renamed mirrors, deleting mirrors whose occurrence vanished or stopped being block-worthy, reviving ones that are block-worthy again), and doubles as the manual cutover backfill. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): in the scw_to_wf direction, SCW events whose Google eventType is focusTime, outOfOffice or workingLocation are never mirrored, and the reconcile pass unmirrors one whose source has turned into such a type.",
+  "peter_deviation": {
+    "decided": "2026-09-15 by Peter",
+    "rule": "never mirror SCW eventType in {focusTime, outOfOffice, workingLocation} to work.flowers; matched on Google's eventType, not the title",
+    "applies_to": "scw_to_wf only",
+    "mirrored_in": [
+      "scw-events-to-workflowers-block-peter",
+      "gcal-block-sweep-peter"
+    ]
+  }
 }
