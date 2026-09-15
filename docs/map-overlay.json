@@ -92,6 +92,11 @@
         "whatsapp-slack-bridge",
         "workflowers-cancellations-to-scw-unblock",
         "workflowers-events-to-scw-busy",
+        "gcal-block-sweep-peter",
+        "scw-cancellations-to-workflowers-unblock-peter",
+        "scw-events-to-workflowers-block-peter",
+        "workflowers-cancellations-to-scw-unblock-peter",
+        "workflowers-events-to-scw-busy-peter",
         "slack-thread-to-notion-discussion",
         "notion-comment-to-slack-thread",
         "slack-notion-thread-sync-sweep"
@@ -400,6 +405,12 @@
       "type": "table",
       "id": "01M13QPJ5GRJV33096MBNSN1Q5",
       "name": "GCal Sync Map"
+    },
+    "table:gcal-sync-map-peter": {
+      "type": "table",
+      "id": "01M2HT9XPZEASFV09J4A3QTDGT",
+      "name": "GCal Sync Map (Peter)",
+      "note": "Peter's own copy of the GCal Sync Map — deliberately NOT shared with Dennis's five Zaps, so the two syncs' loop guards and mirror maps cannot cross-contaminate."
     },
     "table:slack-notion-thread-map": {
       "type": "table",
@@ -1506,6 +1517,56 @@
     {
       "from": "workflowers-cancellations-to-scw-unblock",
       "to": "table:gcal-sync-map",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map-peter",
+      "to": "scw-events-to-workflowers-block-peter",
+      "kind": "read"
+    },
+    {
+      "from": "scw-events-to-workflowers-block-peter",
+      "to": "table:gcal-sync-map-peter",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map-peter",
+      "to": "workflowers-events-to-scw-busy-peter",
+      "kind": "read"
+    },
+    {
+      "from": "workflowers-events-to-scw-busy-peter",
+      "to": "table:gcal-sync-map-peter",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map-peter",
+      "to": "gcal-block-sweep-peter",
+      "kind": "read"
+    },
+    {
+      "from": "gcal-block-sweep-peter",
+      "to": "table:gcal-sync-map-peter",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map-peter",
+      "to": "scw-cancellations-to-workflowers-unblock-peter",
+      "kind": "read"
+    },
+    {
+      "from": "scw-cancellations-to-workflowers-unblock-peter",
+      "to": "table:gcal-sync-map-peter",
+      "kind": "write"
+    },
+    {
+      "from": "table:gcal-sync-map-peter",
+      "to": "workflowers-cancellations-to-scw-unblock-peter",
+      "kind": "read"
+    },
+    {
+      "from": "workflowers-cancellations-to-scw-unblock-peter",
+      "to": "table:gcal-sync-map-peter",
       "kind": "write"
     },
     {
