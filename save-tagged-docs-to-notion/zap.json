@@ -1,0 +1,30 @@
+{
+  "name": "save-tagged-docs-to-notion",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": true,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "Save Tagged Docs in Notion",
+    "description": "Readwise Reader 'Document Tags Updated' -> when a document is tagged `sendtonotion`, create an 'Article Share' idea in the Notion Social Content data source. Deduped through a free Zapier Table (Reader document id -> Notion page id) so a document is only ever turned into a page once. Migrated from the classic multi-step Zap of the same name (paused since 2026-08-29).",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "App228555CLIAPI@1.0.3",
+    "action": "document_tag_updated",
+    "authentication_id": "021a17e9-57d7-8909-893a-54a412a1644d",
+    "params": {},
+    "trigger_note": "Readwise Reader 'Document Tags Updated' — a polling (read) trigger with NO input fields; it fires on any tag change to any document, so the `sendtonotion` gate lives in workflow.ts. authentication_id is the Readwise Reader connection (d.chiuten@icloud.com).",
+    "polling_dedup_caveat": "Known open Zapier bug (see CLAUDE.md): durable polling triggers never re-fire for a document id they have already delivered. Adding another tag to a document that previously fired under a different tag may not re-deliver, so a document tagged `sendtonotion` AFTER an earlier unrelated tag edit could be missed. Re-verify when Zapier reports movement on ticket W6ZE93-VMEWP."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  }
+}

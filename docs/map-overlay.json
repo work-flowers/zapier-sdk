@@ -25,6 +25,7 @@
         "notion-blog-post-to-hero-image",
         "notion-contact-to-newsletter-subscriber",
         "notion-newsletter-to-buttondown",
+        "save-tagged-docs-to-notion",
         "update-notion-when-rescheduled-in-buttondown"
       ]
     },
@@ -358,6 +359,20 @@
     "app:luma": {
       "type": "external_app",
       "name": "Luma"
+    },
+    "app:readwise": {
+      "type": "external_app",
+      "name": "Readwise Reader"
+    },
+    "table:readwise-reader-docs": {
+      "type": "table",
+      "id": "01KKNC03EA4Z5Y0KR8H6TP2A8K",
+      "name": "Readwise Reader Documents"
+    },
+    "ds:social-content": {
+      "type": "notion_ds",
+      "id": "14591b07-11ac-8187-934a-000b1a3a474d",
+      "name": "Social Content"
     },
     "app:esignatures": {
       "type": "external_app",
@@ -1621,6 +1636,21 @@
     {
       "from": "slack-notion-thread-sync-sweep",
       "to": "app:slack",
+      "kind": "write"
+    },
+    {
+      "from": "app:readwise",
+      "to": "save-tagged-docs-to-notion",
+      "kind": "trigger"
+    },
+    {
+      "from": "save-tagged-docs-to-notion",
+      "to": "table:readwise-reader-docs",
+      "kind": "own"
+    },
+    {
+      "from": "save-tagged-docs-to-notion",
+      "to": "ds:social-content",
       "kind": "write"
     }
   ],
