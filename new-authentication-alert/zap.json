@@ -1,12 +1,12 @@
 {
   "name": "new-authentication-alert",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a0a8b2-378d-78c7-bddc-7007a0736dfa",
+  "current_version_id": "01a0a8b2-47f8-7ee2-be80-627f6f427889",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaHKOpdvzvJRUuA6wBgT2g",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "New Authentication Alert",
     "description": "Zapier Manager 'New Authentication' on the work.flowers account -> DM Dennis on Slack when someone other than him adds a connection. Migrated from the classic Zap of the same name, with a richer message (real app from selected_api, connection label, who added it, when, auth id).",
     "enable_on_publish": true
