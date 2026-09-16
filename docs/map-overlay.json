@@ -24,6 +24,7 @@
         "new-buttondown-subscriber-update-in-notion",
         "notion-blog-post-to-hero-image",
         "notion-contact-to-newsletter-subscriber",
+        "goodreads-reviews-to-notion",
         "notion-newsletter-to-buttondown",
         "save-tagged-docs-to-notion",
         "update-notion-when-rescheduled-in-buttondown"
@@ -363,6 +364,10 @@
     "app:readwise": {
       "type": "external_app",
       "name": "Readwise Reader"
+    },
+    "app:rss": {
+      "type": "external_app",
+      "name": "RSS by Zapier"
     },
     "table:readwise-reader-docs": {
       "type": "table",
@@ -1650,6 +1655,16 @@
     },
     {
       "from": "save-tagged-docs-to-notion",
+      "to": "ds:social-content",
+      "kind": "write"
+    },
+    {
+      "from": "app:rss",
+      "to": "goodreads-reviews-to-notion",
+      "kind": "trigger"
+    },
+    {
+      "from": "goodreads-reviews-to-notion",
       "to": "ds:social-content",
       "kind": "write"
     }
