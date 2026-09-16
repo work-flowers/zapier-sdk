@@ -1,12 +1,12 @@
 {
   "name": "save-tagged-docs-to-notion",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a0a866-5019-7a15-9f92-00aa437a0b6c",
+  "current_version_id": "01a0a866-6295-7ac2-a032-3906a9d6d753",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS6Zq4TY1HZZnYhr3nHbUw",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "Save Tagged Docs in Notion",
     "description": "Readwise Reader 'Document Tags Updated' -> when a document is tagged `sendtonotion`, create an 'Article Share' idea in the Notion Social Content data source. Deduped through a free Zapier Table (Reader document id -> Notion page id) so a document is only ever turned into a page once. Migrated from the classic multi-step Zap of the same name (paused since 2026-08-29).",
     "enable_on_publish": true
