@@ -1,0 +1,32 @@
+{
+  "name": "new-authentication-alert",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": true,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "New Authentication Alert",
+    "description": "Zapier Manager 'New Authentication' on the work.flowers account -> DM Dennis on Slack when someone other than him adds a connection. Migrated from the classic Zap of the same name, with a richer message (real app from selected_api, connection label, who added it, when, auth id).",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "ZapierManagerCLIAPI@1.7.0",
+    "action": "list_authentications",
+    "authentication_id": null,
+    "params": {
+      "account": "20491667"
+    },
+    "trigger_note": "Zapier Manager 'New Authentication' — a polling (read) trigger, no auth (it monitors the account it runs under). `account` 20491667 is the work.flowers Zapier account in Zapier Manager's namespace (distinct from the 20495893 catch-hook account id in CLAUDE.md).",
+    "no_webhook_available": true
+  },
+  "connections": {
+    "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74"
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  }
+}
