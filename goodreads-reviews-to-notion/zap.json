@@ -1,12 +1,12 @@
 {
   "name": "goodreads-reviews-to-notion",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a0a8aa-8119-757e-aa13-448cceeb9ef1",
+  "current_version_id": "01a0a8aa-8e0b-7d34-bc59-fbda7e4f3d31",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQbPufp-hUjK0JOaWQz2qw",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "Log Book Reviews in Notion",
     "description": "Goodreads 'read' shelf RSS (new item) -> create a 'Book Review' idea in the Notion Social Content data source (a finished book becomes a LinkedIn content idea). Migrated from the classic two-step Zap 'Log Book Reviews in Notion'.",
     "enable_on_publish": true
