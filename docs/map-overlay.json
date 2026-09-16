@@ -96,7 +96,8 @@
         "workflowers-events-to-scw-busy",
         "slack-thread-to-notion-discussion",
         "notion-comment-to-slack-thread",
-        "slack-notion-thread-sync-sweep"
+        "slack-notion-thread-sync-sweep",
+        "new-authentication-alert"
       ]
     },
     "esignatures-legal": {
@@ -368,6 +369,10 @@
     "app:rss": {
       "type": "external_app",
       "name": "RSS by Zapier"
+    },
+    "app:zapier-manager": {
+      "type": "external_app",
+      "name": "Zapier Manager"
     },
     "table:readwise-reader-docs": {
       "type": "table",
@@ -1666,6 +1671,16 @@
     {
       "from": "goodreads-reviews-to-notion",
       "to": "ds:social-content",
+      "kind": "write"
+    },
+    {
+      "from": "app:zapier-manager",
+      "to": "new-authentication-alert",
+      "kind": "trigger"
+    },
+    {
+      "from": "new-authentication-alert",
+      "to": "app:slack",
       "kind": "write"
     }
   ],
