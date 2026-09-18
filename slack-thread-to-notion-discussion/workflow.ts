@@ -588,7 +588,7 @@ async function linkThread(
           ticketNumber !== null
             ? `<${notionPageUrl(pageId!)}|TKT-${ticketNumber}>`
             : `<${notionPageUrl(pageId!)}|Notion>`
-        } — replies here now sync to the task's discussion.`,
+        } — replies here now sync to the page's discussion.`,
         as_bot: "yes",
         username: "Notion Sync",
         unfurl: "no",
