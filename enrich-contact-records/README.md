@@ -70,15 +70,10 @@ gained and what was given up.
      Secondary. See [Email paths](#email-paths).
    - **New/different email** (Path G): keeps the existing Primary Email, adds
      the enriched email to Secondary Email.
-   - **Profile pic** (Path C): if the result carried a photo URL
-     (`contact_avatar` — rarely populated on an email-only waterfall), hands it
-     to Notion as a `file_uploads` `external_url` import and attaches the
-     upload as both the page icon and cover. **The URL is never stored as the
-     icon** — see [Profile photos are uploaded, not
-     linked](#profile-photos-are-uploaded-not-linked). A photo that fails to
-     import is reported in the outcome comment and never fails the run; a
-     LinkedIn placeholder silhouette is skipped — see [Placeholder silhouettes
-     are filtered](#placeholder-silhouettes-are-filtered).
+   - **No photo path.** The original sub-Zap's Path C (page icon + cover from a
+     profile photo) was removed 2026-09-18: BetterContact's `contact_avatar` is a
+     legacy always-null key, and no other acceptable source returns photos. See
+     [What changed with BetterContact](#what-changed-with-bettercontact).
    - **Index the email in the email→contact Zapier Table**
      (`01JYEPSEARXB2Z6BJRCMFGXBC2`): whenever a new email lands on the contact
      (Path G secondary, or a first-ever primary via Path D), upsert-if-missing a
@@ -88,9 +83,9 @@ gained and what was given up.
      **duplicate contact** when that person registers with it (bug observed
      2026-07-24). Best-effort: a Table error logs and never fails the run.
      **Path U never reaches this step.**
-   - Properties BetterContact does not return (Bio, and usually Job Title,
-     City and the photo) are written as `""`, which the Notion action treats as
-     **no change** — a contact keeps whatever it already has.
+   - Properties BetterContact does not return (Bio, and usually Job Title and
+     City) are written as `""`, which the Notion action treats as **no change**
+     — a contact keeps whatever it already has.
 5. **Add outcome comment** — Posts a brief comment on the triggering Notion
    page stating the outcome. A transient Notion failure (429, 409, 5xx) is
    retried by the step; a definite rejection is reported in the run output as
@@ -105,7 +100,7 @@ gained and what was given up.
 
    If the webhook was triggered by a button click and the payload included the
    user's Notion ID, the comment mentions that user.
-6. **Return** — `{ pageId, enriched, source, emailPath, iconUpdated }`, plus
+6. **Return** — `{ pageId, enriched, source, emailPath }`, plus
    `unverifiedEmail` and `identity` on a Path U run, and `reasons` on a skip.
 
 ## Workflow
@@ -129,16 +124,15 @@ flowchart TD
     ST -- "terminated, usable row" --> E{"Enriched email corroborated?<br/>shared address · contact's LinkedIn ·<br/>known company domain ·<br/>domain+name-gated lookup"}
     E -- "no (Path U)" --> U["Write NO email anywhere —<br/>no Primary, no Secondary, no Table row.<br/>Other properties still update;<br/>address named in the comment"]
     E -- "yes" --> EP{"Enriched email vs existing<br/>Primary Email?"}
-    U --> H
     EP -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
     EP -- "different, and Primary is freemail<br/>while enriched is corporate<br/>(Path G-promote)" --> GP["Enriched work address → Primary,<br/>personal address → Secondary"]
     EP -- "new/different email (Path G)" --> G["Keep Primary Email, add enriched<br/>email to Secondary Email"]
-    F --> H{"Photo URL returned?<br/>(rare)"}
-    GP --> H
-    G --> H
-    H -- yes --> I["Import photo into Notion<br/>(file_uploads external_url)<br/>attach as page icon + cover<br/>(Path C)"] --> J
-    H -- no --> J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
-    J --> K(["Return pageId, enriched, source, emailPath, iconUpdated"])
+    F --> J
+    GP --> J
+    G --> J
+    U --> J
+    J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
+    J --> K(["Return pageId, enriched, source, emailPath"])
 ```
 
 ## How the async job is handled
@@ -223,90 +217,51 @@ Gained:
 Given up — deliberately, since the brief was to replace the cascade:
 
 - **No profile photo or bio.** Those came from Apollo (photo, bio) and
-  NinjaPear (photo). BetterContact's Zapier app exposes the email/phone
-  waterfall only; `contact_avatar` was null on the live spike and
-  `enrich_profile` (their synchronous LinkedIn profile endpoint, 0.1 credit) is
-  not an action the app offers. Path C and the upload/placeholder machinery
-  remain in place and simply do not fire. Contacts with a broken or missing
-  icon are no longer repaired by re-enrichment.
+  NinjaPear (photo), and neither returned photos reliably; the only source that
+  ever did was HarvestAPI, by scraping LinkedIn, which is not coming back.
+  BetterContact's `contact_avatar` is a documented legacy key that is always
+  `null`, and its `enrich_profile` endpoint (not exposed by the Zapier app) has
+  no image field either. **Path C was therefore removed outright on
+  2026-09-18** — the `file_uploads` import, the placeholder-silhouette filter,
+  the icon/cover PATCH and the `iconUpdated`/`iconError` outputs — rather than
+  left as a code path nothing can exercise. The working implementation is in
+  this directory's git history (versions up to `01a0b2d9`) should a photo source
+  ever appear; the design notes that mattered are summarised below. Contacts
+  with a broken or missing icon are not repaired by enrichment; the 210 expired
+  `external` icons found by `scripts/audit-contact-icon-urls.mjs` on 2026-08-12
+  stay as they are unless fixed by hand.
 - **Narrower coverage.** BetterContact needs `first_name` + `last_name` and a
   company (domain); it takes no email as input and does not resolve a LinkedIn
   URL alone. Contacts known only by an email, or only by a LinkedIn URL, are
   skipped with a reason where Apollo/Lusha could sometimes match them. Job
   title, city and country arrive only when a provider happened to return them.
 
-## Profile photos are uploaded, not linked
+## Photo path: what was learned before it was removed
 
-Until 2026-08-12 Path C set the icon and cover to
-`{type: "external", external: {url: <the enrichment's photo URL>}}`. The photo
-URLs enrichment sources return are LinkedIn CDN links, **signed and
-time-limited**:
+Kept for whoever wires a photo source in again. All of it was live in this Zap
+from 2026-08-12 to 2026-09-18.
 
-```
-https://media.licdn.com/dms/image/v2/…/0/1669569071244?e=1779321600&v=beta&t=xqUO1s9…
-                                                        ^^^^^^^^^^ unix expiry
-```
-
-Notion re-fetches an `external` icon on every view and stores the dead link
-forever, so a few weeks after enrichment the page keeps an icon and cover that
-**render as empty white space**. Nothing errors, nothing alerts. An audit on
-2026-08-12 (`scripts/audit-contact-icon-urls.mjs`) found **210 of 962 contacts**
-in that state.
-
-The fix hands the URL to Notion instead, and lets Notion do the fetching:
-
-```
-POST /v1/file_uploads  { mode: "external_url", external_url, filename }
-GET  /v1/file_uploads/<id>            → poll until status "uploaded"
-PATCH /v1/pages/<id>  { icon: {type:"file_upload", …}, cover: {…} }
-```
-
-Notion stores the bytes on its own `prod-files-secure` S3 and re-signs the URL
-on every read, so the result comes back as `{type: "file"}` and never expires.
-
-Things worth knowing before editing this:
-
-- **`filename` is required** in `external_url` mode — omitting it is a
-  `400 validation_error`. LinkedIn URLs carry no extension, so it falls back to
-  `.jpg`; the stored content type comes from what Notion fetches.
-- **One upload backs both the icon and the cover.**
-- **This is the opposite choice to
-  [`esignatures-status-to-notion`](../esignatures-status-to-notion/)**, which
-  downloads the bytes and pushes a `single_part` upload: `external_url` probes
-  with `HEAD` first, and the S3 links eSignatures receives are presigned for
-  `GET` alone. LinkedIn answers HEAD normally.
-- **The durable cannot casually download the photo itself.** A bare `fetch`
-  fails for every host, and `sdk.fetch` *with* a connection is domain-filtered
-  to that connection's app. The escape hatch is `sdk.fetch` with **no
-  connection**.
-- **A failed import never fails the run.** It is caught inside the step and
-  surfaced in the outcome comment as `Profile photo not stored: …`.
-
-With BetterContact this path rarely fires (see above); it is kept so a photo,
-when one does come back, is stored the right way.
-
-## Placeholder silhouettes are filtered
-
-When a LinkedIn profile has no photo, some sources return LinkedIn's generic
-grey silhouette rather than `null`:
-
-```
-https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
-```
-
-That is a 489-byte `image/svg+xml` on LinkedIn's *static asset* CDN; real
-photos live on `media.licdn.com/dms/image/…`. Until 2026-09-03 a truthiness
-check let it through — 7 of 43 runs displaced the Contacts default icon with a
-picture of nobody. Two guards now sit in front of the icon update:
-
-1. **By host, at extraction** — `realPhotoUrl` returns `""` for any URL on
-   `static.licdn.com` (`PLACEHOLDER_PHOTO_HOSTS`).
-2. **By content, after import** — `storeProfilePhoto` throws
-   `PlaceholderPhotoError` for any SVG or any file under 1 KB, catching a
-   placeholder whose URL we have not seen at the cost of one import.
-
-A skipped placeholder is logged, not reported as a failure, and leaves an
-existing real photo untouched.
+- **Upload, never link.** Enrichment photo URLs were signed, time-limited
+  LinkedIn CDN links (`…?e=<unix-expiry>&t=<sig>`). Setting them as an
+  `{type:"external"}` icon left the page with an icon and cover that rendered
+  as blank white space once the link expired — 210 of 962 contacts by the
+  2026-08-12 audit. The fix was `POST /v1/file_uploads {mode:"external_url"}`
+  → poll until `uploaded` → `PATCH /v1/pages/{id}` with `file_upload` for both
+  icon and cover (one upload backs both). `filename` is required in that mode.
+- **The durable cannot download the bytes itself.** A bare `fetch` fails for
+  every host and `sdk.fetch` with a connection is domain-filtered to that app;
+  `sdk.fetch` with **no connection** is the escape hatch. `external_url` makes
+  Notion probe with `HEAD` first, which LinkedIn answers and presigned-for-GET
+  S3 links (eSignatures) do not — hence the opposite choice in
+  [`esignatures-status-to-notion`](../esignatures-status-to-notion/).
+- **Filter LinkedIn's placeholder silhouette.** A profile with no photo came
+  back as `https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2`, a
+  489-byte SVG, not `null`; 7 of 43 runs put a picture of nobody on the page.
+  Guard by host (`static.licdn.com`) at extraction, and by content after import
+  (reject SVG or anything under 1 KB via the upload's `content_type` /
+  `content_length`).
+- **Never fail the run over a photo.** Catch the import inside the step and
+  report it in the outcome comment; leave only the Notion PATCH to throw.
 
 ## The outcome comment retries transient failures
 
@@ -518,8 +473,8 @@ declared set when they differ, logging the change in the run summary.
   collapses into a single inline function with if/else blocks.
 - **No retry** — the original parent Zap retried enrichment after a 1-minute
   delay on error. This Durable logs and skips instead.
-- **Page icon via `sdk.fetch`** — a direct `PATCH /v1/pages/{id}` call rather
-  than a specific Notion action key.
+- **No page icon step** — the sub-Zap's Path C icon/cover update was carried
+  over and then removed on 2026-09-18, when no acceptable photo source remained.
 - **Outcome comment** — after every run, a brief comment on the triggering page,
   mentioning the triggering user when known. Transient Notion failures are
   retried, not swallowed.

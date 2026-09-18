@@ -246,7 +246,6 @@ const SOURCE_LABELS: Record<EnrichmentSource, string> = {
 };
 
 interface EnrichedData {
-  profilePicUrl: string;
   linkedinUrl: string;
   country: string;
   city: string;
@@ -265,51 +264,17 @@ interface EnrichedData {
   employerDomain: string;
 }
 
-// --- Placeholder photos ----------------------------------------------------
-//
-// When a LinkedIn profile has no photo, Apollo does not return `photo_url:
-// null` — it returns LinkedIn's generic grey silhouette, verbatim:
-//
-//   https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
-//
-// That is a 489-byte SVG on LinkedIn's *static asset* CDN. Real photos live on
-// `media.licdn.com/dms/image/…` and arrive as multi-kilobyte JPEGs. Truthiness
-// cannot tell them apart, so until 2026-09-03 the silhouette was imported and
-// attached as icon and cover exactly like a real photo — 7 of the 43 most
-// recent runs did so — displacing the data source's default icon with a
-// picture of nobody.
-//
-// Two guards, because they fail differently:
-//   1. `realPhotoUrl` below rejects by host, at extraction, for free. It covers
-//      every observed case and never costs an API call.
-//   2. `storeProfilePhoto` rejects by content after Notion has imported the
-//      file — SVG, or under `MIN_PHOTO_BYTES` — which catches a placeholder
-//      whose URL we have not seen (BetterContact's, or a new LinkedIn one) at the
-//      cost of one import. The unattached upload expires on its own.
-// An empty `profilePicUrl` then takes the same route as a photo-less result: the
-// icon and cover are left alone, so a contact with a real photo keeps it.
-
-/** Hosts that serve site assets, never a user's uploaded photo. */
-const PLACEHOLDER_PHOTO_HOSTS = new Set(["static.licdn.com"]);
-
-/** A source's photo URL, or "" when there is none or it is a known placeholder. */
-function realPhotoUrl(v: unknown): string {
-  const url = firstString(v);
-  if (!url) return "";
-  const host = url.match(/^https?:\/\/([^/?#]+)/i)?.[1]?.toLowerCase() ?? "";
-  if (PLACEHOLDER_PHOTO_HOSTS.has(host)) return "";
-  return url;
-}
-
 // --- BetterContact result extraction ---------------------------------------
 //
 // One row of the terminated response's `data[]` — BetterContact's field names
 // (`contact_*`, `company_*`), shape captured from a live run on 2026-09-18.
 // An email-only waterfall fills the identity fields (email + status, LinkedIn
 // URL, company domain, country) and leaves most profile fields (`contact_job_title`,
-// `contact_city`, `contact_avatar`) null unless a provider happened to return
-// them — so a BetterContact enrichment is usually an address, not a full
-// profile, and the page's Bio, icon and cover are left as they are.
+// `contact_city`) null unless a provider happened to return them — so a
+// BetterContact enrichment is usually an address, not a full profile, and the
+// page's Bio is left as it is. BetterContact never returns a photo
+// (`contact_avatar` is a legacy always-null key), and no other acceptable source
+// does either, so the former Path C icon/cover update was removed 2026-09-18.
 
 /** The row's address, or "" when there is none or its verification status is
  *  not one we write (see WRITABLE_EMAIL_STATUSES). */
@@ -327,15 +292,13 @@ function betterContactRowUsable(row: any): boolean {
     betterContactEmail(row) ||
       row.contact_job_title ||
       row.contact_linkedin_profile_url ||
-      row.contact_location_country ||
-      realPhotoUrl(row.contact_avatar),
+      row.contact_location_country,
   );
 }
 
 function extractEnrichedFromBetterContact(row: any): EnrichedData {
   const rawEmail = firstString(row?.contact_email_address) ?? "";
   return {
-    profilePicUrl: realPhotoUrl(row?.contact_avatar),
     linkedinUrl: firstString(row?.contact_linkedin_profile_url) ?? "",
     country: firstString(row?.contact_location_country, row?.contact_country) ?? "",
     city: firstString(row?.contact_city, row?.contact_location_city) ?? "",
@@ -500,7 +463,7 @@ function normalizeDomain(value: string | null | undefined): string {
 //
 // An uncorroborated address is not written anywhere — not Primary, not
 // Secondary, not the Table — and is named in the outcome comment for a human to
-// judge. Everything else the source returned (title, city, photo) is still
+// judge. Everything else the source returned (title, city, country) is still
 // written: those are visible on the page and carry no identity downstream, and
 // in the Grace case they were in fact correct.
 
@@ -563,144 +526,6 @@ function normalizeLinkedin(url: string | null | undefined): string {
   return m?.[1] ?? "";
 }
 
-// --- Profile photo storage -------------------------------------------------
-//
-// Notion renders an `external` icon/cover by re-fetching that URL on every
-// view. Apollo hands back LinkedIn's CDN link verbatim, and those links are
-// signed and time-limited — `…?e=<unix-expiry>&v=beta&t=<signature>`. A few
-// weeks after enrichment the URL starts 403ing and Notion, having stored the
-// dead link forever, renders empty white space: the page still *has* an icon
-// and cover, they just draw as nothing. Nothing errors, so it goes unnoticed.
-// An audit on 2026-08-12 found 210 of 962 contacts already in that state.
-//
-// Storing the bytes in Notion instead makes it permanent. The PATCH comes back
-// as `type: "file"` on Notion's own S3, whose URL Notion re-signs on each read.
-// One upload can back both the icon and the cover — verified 2026-08-12 against
-// a live contact; the docs don't state it either way.
-//
-// Notion does the downloading, via `file_uploads` mode `external_url`.
-//
-// Note this is the OPPOSITE choice to `esignatures-status-to-notion`, which
-// files its PDF by downloading the bytes and pushing a `single_part` upload.
-// Both are right for their case: `external_url` makes Notion probe the URL
-// with `HEAD` first, and the S3 links eSignatures hands out are presigned for
-// `GET` alone, so they answer that probe with 403. LinkedIn's CDN answers HEAD
-// normally, so the simpler route works here — no download, no hand-built
-// multipart body, no content-type matching to get wrong.
-//
-// The durable cannot casually download the bytes itself either way: a bare
-// `fetch` fails for every host — example.com, pbs.twimg.com, media.licdn.com,
-// even api.notion.com — and `sdk.fetch` *with a connection* is domain-filtered
-// to that connection's own app ("Domain media.licdn.com did not match expected
-// domain filter `api.notion.com`"). Both probed against the real runtime on
-// 2026-08-12. The escape hatch, if `external_url` ever stops working, is
-// `sdk.fetch` with **no connection** — see that Zap's README.
-
-/** How many times to poll an `external_url` import before giving up. Notion
- *  has finished on the first poll in every observed case (~1s); the extra
- *  attempts are headroom, not the expected path. */
-const PHOTO_UPLOAD_POLL_ATTEMPTS = 6;
-
-/** Smallest file accepted as a real photo. LinkedIn's silhouette is 489 bytes;
- *  the smallest genuine 200×200 JPEG in the run history is about 7.8 KB. */
-const MIN_PHOTO_BYTES = 1024;
-
-/** Thrown by `storeProfilePhoto` when the imported file is a placeholder, not
- *  a photo (see "Placeholder photos"). Distinct from a failed import so Path C
- *  can skip quietly instead of reporting a storage failure that never was. */
-class PlaceholderPhotoError extends Error {
-  constructor(detail: string) {
-    super(`placeholder image (${detail})`);
-    this.name = "PlaceholderPhotoError";
-  }
-}
-
-/** A filename for the stored photo. `external_url` mode *requires* one (a
- *  create without it is rejected `400 validation_error`), but the photo URLs
- *  Apollo and NinjaPear hand back are LinkedIn CDN links with no extension in
- *  the path, so the extension is taken from the path when there is one and
- *  falls back to `.jpg`, which is what LinkedIn serves. The stored file's real
- *  content type comes from the response Notion fetches, not from this name. */
-function photoFilename(photoUrl: string): string {
-  const path = photoUrl.split("?")[0];
-  const ext = path.match(/\.(jpe?g|png|webp|gif)$/i)?.[1];
-  return `profile-photo.${ext ? ext.toLowerCase() : "jpg"}`;
-}
-
-/** Hand `photoUrl` to Notion to fetch and store, returning the file upload id
- *  to attach as icon/cover. Throws on any failure — `PlaceholderPhotoError`
- *  when the file Notion fetched is a silhouette rather than a photo — and the
- *  caller catches inside its own step so a dead photo URL never spins the
- *  step-retry loop or sinks an otherwise good enrichment.
- *
- *  MUST be called from inside a `ctx.step` — it makes network calls. */
-async function storeProfilePhoto(photoUrl: string): Promise<string> {
-  const createRes = await sdk.fetch(`${NOTION_API}/file_uploads`, {
-    connection: NOTION_CONNECTION,
-    method: "POST",
-    headers: {
-      "Notion-Version": NOTION_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      mode: "external_url",
-      external_url: photoUrl,
-      filename: photoFilename(photoUrl),
-    }),
-  });
-  if (!createRes.ok) {
-    throw new Error(
-      `file_upload create failed (${createRes.status}): ${await createRes.text()}`,
-    );
-  }
-  const created = await createRes.json();
-  const uploadId = firstString(created?.id);
-  if (!uploadId) throw new Error("file_upload create returned no id");
-
-  // The import is asynchronous — `pending` until Notion has pulled the bytes.
-  let upload: any = created;
-  let status = firstString(upload?.status) ?? "pending";
-  for (let i = 0; i < PHOTO_UPLOAD_POLL_ATTEMPTS && status === "pending"; i++) {
-    const pollRes = await sdk.fetch(`${NOTION_API}/file_uploads/${uploadId}`, {
-      connection: NOTION_CONNECTION,
-      method: "GET",
-      headers: { "Notion-Version": NOTION_VERSION },
-    });
-    if (!pollRes.ok) {
-      throw new Error(
-        `file_upload poll failed (${pollRes.status}): ${await pollRes.text()}`,
-      );
-    }
-    upload = await pollRes.json();
-    status = firstString(upload?.status) ?? "pending";
-  }
-
-  if (status !== "uploaded") {
-    // `failed` means Notion could not fetch the URL — an already-expired link,
-    // or a host that refuses Notion's fetcher. Nothing to retry.
-    throw new Error(`Notion could not import the photo (status: ${status})`);
-  }
-
-  // Content guard — see "Placeholder photos". `content_type` and
-  // `content_length` describe the bytes Notion actually fetched, not the
-  // `.jpg` filename invented above, so this judges the real file. No genuine
-  // profile photo is an SVG, and none is smaller than a kilobyte.
-  const contentType = (firstString(upload?.content_type) ?? "").toLowerCase();
-  const contentLength =
-    typeof upload?.content_length === "number" ? upload.content_length : null;
-  if (contentType.includes("svg")) {
-    throw new PlaceholderPhotoError(
-      `${contentType}, ${contentLength ?? "?"} bytes`,
-    );
-  }
-  if (contentLength !== null && contentLength < MIN_PHOTO_BYTES) {
-    throw new PlaceholderPhotoError(
-      `${contentType || "unknown type"}, ${contentLength} bytes`,
-    );
-  }
-  return uploadId;
-}
-
 // --- Durable context type --------------------------------------------------
 
 // The runtime's own context type. This used to be derived as
@@ -718,6 +543,7 @@ type DurableCtx = DurableContext;
 //   Path D "Same or No Prior Email" — set primary email to enriched email
 //   Path G "New Email"            — keep existing primary, add new to secondary
 //   Path C "Update Page Icon"      — set page icon + cover to profile pic
+//                                    (removed 2026-09-18: no source returns photos)
 //   Path E "Exit"                  — return
 //
 // In the Durable these collapse to sequential if/else blocks, plus one path the
@@ -738,8 +564,6 @@ async function updateContactRecord(
   source: EnrichmentSource,
 ): Promise<{
   emailPath: string;
-  iconUpdated: boolean;
-  iconError?: string;
   unverifiedEmail?: string;
   identity?: string;
 }> {
@@ -874,7 +698,7 @@ async function updateContactRecord(
   });
 
   if (updateResult.archived) {
-    return { emailPath: "page-archived", iconUpdated: false };
+    return { emailPath: "page-archived" };
   }
 
   // --- Index the enriched email in the email -> page id Table ---
@@ -924,78 +748,8 @@ async function updateContactRecord(
     });
   }
 
-  // --- Update page icon + cover if a profile pic was found (Path C) ---
-  //
-  // The photo is uploaded to Notion rather than linked. See "Profile photo
-  // storage" above: linking the source URL is what left 210 contacts rendering
-  // a blank icon and cover once the signed link expired.
-  let iconUpdated = false;
-  let iconError: string | undefined;
-  if (enriched.profilePicUrl) {
-    const outcome = await ctx.step("update-page-icon", async () => {
-      // The import is caught in here, not outside the step: a photo URL that
-      // is already dead or that Notion refuses to fetch is a fact about the
-      // source, not a transient failure, so retrying it just burns the retry
-      // budget and would eventually fail a run whose email and property
-      // updates all succeeded. A Notion PATCH failure below is genuinely worth
-      // retrying and is therefore left to throw.
-      let uploadId: string;
-      try {
-        uploadId = await storeProfilePhoto(enriched.profilePicUrl);
-      } catch (err) {
-        if (err instanceof PlaceholderPhotoError) {
-          return {
-            ok: false as const,
-            placeholder: true as const,
-            detail: err.message,
-          };
-        }
-        return {
-          ok: false as const,
-          error: String((err as Error)?.message ?? err),
-        };
-      }
-
-      const res = await sdk.fetch(`${NOTION_API}/pages/${contact.pageId}`, {
-        connection: NOTION_CONNECTION,
-        method: "PATCH",
-        headers: {
-          "Notion-Version": NOTION_VERSION,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          icon: { type: "file_upload", file_upload: { id: uploadId } },
-          cover: { type: "file_upload", file_upload: { id: uploadId } },
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(
-          `Notion icon update failed (${res.status}): ${await res.text()}`,
-        );
-      }
-      return { ok: true as const };
-    });
-
-    if (outcome.ok) {
-      iconUpdated = true;
-    } else if ("placeholder" in outcome) {
-      // Not a failure: the source had no photo and said so with a picture of
-      // nobody. Logged so the run history shows it was seen; the outcome
-      // comment then reads as a photo-less enrichment, same as an email-only result.
-      console.log(
-        `Placeholder photo skipped for ${contact.pageId}: ${outcome.detail}`,
-      );
-    } else {
-      // Surfaced in the outcome comment rather than swallowed — a photo that
-      // never stored is worth seeing on the page, just not worth failing over.
-      iconError = outcome.error;
-    }
-  }
-
   return {
     emailPath,
-    iconUpdated,
-    iconError,
     unverifiedEmail: unverifiedEmail || undefined,
     identity: unverifiedEmail ? identity.how : undefined,
   };
@@ -1027,10 +781,6 @@ interface WorkflowResult {
   unverifiedEmail?: string;
   /** Why `unverifiedEmail` failed corroboration. */
   identity?: string;
-  iconUpdated?: boolean;
-  /** Why the profile photo could not be stored, when one was offered. Kept
-   *  distinct from `reasons` — the enrichment itself succeeded. */
-  iconError?: string;
   /** Whether the outcome comment reached the page. `false` means Notion
    *  definitively rejected it (see `commentError`); a transient failure is
    *  retried and, if it never clears, fails the run instead of hiding here. */
@@ -1087,7 +837,6 @@ async function addOutcomeComment(
     const changes: string[] = [];
     if (result.emailPath === "same-or-no-prior") changes.push("primary email");
     if (result.emailPath === "new-email") changes.push("secondary email");
-    if (result.iconUpdated) changes.push("profile icon");
     changes.push("contact details");
     const via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
@@ -1097,11 +846,6 @@ async function addOutcomeComment(
     // different person of the same name. Only a human can tell which.
     if (result.unverifiedEmail) {
       summary += ` Email ${result.unverifiedEmail} NOT written — ${result.identity ?? "could not be corroborated"}. Add it by hand if it is really theirs.`;
-    }
-    // A photo that failed to store is worth naming: the rest of the record is
-    // correct, so nothing else in this comment would hint the icon is missing.
-    if (result.iconError) {
-      summary += ` Profile photo not stored: ${parseFailure(result.iconError).brief}.`;
     }
     // When a fallback did the work, note why each earlier source was skipped
     // over — one labelled clause per source, same as the skip branch.
