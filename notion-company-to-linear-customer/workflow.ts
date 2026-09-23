@@ -116,6 +116,34 @@ function extractCustomerId(res: unknown): string {
   );
 }
 
+/** Linear refuses a create whose domain is already held by another customer.
+ *  Zapier reports it as a `partner_error` at HTTP 200, which the durable runtime
+ *  treats as retryable: five identical attempts, then a StepExhaustedError that
+ *  replaces Linear's own sentence with "exhausted all retry attempts" (Zapier
+ *  Error Triage ticket 52, Masjid Al-Falah). Match that sentence narrowly — a
+ *  pure predicate, exported so it can be tested — so every other failure (a
+ *  genuine firewall refusal, a 5xx, a rate limit) still throws and stays
+ *  retryable. */
+export function isDomainAlreadyExistsError(err: unknown): boolean {
+  const seen: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === "string") {
+      seen.push(value);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    const o = value as Record<string, unknown>;
+    collect(o.message);
+    collect(o.detail);
+    collect(o.cause);
+    if (Array.isArray(o.errors)) for (const item of o.errors) collect(item);
+  };
+  collect(err);
+  return seen.some((text) =>
+    text.toLowerCase().includes("customer with one of these domains already exists"),
+  );
+}
+
 // --- Workflow -----------------------------------------------------------------
 
 const workflow = defineDurable<Input, unknown>(
@@ -173,21 +201,50 @@ const workflow = defineDurable<Input, unknown>(
     if (domain) inputs.domains = [domain];
     if (companyUid) inputs.externalIds = [companyUid];
 
-    const created = await ctx.step("create-linear-customer", async () =>
-      sdk.runAction({
-        appKey: LINEAR_APP_KEY,
-        actionType: "write",
-        actionKey: "createCustomer",
-        connection: LINEAR_CONNECTION,
-        inputs,
-      }),
-    );
+    const created = await ctx.step("create-linear-customer", async () => {
+      try {
+        return {
+          ok: true as const,
+          result: await sdk.runAction({
+            appKey: LINEAR_APP_KEY,
+            actionType: "write",
+            actionKey: "createCustomer",
+            connection: LINEAR_CONNECTION,
+            inputs,
+          }),
+        };
+      } catch (err) {
+        // A domain another Linear customer already holds is a settled state,
+        // not a transient fault: no number of retries can change the answer,
+        // and letting the step exhaust itself buries Linear's own message. Hand
+        // the reason back as an outcome so the run finishes green.
+        if (isDomainAlreadyExistsError(err)) return { ok: false as const };
+        throw err;
+      }
+    });
 
-    const customerId = extractCustomerId(created);
+    if (!created.ok) {
+      // Nothing is written back: there is no customer id to write, and a
+      // sentinel in Linear Customer ID would masquerade as one. The company
+      // stays unlinked until a human points it at the existing Linear customer,
+      // so name that in the run output rather than only in a log line.
+      console.log(
+        `Linear already has a customer for domain "${domain}" — "${companyName}" (${companyPageId}) was not created.`,
+      );
+      return {
+        skipped: "linear-domain-already-exists",
+        companyPageId,
+        company: companyName,
+        domain: domain || null,
+        externalId: companyUid || null,
+      } satisfies Outcome;
+    }
+
+    const customerId = extractCustomerId(created.result);
     if (!customerId) {
       throw new Error(
         `Created a Linear customer for "${companyName}" but could not read a customer id out of the ` +
-          `result: ${JSON.stringify(firstResult(created)).slice(0, 300)}`,
+          `result: ${JSON.stringify(firstResult(created.result)).slice(0, 300)}`,
       );
     }
 
