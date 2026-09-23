@@ -51,8 +51,7 @@ flowchart TD
         G2 -->|no| X2["return — 0 tasks"]
         G2 -->|yes| WIN{"Inbound within<br/>24 hours?"}
         WIN -->|no| WARN["Warn in thread:<br/>use :whatsapp: reaction"]
-        WIN -->|yes| SIGN["Sign with replier's<br/>first name, if known"]
-        SIGN --> FILES{"Attachments?"}
+        WIN -->|yes| FILES{"Attachments?"}
         FILES -->|yes| PUB["Make each file public<br/>→ send as image/video/<br/>audio/document"]
         FILES -->|no| TXT["Send text"]
         PUB --> TXT2{"Caption carried<br/>the text?"}

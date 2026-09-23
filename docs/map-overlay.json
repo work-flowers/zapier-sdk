@@ -1104,11 +1104,6 @@
       "kind": "own"
     },
     {
-      "from": "table:user-ids",
-      "to": "whatsapp-slack-bridge",
-      "kind": "read"
-    },
-    {
       "from": "whatsapp-slack-bridge",
       "to": "app:slack",
       "kind": "write"
