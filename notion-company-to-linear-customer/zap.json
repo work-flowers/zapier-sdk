@@ -1,7 +1,7 @@
 {
   "name": "notion-company-to-linear-customer",
   "workflow_id": "019feb0a-aa26-7322-9cb9-d744919fc0d7",
-  "current_version_id": "019feb0b-3708-72f4-a18e-3e6053e78b51",
+  "current_version_id": "01a0cc8c-d6c9-7fe0-a10b-2fb55bc5667c",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ9llVPqyiWw9fOMMpysFQ",
   "enabled": true,
   "is_private": false,
