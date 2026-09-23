@@ -9,10 +9,8 @@ import {
   C_PHONE,
   M_MESSAGE_ID,
   SERVICE_WINDOW_MS,
-  U_FIRST_NAME,
   acceptsCaption,
   findContactByChannel,
-  findInternalUser,
   findMessageRowsByTs,
   firstString,
   isBridgeChannelName,
@@ -122,16 +120,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       };
     }
 
-    // --- Attribution -------------------------------------------------------
-    // Who in Slack is replying. The classic Zap looked this up with
-    // success-on-miss off, so a reply from anyone not in the Internal User IDs
-    // Table errored the whole Zap. Now it just goes unsigned.
-    const slackUserId = firstString(p.user, p.user?.id);
-    const internal = slackUserId
-      ? await ctx.step("find-internal-user", async () => findInternalUser(slackUserId))
-      : null;
-    const senderName = firstString((internal?.data ?? {})[U_FIRST_NAME]);
-    const body = text ? (senderName ? `${text}\n\n(from ${senderName})` : text) : null;
+    // Sent as typed. The classic Zap appended "(from <first name>)" via the
+    // Internal User IDs Table; dropped, since only Dennis replies from Slack.
+    const body = text;
 
     // --- Quote the WhatsApp message this Slack thread belongs to ----------
     let contextMessageId: string | null = null;
@@ -227,8 +218,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     console.log(
       `sent ${sent.length} message(s) to ${recipient} ` +
-        `(${sent.map((s) => s.kind).join(", ")})` +
-        (senderName ? ` from ${senderName}` : ""),
+        `(${sent.map((s) => s.kind).join(", ")})`,
     );
     return { recipient, channelId, slackTs, sent, quoted: contextMessageId };
   },

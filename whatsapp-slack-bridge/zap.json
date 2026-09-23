@@ -111,12 +111,6 @@
         "correctable": "From, To and Direction are filled or corrected, never blanked."
       },
       "known_dirty_data": "Of 89 rows at migration time: 27 had a null Body and only 13 had a Message Ts. Both follow from the classic design — the status Zap could create the row before the sending Zap logged it, and the template-message Zap logs nothing at all. Zero rows carried status `sent`, since the status Zap always overwrote it."
-    },
-    "users": {
-      "id": "01JM3J9SG5X6S8GBSSC8AS28AT",
-      "name": "[Table] Internal User IDs",
-      "role": "Read only, by slack-reply-to-whatsapp, to sign a reply with the replier's first name.",
-      "note": "Owned by internal-user-ids-to-table-and-notion. The classic Zap looked a user up with success-on-miss OFF, so a reply from anyone not in this Table errored the whole Zap; the reply now simply goes unsigned."
     }
   },
   "external_dependencies": {

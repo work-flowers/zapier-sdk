@@ -39,7 +39,6 @@ export const SLACK_MAKE_FILE_PUBLIC = "ae:395232";
 
 export const CONTACTS_TABLE = "01JKFHWQ82EFBHNP6XYD0M7JHK";
 export const MESSAGES_TABLE = "01KGH12QJKABVJ5H5A3Z5A4NW4";
-export const USERS_TABLE = "01JM3J9SG5X6S8GBSSC8AS28AT";
 
 // Contacts — "[Table] WhatsApp Contact Info and Opt-In".
 export const C_PHONE = "WhatsApp Phone Number ID";
@@ -59,10 +58,6 @@ export const M_BODY = "Body";
 export const M_MESSAGE_ID = "Message ID";
 export const M_MESSAGE_TS = "Message Ts";
 export const M_DIRECTION = "Direction";
-
-// Internal User IDs — "[Table] Internal User IDs".
-export const U_SLACK_USER_ID = "Slack User ID";
-export const U_FIRST_NAME = "First Name";
 
 // --- Configuration ---------------------------------------------------------
 
@@ -382,11 +377,6 @@ export async function findMessageRowsById(messageId: string): Promise<any[]> {
 
 export async function findMessageRowsByTs(ts: string): Promise<any[]> {
   return rowsWhere(MESSAGES_TABLE, M_MESSAGE_TS, ts);
-}
-
-export async function findInternalUser(slackUserId: string): Promise<any | null> {
-  const rows = await rowsWhere(USERS_TABLE, U_SLACK_USER_ID, slackUserId);
-  return rows[0] ?? null;
 }
 
 /**
