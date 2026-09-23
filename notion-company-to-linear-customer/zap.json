@@ -27,7 +27,8 @@
   },
   "linear": {
     "action": "LinearCLIAPI write createCustomer",
-    "note": "domains gets the bare hostname parsed out of the Companies Website url (the classic Zap passed the raw url); externalIds gets the COM-n unique id read off the page (the classic Zap read the same value from [Table] Company IDs)."
+    "note": "domains gets the bare hostname parsed out of the Companies Website url (the classic Zap passed the raw url); externalIds gets the COM-n unique id read off the page (the classic Zap read the same value from [Table] Company IDs).",
+    "domain_collision": "createCustomer rejects a domain another Linear customer already holds — 'A customer with one of these domains already exists', a partner_error at HTTP 200, which the durable runtime treats as retryable. Unhandled it burned all five step attempts and the run reported only 'Step \"create-linear-customer\" exhausted all retry attempts' (Zapier Error Triage ticket 52, Masjid Al-Falah / alfalah.sg, 2026-09-23). The workflow now matches that sentence narrowly, stops, and returns skipped: \"linear-domain-already-exists\" with the company, domain and COM-n external id; every other failure still throws. Nothing is written back on that path — there is no customer id to write — so linking the existing Linear customer stays a human step; Linear's Zapier app offers only Find Customer by ID, so no domain lookup exists to do it in code."
   },
   "tables": {
     "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read by this workflow. The classic Zap looked up f11/f7 here; the durable reads the COM-n id and the guard off the Notion page itself, and notion-companies-to-zapier-table mirrors the written id back into f7."
