@@ -20,7 +20,7 @@
 
 **What to build — four Zaps + a sweep, one calendar pair (mine):**
 
-- Source A = my SCW calendar `<peter@securecodewarrior.com>`; Source B = my work.flowers calendar `<peter@work.flowers>`. (I'll confirm the exact addresses.)
+- Source A = my SCW calendar `<pgao@securecodewarrior.com>`; Source B = my work.flowers calendar `<peter@work.flowers>`. (I'll confirm the exact addresses.)
 - Direction A→B and B→A, each an `event_updated` (`expand_recurring: true`) create/update Zap, **plus** a matching `event_cancelled` deletion Zap per direction — because `expand_recurring: true` silently drops cancellations (see the cancellation-Zap READMEs; this is proven, not theoretical).
 - **Same asymmetry as Dennis's setup:** SCW→wf mirrors carry the **full title** (base on `scw-events-to-workflowers-block`); wf→SCW mirrors are a **private, bare "Busy" block** — `summary: "Busy"`, `visibility: private`, `transparency: opaque`, no description beyond the sync marker, no attendees, no reminders (base on `workflowers-events-to-scw-busy`). My work.flowers meeting details never leak into the SCW workspace; my SCW titles do show in workFlowers.
 - Replicate `gcal-block-sweep` as my own daily reconcile/backstop, sharing my table, with `HORIZON_DAYS` kept in lockstep (30) across all my workflows.
