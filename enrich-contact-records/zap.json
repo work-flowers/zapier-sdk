@@ -1,7 +1,7 @@
 {
   "name": "enrich-contact-records",
   "workflow_id": "019f878c-64ff-7332-92df-58e39f803836",
-  "current_version_id": "01a064b4-8354-7f55-9aed-b030f4074ae5",
+  "current_version_id": "01a0b2e4-8bab-76d2-959b-2d6ca7e42a77",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AW11SY4tM7eAkPQzytW3yg",
   "enabled": true,
   "trigger": {
@@ -16,11 +16,10 @@
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "lusha": "02532e03-2b39-869c-8fe4-15257e2b099c",
-    "apollo": "02be390b-7f16-8214-9337-c9a9b04cf4f7",
-    "enrichment": "025703ba-3a5f-8132-9138-e87fb3599abc"
+    "bettercontact": "027e9dfc-e7ad-8889-a0b4-c34f9b65a362"
   },
   "created_at": "2026-07-22T01:59:12.898Z",
   "version_created_at": "2026-08-12T12:38:14.866Z",
-  "description": "Enrich Notion contact records with person profile data via a three-source cascade: Apollo people/match first (it also returns a profile photo and bio), then Lusha (search_and_enrich_contacts resolves the id, enrich_contacts reveals emails only — no phone credits), then NinjaPear. An enriched email is written only when the match is corroborated against something the CRM already holds — a shared address, the contact's LinkedIn profile, the known company domain, a Lusha hit on the contact's own identifier, or NinjaPear's domain+name resolution; an uncorroborated address is written nowhere (not Primary, not Secondary, not the contact Table) and is named in the outcome comment instead. Once corroborated, an enriched work address takes Primary Email when the existing Primary is a consumer mailbox; a corporate Primary is treated as curated and left alone. Addresses compare case-insensitively, name falls back to the page title, and the outcome comment names each failed source separately. Empty webhook pings (URL tests) are skipped without raising. NinjaPear is never queried with a personal email and is gated on domain + name."
+  "description": "Enrich Notion contact records with a work email and profile signals via BetterContact. The request is an async waterfall job: the durable submits it with its own ctx.createCallback URL as the webhook, parks, and resumes when BetterContact posts the terminated result (polling get_contact is the fallback when the webhook never arrives, incl. the on_hold out-of-credits state). Requires first + last name and a company domain (Company rollup, else the corporate Primary Email host). An enriched email is written only when corroborated against something the CRM already holds — a shared address, the contact's LinkedIn profile, the known company domain, or the request being gated on the contact's own domain + name — and only when BetterContact verifies it deliverable or catch_all_safe; an uncorroborated or unverified address is named in the outcome comment and written nowhere. A corroborated work address takes Primary Email when the existing Primary is a consumer mailbox; a corporate Primary is left alone. Empty webhook pings are skipped without raising. Replaced the Apollo → Lusha → NinjaPear cascade on 2026-09-18.",
+  "enrichment_note": "BetterContact returns no bio, no photo (contact_avatar is a documented always-null legacy key) and rarely a job title on an email-only waterfall, so Bio is left as it is. The former Path C icon/cover update was removed 2026-09-18 — no acceptable source returns photos. Callback timeout 600s, then 5 polls 60s apart. The callback URL host is code-substrate-runner.zapier.com (not the SDK default); verified live 2026-09-18."
 }

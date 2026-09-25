@@ -24,7 +24,7 @@
       "name": "whatsapp-message-to-slack",
       "entry_file": "workflow.inbound.ts",
       "workflow_id": "019fad12-9311-7c04-92d2-4e979bfb8db3",
-      "current_version_id": "019fad13-0e93-72da-b9fa-54578a6405e3",
+      "current_version_id": "01a0cbe1-3c0e-7c04-8587-590e67098f06",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaScfItpnoOB09wBA82kcw",
       "enabled": true,
       "trigger": {
@@ -44,7 +44,7 @@
       "name": "slack-reply-to-whatsapp",
       "entry_file": "workflow.outbound.ts",
       "workflow_id": "019fad12-a4d6-7a4e-bb4a-cfdc65a148a8",
-      "current_version_id": "019fad13-4b3b-7727-9656-975fb9a15fcc",
+      "current_version_id": "01a0cbe1-6502-7eb1-bad2-e9a62ced97b0",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR5n77hHpWvLlf4Xfcbumw",
       "enabled": true,
       "trigger": {
@@ -65,7 +65,7 @@
       "name": "whatsapp-message-status",
       "entry_file": "workflow.status.ts",
       "workflow_id": "019fad12-b521-7852-a01e-80e0be5eb56d",
-      "current_version_id": "019fad13-82da-763d-a745-ad3646c9440c",
+      "current_version_id": "01a0cbe1-8ec7-757b-bfc2-fa82196f312f",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeQe_pLyd-ie3fBZLB4lA",
       "enabled": true,
       "trigger": {
@@ -111,12 +111,6 @@
         "correctable": "From, To and Direction are filled or corrected, never blanked."
       },
       "known_dirty_data": "Of 89 rows at migration time: 27 had a null Body and only 13 had a Message Ts. Both follow from the classic design — the status Zap could create the row before the sending Zap logged it, and the template-message Zap logs nothing at all. Zero rows carried status `sent`, since the status Zap always overwrote it."
-    },
-    "users": {
-      "id": "01JM3J9SG5X6S8GBSSC8AS28AT",
-      "name": "[Table] Internal User IDs",
-      "role": "Read only, by slack-reply-to-whatsapp, to sign a reply with the replier's first name.",
-      "note": "Owned by internal-user-ids-to-table-and-notion. The classic Zap looked a user up with success-on-miss OFF, so a reply from anyone not in this Table errored the whole Zap; the reply now simply goes unsigned."
     }
   },
   "external_dependencies": {

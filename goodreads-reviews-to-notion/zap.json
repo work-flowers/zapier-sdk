@@ -1,0 +1,33 @@
+{
+  "name": "goodreads-reviews-to-notion",
+  "workflow_id": "01a0a8aa-8119-757e-aa13-448cceeb9ef1",
+  "current_version_id": "01a0a8aa-8e0b-7d34-bc59-fbda7e4f3d31",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQbPufp-hUjK0JOaWQz2qw",
+  "enabled": true,
+  "is_private": false,
+  "deploy": {
+    "state": "published",
+    "workflow_name": "Log Book Reviews in Notion",
+    "description": "Goodreads 'read' shelf RSS (new item) -> create a 'Book Review' idea in the Notion Social Content data source (a finished book becomes a LinkedIn content idea). Migrated from the classic two-step Zap 'Log Book Reviews in Notion'.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "RSSCLIAPI@1.1.0",
+    "action": "new_feed",
+    "authentication_id": null,
+    "params": {
+      "url": "https://www.goodreads.com/review/list_rss/2937402?key=tXnZa0qGplVpU55rWcXOaECdFJVsMDABuLTHkX5dCvGPmSk9&shelf=read",
+      "trigger_style": "smart"
+    },
+    "trigger_note": "RSS by Zapier 'New Item in Feed' — a polling (read) trigger, no auth. `url` is Dennis's Goodreads read-shelf RSS feed; `trigger_style: smart` is the classic Zap's setting. The feed guid dedups new items at the trigger, so the workflow needs no dedup ledger.",
+    "no_webhook_available": true
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  }
+}

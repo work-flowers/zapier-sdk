@@ -6,12 +6,17 @@
 // for each affected deployment, mirrors the workflows-modify "direct publish"
 // path: fetch the DEPLOYED version's metadata, rebuild source_files from the
 // repo, and republish carrying that metadata forward — dependencies, durable
-// version, connections and app-versions. Getting the trigger-vs-manual start
+// version and app-versions. Getting the trigger-vs-manual start
 // mode wrong silently drops a live trigger, so this script REFUSES (non-zero
 // exit, nothing published) on anything ambiguous rather than guessing:
 //
-// The TRIGGER is the one thing not carried forward: zap.json is its source of
-// truth, the same way it is for the code. Every republish compares the trigger
+// The TRIGGER and the CONNECTION BINDINGS are not carried forward blindly:
+// zap.json is their source of truth, the same way it is for the code. Bindings
+// zap.json declares replace the deployed ones when they differ (added
+// 2026-09-18, when enrich-contact-records swapped three enrichment connections
+// for one and the carried-forward set would have left the new alias unbound —
+// a publish that succeeds and then fails on the first run); a zap.json with no
+// `connections` keeps the deployed set. Every republish compares the trigger
 // zap.json declares against the deployed one, on the four fields that are
 // actually Zapier's (selected_api, action, authentication_id, params — the rest
 // of the block is repo annotation and a webhook_url readback). Identical, the
@@ -259,6 +264,41 @@ export function resolveTriggerBlock(dir, dep) {
   return validateTrigger(dir, block ?? null);
 }
 
+// ---- Connection bindings: zap.json wins when it declares any ---------------
+//
+// publish wants { alias: { connectionId } }; zap.json stores { alias: id } —
+// top-level, or per deployment in a multi-deployment dir when the entry has its
+// own `connections`. Non-string values are repo notes, not bindings.
+export function declaredConnections(dir, dep) {
+  const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+  let source = zap.connections;
+  if (Array.isArray(zap.deployments)) {
+    const d = zap.deployments.find((x) => x.workflow_id === dep.workflowId);
+    if (d && d.connections !== undefined) source = d.connections;
+  }
+  const out = {};
+  for (const [alias, value] of Object.entries(source || {})) {
+    if (typeof value !== "string") continue;
+    out[alias] = { connectionId: value };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Alias → id, in either shape, order-insensitive.
+export function connectionIds(c) {
+  const out = {};
+  for (const [alias, v] of Object.entries(c || {})) {
+    const id = v && typeof v === "object" ? v.connectionId ?? v.connection_id ?? null : v;
+    if (typeof id === "string") out[alias] = id;
+  }
+  return out;
+}
+
+export function sameConnections(a, b) {
+  const norm = (c) => JSON.stringify(Object.entries(connectionIds(c)).sort());
+  return norm(a) === norm(b);
+}
+
 // ---- First publish of a brand-new Zap -----------------------------------
 
 // Read the `deploy` block a not-yet-created Zap declares, and fail loudly on
@@ -449,7 +489,7 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
 
   const dependencies = version?.dependencies ?? null;
   const durableVersion = version?.zapier_durable_version ?? null;
-  const connections = version?.connections ?? null;
+  const deployedConnections = version?.connections ?? null;
   const appVersions = version?.app_versions ?? null;
   const deployedTrigger = version?.trigger ?? null;
 
@@ -458,10 +498,20 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const desired = resolveTriggerBlock(dir, dep);
   const triggerChanged = !sameTrigger(desired, deployedTrigger);
 
-  // 3. This deployment is only here because zap.json changed, and the trigger it
-  //    declares is what is already live: nothing to publish. (Checked BEFORE the
-  //    draft refusal below, so an open draft can't fail a run that is a no-op.)
-  if (!dep.bySource && !triggerChanged) {
+  // 2b. Same for the connection bindings, when zap.json declares any: a Zap
+  //     that swaps an app has a new alias in its source, and carrying the
+  //     deployed set forward would publish fine and fail on the first run with
+  //     that alias unbound. A zap.json with no `connections` keeps the deployed
+  //     set (it is not declaring anything).
+  const declared = declaredConnections(dir, dep);
+  const connectionsChanged = declared != null && !sameConnections(declared, deployedConnections);
+  const connections = connectionsChanged ? declared : deployedConnections;
+
+  // 3. This deployment is only here because zap.json changed, and neither the
+  //    trigger nor the bindings it declares differ from what is live: nothing
+  //    to publish. (Checked BEFORE the draft refusal below, so an open draft
+  //    can't fail a run that is a no-op.)
+  if (!dep.bySource && !triggerChanged && !connectionsChanged) {
     return { skipped: "no-trigger-change", workflowId: id };
   }
 
@@ -508,17 +558,26 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     hasConnections: connections != null,
     hasAppVersions: appVersions != null,
     triggerChanged,
-    reason: dep.bySource ? (triggerChanged ? "source + trigger" : "source") : "trigger",
+    connectionsChanged,
+    reason: [
+      dep.bySource ? "source" : null,
+      triggerChanged ? "trigger" : null,
+      connectionsChanged ? "connections" : null,
+    ]
+      .filter(Boolean)
+      .join(" + "),
     triggerFrom: triggerCore(deployedTrigger),
     triggerTo: triggerCore(desired),
+    connectionsFrom: connectionIds(deployedConnections),
+    connectionsTo: connectionIds(connections),
   };
 
   if (!execute) return { plan };
 
-  // 9. Publish, carrying every piece of metadata forward. The trigger is the one
-  //    exception: unchanged, the deployed object goes back verbatim (so a field
-  //    the canonical core doesn't model can't be dropped); changed, the repo's
-  //    declared core replaces it.
+  // 9. Publish, carrying every piece of metadata forward. The trigger and the
+  //    bindings are the exceptions: unchanged, the deployed object goes back
+  //    verbatim (so a field the canonical core doesn't model can't be dropped);
+  //    changed, the repo's declared one replaces it.
   const rest = ["publish-workflow-version", id, JSON.stringify(sourceFiles)];
   if (dependencies != null) rest.push("--dependencies", JSON.stringify(dependencies));
   if (durableVersion != null) rest.push("--zapier-durable-version", String(durableVersion));
@@ -861,6 +920,11 @@ function main() {
       log(`  - live: \`${JSON.stringify(plan.triggerFrom)}\``);
       log(`  - repo: \`${JSON.stringify(plan.triggerTo)}\``);
     }
+    if (plan.connectionsChanged) {
+      log(`- 🔌 connection bindings change — zap.json wins:`);
+      log(`  - live: \`${JSON.stringify(plan.connectionsFrom)}\``);
+      log(`  - repo: \`${JSON.stringify(plan.connectionsTo)}\``);
+    }
     if (args.execute) {
       syncBackVersionId(dir, currentVersionId, newVersionId);
       synced.push({ dir, workflowId: dep.workflowId, newVersionId, triggerChanged: plan.triggerChanged });
@@ -872,7 +936,8 @@ function main() {
         log(`- 🔗 catch URL ${result.webhookUrl} was missing from zap.json — recorded now (unchanged on Zapier)`);
       }
     } else {
-      log(`- would republish from \`${plan.fromVersion}\` carrying deps/connections/app-versions forward`);
+      log(`- would republish from \`${plan.fromVersion}\` carrying deps/app-versions forward` +
+        (plan.connectionsChanged ? " with the declared connection bindings" : ", connections unchanged"));
     }
     log("");
   }

@@ -8,27 +8,30 @@ const sdk = createZapierSdk();
 // Connection aliases are resolved at run/publish time via --connections.
 const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
-// Primary enrichment: Apollo.io people/match. Called through Apollo's native
-// "API Request (Beta)" action (_zap_raw_request), which makes an authenticated
-// raw HTTP request that includes the integration's own auth headers — a plain
-// sdk.fetch through the connection does NOT get those headers and Apollo
-// rejects it with 401. Preferred over Lusha because it also returns a profile
-// photo (page icon/cover) and a bio, which Lusha never provides.
-const APOLLO_APP_KEY = "ApolloCLIAPI";
-const APOLLO_CONNECTION = "apollo";
-const APOLLO_RAW_REQUEST_ACTION = "_zap_raw_request";
-const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
-// Second source: Lusha Connect. Two-call flow — despite its name,
-// `search_and_enrich_contacts` only resolves a Lusha contact id (its output
-// carries no email fields at all; verified 2026-08-10 against Megan Anderson
-// with reveal set and unset). The id then goes to `enrich_contacts` with
-// reveal:["emails"], which returns the work email plus title/location/LinkedIn
-// and never spends phone credits — this workflow doesn't consume phone data.
-const LUSHA_APP_KEY = "LushaCLIAPI";
-const LUSHA_CONNECTION = "lusha";
-// Final fallback: NinjaPear (unofficial Zapier app).
-const ENRICHMENT_APP_KEY = "App243984CLIAPI";
-const ENRICHMENT_CONNECTION = "enrichment";
+// Enrichment: BetterContact. `enrich_contact` submits an ASYNC waterfall job
+// and answers with a request id at once; the result lands later, either POSTed
+// to the `webhook` URL sent with the job (this durable's own callback URL — see
+// the workflow body) or read back with `get_contact` by request id. Only
+// `status: "terminated"` carries results (`not_started` / `processing` are
+// still running; `on_hold` means the account is out of credits and the job
+// resumes by itself once topped up). Verified live 2026-09-18: the webhook
+// reached the durable's callback ~90s after submit and the run resumed with the
+// payload; the body is identical to `GET /async/{request_id}`.
+const BETTERCONTACT_APP_KEY = "App217413CLIAPI";
+const BETTERCONTACT_CONNECTION = "bettercontact";
+/** How long the run parks for BetterContact's webhook before falling back to
+ *  polling. Delivery is normally well under two minutes; ten minutes covers a
+ *  slow waterfall without leaving a run parked all day. */
+const CALLBACK_TIMEOUT_SECONDS = 600;
+/** Polling fallback, used only when the webhook never arrives (delivery lost,
+ *  or the job is `on_hold`). Waits are free; each poll is a billed action, so
+ *  the loop is short. */
+const POLL_ATTEMPTS = 5;
+const POLL_WAIT_SECONDS = 60;
+/** Email verification statuses that may be written to the contact. A plain
+ *  `catch_all` (unverified) or `undeliverable` address is reported in the
+ *  outcome comment but never written. */
+const WRITABLE_EMAIL_STATUSES = new Set(["deliverable", "catch_all_safe"]);
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
@@ -171,12 +174,12 @@ function extractContactData(raw: unknown): ContactData {
     .map((r: any) => normalizeDomain(r?.url))
     .filter((d: string) => d !== "" && !isFreemail(`x@${d}`));
 
-  // A NinjaPear lookup only ever resolves on employer_website + a name —
-  // neither a work email nor a LinkedIn profile URL matches on its own
-  // (verified 2026-07-28; see "Why the NinjaPear fallback misses" in the
-  // README). That makes the domain the load-bearing identifier, so when the
-  // Company relation is missing or unusable, fall back to the Primary Email's
-  // own host: for any non-consumer address that IS the employer's domain.
+  // BetterContact matches on first + last name + employer domain — a work
+  // email is not an input at all and a LinkedIn URL only sharpens a match (the
+  // retired NinjaPear fallback behaved the same way, verified 2026-07-28). That
+  // makes the domain the load-bearing identifier, so when the Company relation
+  // is missing or unusable, fall back to the Primary Email's own host: for any
+  // non-consumer address that IS the employer's domain.
   const domain =
     rollupDomains[0] ??
     (isFreemail(primaryEmail)
@@ -234,17 +237,15 @@ function extractContactData(raw: unknown): ContactData {
 
 // --- Enrichment result extraction ------------------------------------------
 
-/** The cascade order: Apollo first, Lusha second, NinjaPear last. */
-type EnrichmentSource = "apollo" | "lusha" | "ninjapear";
+/** The single enrichment source. Kept as a union so the outcome comment and
+ *  corroboration keep their per-source shape if another source is added. */
+type EnrichmentSource = "bettercontact";
 
 const SOURCE_LABELS: Record<EnrichmentSource, string> = {
-  apollo: "Apollo",
-  lusha: "Lusha",
-  ninjapear: "NinjaPear",
+  bettercontact: "BetterContact",
 };
 
 interface EnrichedData {
-  profilePicUrl: string;
   linkedinUrl: string;
   country: string;
   city: string;
@@ -263,157 +264,112 @@ interface EnrichedData {
   employerDomain: string;
 }
 
-// --- Placeholder photos ----------------------------------------------------
+// --- BetterContact result extraction ---------------------------------------
 //
-// When a LinkedIn profile has no photo, Apollo does not return `photo_url:
-// null` — it returns LinkedIn's generic grey silhouette, verbatim:
-//
-//   https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2
-//
-// That is a 489-byte SVG on LinkedIn's *static asset* CDN. Real photos live on
-// `media.licdn.com/dms/image/…` and arrive as multi-kilobyte JPEGs. Truthiness
-// cannot tell them apart, so until 2026-09-03 the silhouette was imported and
-// attached as icon and cover exactly like a real photo — 7 of the 43 most
-// recent runs did so — displacing the data source's default icon with a
-// picture of nobody.
-//
-// Two guards, because they fail differently:
-//   1. `realPhotoUrl` below rejects by host, at extraction, for free. It covers
-//      every observed case and never costs an API call.
-//   2. `storeProfilePhoto` rejects by content after Notion has imported the
-//      file — SVG, or under `MIN_PHOTO_BYTES` — which catches a placeholder
-//      whose URL we have not seen (NinjaPear's, or a new LinkedIn one) at the
-//      cost of one import. The unattached upload expires on its own.
-// An empty `profilePicUrl` then takes the same route as a Lusha result: the
-// icon and cover are left alone, so a contact with a real photo keeps it.
+// One row of the terminated response's `data[]` — BetterContact's field names
+// (`contact_*`, `company_*`), shape captured from a live run on 2026-09-18.
+// An email-only waterfall fills the identity fields (email + status, LinkedIn
+// URL, company domain, country) and leaves most profile fields (`contact_job_title`,
+// `contact_city`) null unless a provider happened to return them — so a
+// BetterContact enrichment is usually an address, not a full profile, and the
+// page's Bio is left as it is. BetterContact never returns a photo
+// (`contact_avatar` is a legacy always-null key), and no other acceptable source
+// does either, so the former Path C icon/cover update was removed 2026-09-18.
 
-/** Hosts that serve site assets, never a user's uploaded photo. */
-const PLACEHOLDER_PHOTO_HOSTS = new Set(["static.licdn.com"]);
-
-/** A source's photo URL, or "" when there is none or it is a known placeholder. */
-function realPhotoUrl(v: unknown): string {
-  const url = firstString(v);
-  if (!url) return "";
-  const host = url.match(/^https?:\/\/([^/?#]+)/i)?.[1]?.toLowerCase() ?? "";
-  if (PLACEHOLDER_PHOTO_HOSTS.has(host)) return "";
-  return url;
+/** The row's address, or "" when there is none or its verification status is
+ *  not one we write (see WRITABLE_EMAIL_STATUSES). */
+function betterContactEmail(row: any): string {
+  const email = firstString(row?.contact_email_address);
+  if (!email) return "";
+  const status = (firstString(row?.contact_email_address_status) ?? "").toLowerCase();
+  return WRITABLE_EMAIL_STATUSES.has(status) ? email : "";
 }
 
-function extractEnrichedFromNinjaPear(enriched: any): EnrichedData {
-  // work_experience is an array of objects with description fields; join them.
-  const we = enriched?.work_experience;
-  const bio = Array.isArray(we)
-    ? we.map((w: any) => w?.description ?? "").filter(Boolean).join("\n\n")
-    : typeof we === "string"
-      ? we
-      : (we?.description ?? "");
-
-  const workExperience = Array.isArray(we) ? we : [];
-
-  return {
-    profilePicUrl: realPhotoUrl(enriched?.profile_pic_url),
-    linkedinUrl: firstString(enriched?.linkedin_profile_url) ?? "",
-    country: firstString(enriched?.country_name) ?? "",
-    city: firstString(enriched?.city_name) ?? "",
-    newEmail: firstString(enriched?.work_email_lookup) ?? "",
-    bio,
-    jobTitle: firstString(enriched?.current_role) ?? "",
-    firstName: firstString(enriched?.first_name) ?? "",
-    lastName: firstString(enriched?.last_name) ?? "",
-    allEmails: dedupeAddresses(
-      [
-        firstString(enriched?.work_email_lookup) ?? "",
-        firstString(enriched?.personal_email) ?? "",
-        ...(Array.isArray(enriched?.personal_emails)
-          ? enriched.personal_emails.map((e: unknown) => firstString(e) ?? "")
-          : []),
-      ].filter(Boolean),
-    ),
-    employerDomain: normalizeDomain(
-      firstString(
-        enriched?.employer_website,
-        workExperience[0]?.company_website,
-        workExperience[0]?.website,
-        workExperience[0]?.company?.website,
-      ),
-    ),
-  };
-}
-
-// Lusha's `enrich_contacts` output uses the action's labelled field keys —
-// literal keys with spaces like "First Name", "Job Title", "Email 1" /
-// "Email Type 1" (verified 2026-08-10). The raw Lusha API shapes (camelCase,
-// `emailAddresses` array) are checked as fallbacks in case the integration's
-// output mapping changes.
-
-/** Every revealed email on a Lusha contact, work addresses first. */
-function lushaEmails(c: any): string[] {
-  const pairs: Array<{ email: string; type: string }> = [];
-  for (let i = 1; i <= 5; i++) {
-    const e = firstString(c?.[`Email ${i}`]);
-    if (e)
-      pairs.push({
-        email: e,
-        type: (firstString(c?.[`Email Type ${i}`]) ?? "").toLowerCase(),
-      });
-  }
-  if (!pairs.length && Array.isArray(c?.emailAddresses)) {
-    for (const ea of c.emailAddresses) {
-      const e = firstString(ea?.email);
-      if (e)
-        pairs.push({
-          email: e,
-          type: (firstString(ea?.emailType) ?? "").toLowerCase(),
-        });
-    }
-  }
-  const work = pairs.filter((p) => p.type === "work");
-  const rest = pairs.filter((p) => p.type !== "work");
-  return dedupeAddresses([...work, ...rest].map((p) => p.email));
-}
-
-/** First revealed email on a Lusha contact, preferring type "work". */
-function lushaEmail(c: any): string {
-  return lushaEmails(c)[0] ?? "";
-}
-
-/** True when a Lusha contact carries at least one useful signal — a bare
- *  match with nothing to write means Lusha effectively found nothing. */
-function lushaContactUsable(c: any): boolean {
-  if (!c || typeof c !== "object") return false;
+/** True when the row carries at least one signal worth writing. */
+function betterContactRowUsable(row: any): boolean {
+  if (!row || typeof row !== "object") return false;
   return Boolean(
-    firstString(c["First Name"], c.firstName) ||
-      firstString(c["Last Name"], c.lastName) ||
-      firstString(c["Job Title"], c.jobTitle?.title ?? c.jobTitle) ||
-      firstString(c["LinkedIn Profile"], c.linkedinUrl) ||
-      lushaEmail(c),
+    betterContactEmail(row) ||
+      row.contact_job_title ||
+      row.contact_linkedin_profile_url ||
+      row.contact_location_country,
   );
 }
 
-function extractEnrichedFromLusha(c: any): EnrichedData {
+function extractEnrichedFromBetterContact(row: any): EnrichedData {
+  const rawEmail = firstString(row?.contact_email_address) ?? "";
   return {
-    // Lusha returns no profile photo or bio text; empty strings leave the
-    // Notion icon and Bio property untouched downstream.
-    profilePicUrl: "",
+    linkedinUrl: firstString(row?.contact_linkedin_profile_url) ?? "",
+    country: firstString(row?.contact_location_country, row?.contact_country) ?? "",
+    city: firstString(row?.contact_city, row?.contact_location_city) ?? "",
+    newEmail: betterContactEmail(row),
+    // BetterContact returns no biography; "" is a no-change write.
     bio: "",
-    linkedinUrl: firstString(c?.["LinkedIn Profile"], c?.linkedinUrl) ?? "",
-    country: firstString(c?.["Contact Location Country"], c?.location?.country) ?? "",
-    city: firstString(c?.["Contact Location City"], c?.location?.city) ?? "",
-    newEmail: lushaEmail(c),
-    jobTitle: firstString(c?.["Job Title"], c?.jobTitle?.title ?? c?.jobTitle) ?? "",
-    firstName: firstString(c?.["First Name"], c?.firstName) ?? "",
-    lastName: firstString(c?.["Last Name"], c?.lastName) ?? "",
-    allEmails: lushaEmails(c),
-    employerDomain: normalizeDomain(
-      firstString(
-        c?.["Company Domain"],
-        c?.["Company Website"],
-        c?.companyDomain,
-        c?.company?.domain,
-        c?.company?.website,
-      ),
-    ),
+    jobTitle: firstString(row?.contact_job_title) ?? "",
+    firstName: firstString(row?.contact_first_name) ?? "",
+    lastName: firstString(row?.contact_last_name) ?? "",
+    // The raw address, whatever its status: corroboration only compares it
+    // against addresses the contact already holds, it never writes it.
+    allEmails: dedupeAddresses(rawEmail ? [rawEmail] : []),
+    employerDomain: normalizeDomain(firstString(row?.company_domain)),
   };
+}
+
+// --- BetterContact async job handling ---------------------------------------
+
+/** What a BetterContact status body says, whether it arrived by webhook or by
+ *  polling. `status` is BetterContact's (`terminated` | `processing` |
+ *  `not_started` | `on_hold`), or "error" / "unknown" for a call that failed or
+ *  answered with no status. `row` is `data[0]` when present. */
+interface BetterContactOutcome {
+  status: string;
+  row: any;
+  error?: string;
+}
+
+function readBetterContactResult(payload: unknown): BetterContactOutcome {
+  const body = (payload ?? {}) as any;
+  const status = String(body?.status ?? "unknown").toLowerCase();
+  const row = Array.isArray(body?.data) ? (body.data[0] ?? null) : null;
+  return { status, row };
+}
+
+/** Polling fallback for a job whose webhook never arrived: wait, read the job
+ *  back with `get_contact`, stop on a terminal status. Takes `ctx` so the
+ *  loop-indexed step ids live outside the workflow body, which the publish-time
+ *  analyzer requires to use string-literal ids. A `get_contact` that throws
+ *  while the job is still running (Zapier searches may error on a 202 body) is
+ *  treated as "not yet" and polled again. */
+async function pollBetterContactResult(
+  ctx: DurableCtx,
+  stepPrefix: string,
+  requestId: string,
+): Promise<BetterContactOutcome> {
+  let last: BetterContactOutcome = { status: "unknown", row: null };
+  for (let i = 0; i < POLL_ATTEMPTS; i++) {
+    await ctx.wait(`${stepPrefix}-poll-wait-${i}`, POLL_WAIT_SECONDS);
+    last = await ctx.step(`${stepPrefix}-poll-${i}`, async () => {
+      try {
+        const res = await sdk.runAction({
+          appKey: BETTERCONTACT_APP_KEY,
+          actionType: "search",
+          actionKey: "get_contact",
+          connection: BETTERCONTACT_CONNECTION,
+          inputs: { id: requestId },
+        });
+        return readBetterContactResult(firstResult(res));
+      } catch (err) {
+        return {
+          status: "error",
+          row: null,
+          error: String((err as Error)?.message ?? err),
+        } as BetterContactOutcome;
+      }
+    });
+    console.log(`BetterContact poll ${i + 1}/${POLL_ATTEMPTS} for ${requestId}: ${last.status}`);
+    if (last.status === "terminated" || last.status === "on_hold") return last;
+  }
+  return last;
 }
 
 // --- Freemail detection -----------------------------------------------------
@@ -469,73 +425,6 @@ function normalizeDomain(value: string | null | undefined): string {
   return v.includes(".") ? v : "";
 }
 
-/** Apollo returns a placeholder like `email_not_unlocked@domain.com` when the
- *  email is locked behind credits; treat those as "no email". */
-function apolloRealEmail(email: unknown): string {
-  const e = firstString(email);
-  if (!e || /email_not_unlocked/i.test(e)) return "";
-  return e;
-}
-
-/** True when Apollo's `person` object carries at least one useful signal.
- *  A bare/empty match means Apollo effectively found nothing → fall back. */
-function apolloPersonUsable(person: any): boolean {
-  if (!person || typeof person !== "object") return false;
-  return Boolean(
-    person.first_name ||
-      person.last_name ||
-      person.name ||
-      person.linkedin_url ||
-      person.title ||
-      realPhotoUrl(person.photo_url) ||
-      apolloRealEmail(person.email),
-  );
-}
-
-function extractEnrichedFromApollo(person: any): EnrichedData {
-  // employment_history entries carry per-role descriptions; join them into a
-  // bio. Fall back to the person-level headline when no descriptions exist.
-  const employment = Array.isArray(person?.employment_history)
-    ? person.employment_history
-    : [];
-  const descriptions = employment
-    .map((e: any) => e?.description)
-    .filter((d: unknown): d is string => typeof d === "string" && d.trim() !== "");
-  const bio = descriptions.length
-    ? descriptions.join("\n\n")
-    : (firstString(person?.headline) ?? "");
-
-  return {
-    profilePicUrl: realPhotoUrl(person?.photo_url),
-    linkedinUrl: firstString(person?.linkedin_url) ?? "",
-    country: firstString(person?.country) ?? "",
-    city: firstString(person?.city) ?? "",
-    newEmail: apolloRealEmail(person?.email),
-    bio,
-    jobTitle: firstString(person?.title) ?? "",
-    firstName: firstString(person?.first_name) ?? "",
-    lastName: firstString(person?.last_name) ?? "",
-    allEmails: dedupeAddresses(
-      [
-        apolloRealEmail(person?.email),
-        ...(Array.isArray(person?.personal_emails)
-          ? person.personal_emails.map((e: unknown) => apolloRealEmail(e))
-          : []),
-        ...(Array.isArray(person?.contact_emails)
-          ? person.contact_emails.map((e: any) => apolloRealEmail(e?.email))
-          : []),
-      ].filter(Boolean),
-    ),
-    employerDomain: normalizeDomain(
-      firstString(
-        person?.organization?.primary_domain,
-        person?.organization?.website_url,
-        person?.organization?.domain,
-      ),
-    ),
-  };
-}
-
 // --- Identity corroboration -------------------------------------------------
 //
 // An enriched email address is the one field here that carries IDENTITY. It
@@ -556,34 +445,27 @@ function extractEnrichedFromApollo(person: any): EnrichedData {
 // correctly trusting the Table.
 //
 // So before an enriched address is written, the match has to be corroborated
-// against something the CRM already knows. The bar differs per source because
-// their matching does:
+// against something the CRM already knows. Any one of these clears it:
 //
-//   * Apollo — fuzzy. Requires evidence in the RETURNED record: an address the
-//     contact already holds, the contact's LinkedIn URL, or the company domain
-//     the CRM already has.
-//   * Lusha — exact-identifier search (`id | linkedinUrl | email | firstName +
-//     lastName + company`). When the request carried only identifiers the
-//     contact OWNS — their email, their LinkedIn URL — and no name branch at
-//     all, a hit IS the corroboration. This is the case that legitimately
-//     discovers a work address for a contact sitting on a personal mailbox, and
-//     the guard deliberately keeps it working.
-//   * NinjaPear — only ever resolves on employer_website + name, and the
-//     workflow gates the call on the contact's OWN company domain, so any
-//     profile it returns is a person at the employer the CRM already recorded.
+//   * an address the contact already holds appears on the returned record;
+//   * the returned LinkedIn URL and the contact's reduce to the same slug;
+//   * the enriched address's host, or the record's employer domain, equals the
+//     company domain the CRM already holds;
+//   * the source only resolves on the contact's OWN company domain + name, so
+//     any record it returns is a person at the employer already recorded. This
+//     is BetterContact's case: the request is gated on first + last name +
+//     company domain, and its result echoes `company_domain`, so in practice the
+//     domain rule fires first and this one is the backstop.
+//
+// The per-source shape is kept (Apollo's fuzzy name-only match was the original
+// offender, and needed evidence in the returned record) so a future fuzzy source
+// does not inherit the gated-lookup exemption by accident.
 //
 // An uncorroborated address is not written anywhere — not Primary, not
 // Secondary, not the Table — and is named in the outcome comment for a human to
-// judge. Everything else the source returned (title, bio, city, photo) is still
+// judge. Everything else the source returned (title, city, country) is still
 // written: those are visible on the page and carry no identity downstream, and
 // in the Grace case they were in fact correct.
-//
-// The known false negative: a contact on a personal mailbox with no Company and
-// no LinkedIn URL, whom Apollo matched genuinely by that personal address.
-// Apollo is called with `reveal_personal_emails: false`, so the address we sent
-// usually is not echoed back and the match reads as uncorroborated. That costs
-// an enrichment we would previously have taken — visibly, in the comment,
-// rather than silently writing a stranger's identity. That trade is the point.
 
 interface IdentityCorroboration {
   verified: boolean;
@@ -595,9 +477,6 @@ function corroborateEnrichedIdentity(
   contact: ContactData,
   enriched: EnrichedData,
   source: EnrichmentSource,
-  /** Lusha only: the search carried the contact's own email and/or LinkedIn
-   *  URL, and no name + domain branch that could have matched someone else. */
-  matchedOwnIdentifierOnly: boolean,
 ): IdentityCorroboration {
   const ownAddresses = dedupeAddresses([
     contact.primaryEmail,
@@ -627,17 +506,10 @@ function corroborateEnrichedIdentity(
     }
   }
 
-  if (source === "ninjapear") {
-    // The lookup is gated on the contact's own company domain + name, so the
-    // profile is a person at the employer the CRM already holds.
+  if (source === "bettercontact") {
+    // The request is gated on the contact's own first + last name + company
+    // domain, so the record is a person at the employer the CRM already holds.
     return { verified: true, how: "resolved from the contact's own company domain and name" };
-  }
-
-  if (source === "lusha" && matchedOwnIdentifierOnly) {
-    return {
-      verified: true,
-      how: "Lusha matched on the contact's own email or LinkedIn URL",
-    };
   }
 
   return {
@@ -652,144 +524,6 @@ function corroborateEnrichedIdentity(
 function normalizeLinkedin(url: string | null | undefined): string {
   const m = (url ?? "").trim().toLowerCase().match(/\/in\/([^/?#]+)/);
   return m?.[1] ?? "";
-}
-
-// --- Profile photo storage -------------------------------------------------
-//
-// Notion renders an `external` icon/cover by re-fetching that URL on every
-// view. Apollo hands back LinkedIn's CDN link verbatim, and those links are
-// signed and time-limited — `…?e=<unix-expiry>&v=beta&t=<signature>`. A few
-// weeks after enrichment the URL starts 403ing and Notion, having stored the
-// dead link forever, renders empty white space: the page still *has* an icon
-// and cover, they just draw as nothing. Nothing errors, so it goes unnoticed.
-// An audit on 2026-08-12 found 210 of 962 contacts already in that state.
-//
-// Storing the bytes in Notion instead makes it permanent. The PATCH comes back
-// as `type: "file"` on Notion's own S3, whose URL Notion re-signs on each read.
-// One upload can back both the icon and the cover — verified 2026-08-12 against
-// a live contact; the docs don't state it either way.
-//
-// Notion does the downloading, via `file_uploads` mode `external_url`.
-//
-// Note this is the OPPOSITE choice to `esignatures-status-to-notion`, which
-// files its PDF by downloading the bytes and pushing a `single_part` upload.
-// Both are right for their case: `external_url` makes Notion probe the URL
-// with `HEAD` first, and the S3 links eSignatures hands out are presigned for
-// `GET` alone, so they answer that probe with 403. LinkedIn's CDN answers HEAD
-// normally, so the simpler route works here — no download, no hand-built
-// multipart body, no content-type matching to get wrong.
-//
-// The durable cannot casually download the bytes itself either way: a bare
-// `fetch` fails for every host — example.com, pbs.twimg.com, media.licdn.com,
-// even api.notion.com — and `sdk.fetch` *with a connection* is domain-filtered
-// to that connection's own app ("Domain media.licdn.com did not match expected
-// domain filter `api.notion.com`"). Both probed against the real runtime on
-// 2026-08-12. The escape hatch, if `external_url` ever stops working, is
-// `sdk.fetch` with **no connection** — see that Zap's README.
-
-/** How many times to poll an `external_url` import before giving up. Notion
- *  has finished on the first poll in every observed case (~1s); the extra
- *  attempts are headroom, not the expected path. */
-const PHOTO_UPLOAD_POLL_ATTEMPTS = 6;
-
-/** Smallest file accepted as a real photo. LinkedIn's silhouette is 489 bytes;
- *  the smallest genuine 200×200 JPEG in the run history is about 7.8 KB. */
-const MIN_PHOTO_BYTES = 1024;
-
-/** Thrown by `storeProfilePhoto` when the imported file is a placeholder, not
- *  a photo (see "Placeholder photos"). Distinct from a failed import so Path C
- *  can skip quietly instead of reporting a storage failure that never was. */
-class PlaceholderPhotoError extends Error {
-  constructor(detail: string) {
-    super(`placeholder image (${detail})`);
-    this.name = "PlaceholderPhotoError";
-  }
-}
-
-/** A filename for the stored photo. `external_url` mode *requires* one (a
- *  create without it is rejected `400 validation_error`), but the photo URLs
- *  Apollo and NinjaPear hand back are LinkedIn CDN links with no extension in
- *  the path, so the extension is taken from the path when there is one and
- *  falls back to `.jpg`, which is what LinkedIn serves. The stored file's real
- *  content type comes from the response Notion fetches, not from this name. */
-function photoFilename(photoUrl: string): string {
-  const path = photoUrl.split("?")[0];
-  const ext = path.match(/\.(jpe?g|png|webp|gif)$/i)?.[1];
-  return `profile-photo.${ext ? ext.toLowerCase() : "jpg"}`;
-}
-
-/** Hand `photoUrl` to Notion to fetch and store, returning the file upload id
- *  to attach as icon/cover. Throws on any failure — `PlaceholderPhotoError`
- *  when the file Notion fetched is a silhouette rather than a photo — and the
- *  caller catches inside its own step so a dead photo URL never spins the
- *  step-retry loop or sinks an otherwise good enrichment.
- *
- *  MUST be called from inside a `ctx.step` — it makes network calls. */
-async function storeProfilePhoto(photoUrl: string): Promise<string> {
-  const createRes = await sdk.fetch(`${NOTION_API}/file_uploads`, {
-    connection: NOTION_CONNECTION,
-    method: "POST",
-    headers: {
-      "Notion-Version": NOTION_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      mode: "external_url",
-      external_url: photoUrl,
-      filename: photoFilename(photoUrl),
-    }),
-  });
-  if (!createRes.ok) {
-    throw new Error(
-      `file_upload create failed (${createRes.status}): ${await createRes.text()}`,
-    );
-  }
-  const created = await createRes.json();
-  const uploadId = firstString(created?.id);
-  if (!uploadId) throw new Error("file_upload create returned no id");
-
-  // The import is asynchronous — `pending` until Notion has pulled the bytes.
-  let upload: any = created;
-  let status = firstString(upload?.status) ?? "pending";
-  for (let i = 0; i < PHOTO_UPLOAD_POLL_ATTEMPTS && status === "pending"; i++) {
-    const pollRes = await sdk.fetch(`${NOTION_API}/file_uploads/${uploadId}`, {
-      connection: NOTION_CONNECTION,
-      method: "GET",
-      headers: { "Notion-Version": NOTION_VERSION },
-    });
-    if (!pollRes.ok) {
-      throw new Error(
-        `file_upload poll failed (${pollRes.status}): ${await pollRes.text()}`,
-      );
-    }
-    upload = await pollRes.json();
-    status = firstString(upload?.status) ?? "pending";
-  }
-
-  if (status !== "uploaded") {
-    // `failed` means Notion could not fetch the URL — an already-expired link,
-    // or a host that refuses Notion's fetcher. Nothing to retry.
-    throw new Error(`Notion could not import the photo (status: ${status})`);
-  }
-
-  // Content guard — see "Placeholder photos". `content_type` and
-  // `content_length` describe the bytes Notion actually fetched, not the
-  // `.jpg` filename invented above, so this judges the real file. No genuine
-  // profile photo is an SVG, and none is smaller than a kilobyte.
-  const contentType = (firstString(upload?.content_type) ?? "").toLowerCase();
-  const contentLength =
-    typeof upload?.content_length === "number" ? upload.content_length : null;
-  if (contentType.includes("svg")) {
-    throw new PlaceholderPhotoError(
-      `${contentType}, ${contentLength ?? "?"} bytes`,
-    );
-  }
-  if (contentLength !== null && contentLength < MIN_PHOTO_BYTES) {
-    throw new PlaceholderPhotoError(
-      `${contentType || "unknown type"}, ${contentLength} bytes`,
-    );
-  }
-  return uploadId;
 }
 
 // --- Durable context type --------------------------------------------------
@@ -809,6 +543,7 @@ type DurableCtx = DurableContext;
 //   Path D "Same or No Prior Email" — set primary email to enriched email
 //   Path G "New Email"            — keep existing primary, add new to secondary
 //   Path C "Update Page Icon"      — set page icon + cover to profile pic
+//                                    (removed 2026-09-18: no source returns photos)
 //   Path E "Exit"                  — return
 //
 // In the Durable these collapse to sequential if/else blocks, plus one path the
@@ -827,11 +562,8 @@ async function updateContactRecord(
   contact: ContactData,
   enriched: EnrichedData,
   source: EnrichmentSource,
-  matchedOwnIdentifierOnly: boolean,
 ): Promise<{
   emailPath: string;
-  iconUpdated: boolean;
-  iconError?: string;
   unverifiedEmail?: string;
   identity?: string;
 }> {
@@ -843,12 +575,7 @@ async function updateContactRecord(
   // function then behaves exactly as it does for a source that returned no
   // email at all, so nothing reaches Primary, Secondary or the Table.
   const identity = enriched.newEmail
-    ? corroborateEnrichedIdentity(
-        contact,
-        enriched,
-        source,
-        matchedOwnIdentifierOnly,
-      )
+    ? corroborateEnrichedIdentity(contact, enriched, source)
     : { verified: true, how: "no email returned" };
   const unverifiedEmail =
     enriched.newEmail && !identity.verified ? enriched.newEmail : "";
@@ -971,7 +698,7 @@ async function updateContactRecord(
   });
 
   if (updateResult.archived) {
-    return { emailPath: "page-archived", iconUpdated: false };
+    return { emailPath: "page-archived" };
   }
 
   // --- Index the enriched email in the email -> page id Table ---
@@ -1021,78 +748,8 @@ async function updateContactRecord(
     });
   }
 
-  // --- Update page icon + cover if a profile pic was found (Path C) ---
-  //
-  // The photo is uploaded to Notion rather than linked. See "Profile photo
-  // storage" above: linking the source URL is what left 210 contacts rendering
-  // a blank icon and cover once the signed link expired.
-  let iconUpdated = false;
-  let iconError: string | undefined;
-  if (enriched.profilePicUrl) {
-    const outcome = await ctx.step("update-page-icon", async () => {
-      // The import is caught in here, not outside the step: a photo URL that
-      // is already dead or that Notion refuses to fetch is a fact about the
-      // source, not a transient failure, so retrying it just burns the retry
-      // budget and would eventually fail a run whose email and property
-      // updates all succeeded. A Notion PATCH failure below is genuinely worth
-      // retrying and is therefore left to throw.
-      let uploadId: string;
-      try {
-        uploadId = await storeProfilePhoto(enriched.profilePicUrl);
-      } catch (err) {
-        if (err instanceof PlaceholderPhotoError) {
-          return {
-            ok: false as const,
-            placeholder: true as const,
-            detail: err.message,
-          };
-        }
-        return {
-          ok: false as const,
-          error: String((err as Error)?.message ?? err),
-        };
-      }
-
-      const res = await sdk.fetch(`${NOTION_API}/pages/${contact.pageId}`, {
-        connection: NOTION_CONNECTION,
-        method: "PATCH",
-        headers: {
-          "Notion-Version": NOTION_VERSION,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          icon: { type: "file_upload", file_upload: { id: uploadId } },
-          cover: { type: "file_upload", file_upload: { id: uploadId } },
-        }),
-      });
-      if (!res.ok) {
-        throw new Error(
-          `Notion icon update failed (${res.status}): ${await res.text()}`,
-        );
-      }
-      return { ok: true as const };
-    });
-
-    if (outcome.ok) {
-      iconUpdated = true;
-    } else if ("placeholder" in outcome) {
-      // Not a failure: the source had no photo and said so with a picture of
-      // nobody. Logged so the run history shows it was seen; the outcome
-      // comment then reads as a photo-less enrichment, same as a Lusha result.
-      console.log(
-        `Placeholder photo skipped for ${contact.pageId}: ${outcome.detail}`,
-      );
-    } else {
-      // Surfaced in the outcome comment rather than swallowed — a photo that
-      // never stored is worth seeing on the page, just not worth failing over.
-      iconError = outcome.error;
-    }
-  }
-
   return {
     emailPath,
-    iconUpdated,
-    iconError,
     unverifiedEmail: unverifiedEmail || undefined,
     identity: unverifiedEmail ? identity.how : undefined,
   };
@@ -1111,13 +768,11 @@ interface WorkflowResult {
   /** Which enrichment source produced the data, when enriched. */
   source?: EnrichmentSource;
   reason?: string;
-  /** Per-source failure notes, one entry per source that failed (in order).
-   *  When enriched via a later source, these say why the earlier sources were
-   *  skipped over; when nothing enriched, they cover every source tried.
-   *  Kept separate so the outcome comment can show each source's failure on
-   *  its own — joining them first and truncating after is what hid "ninjapear
-   *  returned no result" behind Apollo's verbose out-of-credits blob and made
-   *  the fallback look like it never ran (TKT-811). */
+  /** Failure notes, one entry per source that failed (in order). Kept as a
+   *  list so the outcome comment can show each on its own — joining them first
+   *  and truncating after is what once hid a fallback's "no result" behind a
+   *  verbose primary-source error and made the fallback look like it never ran
+   *  (TKT-811). */
   reasons?: string[];
   emailPath?: string;
   /** An enriched address that was NOT written because it could not be tied to
@@ -1126,10 +781,6 @@ interface WorkflowResult {
   unverifiedEmail?: string;
   /** Why `unverifiedEmail` failed corroboration. */
   identity?: string;
-  iconUpdated?: boolean;
-  /** Why the profile photo could not be stored, when one was offered. Kept
-   *  distinct from `reasons` — the enrichment itself succeeded. */
-  iconError?: string;
   /** Whether the outcome comment reached the page. `false` means Notion
    *  definitively rejected it (see `commentError`); a transient failure is
    *  retried and, if it never clears, fails the run instead of hiding here. */
@@ -1144,14 +795,13 @@ function isTransientStatus(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
-/** A single source's failure reason parsed into a source label ("Lusha",
- *  "Apollo", "NinjaPear", or null) and a short human-readable phrase. Unwraps
- *  the JSON error body and strips the HTML that upstream errors arrive in —
- *  Apollo's out-of-credits body is a JSON blob with an inline <a> tag. */
+/** A single source's failure reason parsed into a source label
+ *  ("BetterContact", or null) and a short human-readable phrase. Unwraps the
+ *  JSON error body and strips any HTML that upstream errors arrive in. */
 function parseFailure(why: string): { source: string | null; brief: string } {
   let s = why.replace(/\s+/g, " ").trim();
   let source: string | null = null;
-  const src = s.match(/^(lusha|apollo|ninjapear)\s+/i);
+  const src = s.match(/^(bettercontact)\s+/i);
   if (src) {
     source = SOURCE_LABELS[src[1].toLowerCase() as EnrichmentSource];
     s = s.slice(src[0].length);
@@ -1164,7 +814,7 @@ function parseFailure(why: string): { source: string | null; brief: string } {
     s = http[2];
   }
   // Prefer the message inside a JSON error body over the raw blob, and drop
-  // any markup embedded in it. Apollo keys it `error`, Notion `message`.
+  // any markup embedded in it. Vendors key it `error` or `message`.
   s = s.match(/"error"\s*:\s*"([^"]+)"/i)?.[1] ??
     s.match(/"message"\s*:\s*"([^"]+)"/i)?.[1] ??
     s;
@@ -1187,7 +837,6 @@ async function addOutcomeComment(
     const changes: string[] = [];
     if (result.emailPath === "same-or-no-prior") changes.push("primary email");
     if (result.emailPath === "new-email") changes.push("secondary email");
-    if (result.iconUpdated) changes.push("profile icon");
     changes.push("contact details");
     const via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
@@ -1197,11 +846,6 @@ async function addOutcomeComment(
     // different person of the same name. Only a human can tell which.
     if (result.unverifiedEmail) {
       summary += ` Email ${result.unverifiedEmail} NOT written — ${result.identity ?? "could not be corroborated"}. Add it by hand if it is really theirs.`;
-    }
-    // A photo that failed to store is worth naming: the rest of the record is
-    // correct, so nothing else in this comment would hint the icon is missing.
-    if (result.iconError) {
-      summary += ` Profile photo not stored: ${parseFailure(result.iconError).brief}.`;
     }
     // When a fallback did the work, note why each earlier source was skipped
     // over — one labelled clause per source, same as the skip branch.
@@ -1316,299 +960,144 @@ const workflow = defineDurable(
       `Enriching contact ${contact.pageId}: ${contact.firstName} ${contact.lastName}`.trim(),
     );
 
-    // 1. Enrich the contact. Three-source cascade: Apollo (people/match)
-    //    first, then Lusha, then NinjaPear as the final fallback. Each source
-    //    runs inside a step that catches its own errors and returns a value
-    //    instead of throwing — so a failing source does NOT trigger the
-    //    durable's step-retry loop (which would stall every run on an
-    //    out-of-credits source) and we fall through cleanly to the next one.
+    // 1. Enrich the contact via BetterContact. The request is an ASYNC job:
+    //    `enrich_contact` answers with a request id straight away and the
+    //    waterfall runs on BetterContact's side. Rather than poll, the run
+    //    hands BetterContact its own callback URL (`ctx.createCallback`) as the
+    //    job's `webhook` and parks; BetterContact POSTs the finished result to
+    //    it and the run resumes with the payload. Polling `get_contact` is the
+    //    fallback for a webhook that never arrives. Every BetterContact call
+    //    catches its own errors and returns a value, so a failing vendor does
+    //    NOT spin the durable's step-retry loop — it becomes a reason in the
+    //    outcome comment.
     let enrichedData: EnrichedData | null = null;
     let source: EnrichmentSource | null = null;
     const reasons: string[] = [];
-    // Set when the Lusha search is sent with only identifiers the contact OWNS
-    // (their email and/or LinkedIn URL) and no firstName/lastName branch that
-    // could have matched a different person of the same name. A hit on such a
-    // request is itself proof of identity — see "Identity corroboration".
-    let lushaMatchedOwnIdentifierOnly = false;
 
-    // --- First: Apollo people/match, via the "API Request (Beta)" action.
-    //     fail_on_errors:false makes the action return the response (with its
-    //     status) instead of throwing on a non-2xx, so a locked/credit-less
-    //     Apollo response falls through to Lusha without retries.
-    const apollo = await ctx.step("apollo-match", async () => {
-      try {
-        const res = await sdk.runAction({
-          appKey: APOLLO_APP_KEY,
-          actionType: "write",
-          actionKey: APOLLO_RAW_REQUEST_ACTION,
-          connection: APOLLO_CONNECTION,
-          inputs: {
-            method: "POST",
-            url: APOLLO_MATCH_URL,
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-cache",
-            },
-            body: JSON.stringify({
+    // BetterContact matches on first + last name plus the employer domain; a
+    // LinkedIn URL sharpens the match but is not accepted on its own, and an
+    // existing email is not an input at all (it finds addresses, it does not
+    // take them). Nothing to send without name + domain, so skip with an honest
+    // reason — more actionable than a false "no result".
+    const viable = Boolean(
+      contact.firstName && contact.lastName && contact.domain,
+    );
+
+    if (!viable) {
+      const why = !contact.domain
+        ? isFreemail(contact.primaryEmail)
+          ? "skipped — no company domain (a personal email names no employer)"
+          : "skipped — no company domain, from the Company relation or the Primary Email"
+        : "skipped — needs both a first and a last name to pair with the company domain";
+      reasons.push(`bettercontact ${why}`);
+      console.log(`BetterContact ${why} for ${contact.pageId}`);
+    } else {
+      // The callback is created BEFORE the submit step so its URL can ride
+      // along in the request. It is awaited only once the submit succeeded: a
+      // callback that is registered but never awaited does not park the run
+      // (dormancy engages only on an awaited wait), so a failed submit still
+      // returns promptly. The URL is unguessable and single-use, which is the
+      // whole of its security — BetterContact's webhook carries no signature.
+      const [resultPromise, callbackUrl] = await ctx.createCallback({
+        name: "bettercontact-result",
+        timeoutSeconds: CALLBACK_TIMEOUT_SECONDS,
+      });
+
+      const submit = await ctx.step("bettercontact-submit", async () => {
+        try {
+          const res = await sdk.runAction({
+            appKey: BETTERCONTACT_APP_KEY,
+            actionType: "write",
+            actionKey: "enrich_contact",
+            connection: BETTERCONTACT_CONNECTION,
+            inputs: {
               first_name: contact.firstName,
               last_name: contact.lastName,
-              email: contact.primaryEmail,
-              domain: contact.domain,
+              company_domain: contact.domain,
               linkedin_url: contact.linkedinUrl,
-              // Keep credit spend minimal; we don't consume Apollo's phone data
-              // and personal emails aren't wanted here.
-              reveal_personal_emails: false,
-              reveal_phone_number: false,
-            }),
-            fail_on_errors: false,
-          },
-        });
-        // The action result wraps the upstream call as { request, response }.
-        const response = firstResult(res)?.response ?? {};
-        const status =
-          typeof response.status === "number" ? response.status : 0;
-        let person = response?.data?.person ?? null;
-        if (!person && typeof response?.body === "string") {
-          try {
-            person = JSON.parse(response.body)?.person ?? null;
-          } catch {
-            /* non-JSON body */
+              // Echoed back in the result's custom_fields, so a payload read
+              // outside the run (BetterContact's API usage page) names the page.
+              uuid: contact.pageId,
+              webhook: callbackUrl,
+              // The action's booleans are the strings "True" / "False". Emails
+              // only: this workflow does not consume phone data.
+              enrich_email_address: "True",
+              enrich_phone_number: "False",
+            },
+          });
+          // Response row: { id, success, message } — verified 2026-09-18.
+          const row = firstResult(res) ?? {};
+          const requestId = firstString(row.id, row.request_id);
+          if (!requestId) {
+            return {
+              requestId: null as string | null,
+              error: `no request id in response: ${JSON.stringify(row).slice(0, 200)}`,
+            };
           }
+          return { requestId, error: null as string | null };
+        } catch (err) {
+          return {
+            requestId: null as string | null,
+            error: String((err as Error)?.message ?? err),
+          };
         }
-        const ok = status >= 200 && status < 300;
-        return {
-          ok,
-          status,
-          person,
-          raw: ok ? "" : String(response?.body ?? "").slice(0, 300),
-          error: null as string | null,
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          status: 0,
-          person: null as any,
-          raw: "",
-          error: String((err as Error)?.message ?? err),
-        };
-      }
-    });
+      });
 
-    if (apollo.ok && apolloPersonUsable(apollo.person)) {
-      enrichedData = extractEnrichedFromApollo(apollo.person);
-      source = "apollo";
-      console.log(`Apollo enriched ${contact.pageId}`);
-    } else {
-      const why = apollo.error
-        ? `apollo error: ${apollo.error}`
-        : !apollo.ok
-          ? `apollo http ${apollo.status}: ${apollo.raw}`.trim()
-          : "apollo returned no usable match";
-      reasons.push(why);
-      console.log(
-        `Apollo enrichment unavailable for ${contact.pageId} (${why}); falling back to Lusha`,
-      );
-    }
-
-    // --- Second: Lusha — only when Apollo produced nothing. Search resolves
-    //     the Lusha contact id, enrich_contacts reveals the details (see the
-    //     bindings comment for why two calls). Lusha matches on an email, a
-    //     LinkedIn URL, or a name + company domain; with none of those there
-    //     is nothing to send.
-    if (!enrichedData) {
-      const lushaViable = Boolean(
-        contact.primaryEmail ||
-          contact.linkedinUrl ||
-          ((contact.firstName || contact.lastName) && contact.domain),
-      );
-
-      if (!lushaViable) {
-        const why =
-          "lusha skipped — no email, LinkedIn URL, or name + company domain to match on";
-        reasons.push(why);
-        console.log(`Lusha ${why.slice("lusha ".length)} for ${contact.pageId}`);
+      if (!submit.requestId) {
+        reasons.push(`bettercontact error: ${submit.error}`);
+        console.log(
+          `BetterContact submit failed for ${contact.pageId}: ${submit.error}`,
+        );
       } else {
-        // Lusha validates the *name* branch independently, and a failure there
-        // aborts the whole request: `firstName` + `lastName` with no company
-        // or domain is rejected outright —
-        //   Each contact must have one of: id, linkedinUrl, email, or
-        //   firstName + lastName + (companyName | companyDomain)
-        // — EVEN WHEN `linkedinUrl` or `email` is also present and each of
-        // those identifies a contact on its own. Sending all five fields
-        // therefore turns a perfectly identifiable contact into a hard error
-        // whenever the domain is empty, which is every contact on a consumer
-        // mailbox with no Company relation. That is what made Derek Wong
-        // (LinkedIn URL populated, gmail Primary, no Company) fail on 2026-08-12.
-        //
-        // So the names ride along only when a domain accompanies them. Proven
-        // against the live action 2026-08-12: `linkedinUrl` alone resolved him
-        // where `email` alone returned "Contact not found", and
-        // `firstName + lastName + linkedinUrl` without a domain was rejected.
-        //
-        // Empty values are omitted rather than sent as "" — the identifiers
-        // are what Lusha branches on, so an empty one is noise at best.
-        const lushaInputs: Record<string, unknown> = {};
-        if (contact.linkedinUrl) lushaInputs.linkedinUrl = contact.linkedinUrl;
-        if (contact.primaryEmail) lushaInputs.email = contact.primaryEmail;
-        if (contact.domain) {
-          lushaInputs.domain = contact.domain;
-          if (contact.firstName) lushaInputs.firstName = contact.firstName;
-          if (contact.lastName) lushaInputs.lastName = contact.lastName;
-        }
+        console.log(
+          `BetterContact request ${submit.requestId} submitted for ${contact.pageId}; waiting for the webhook`,
+        );
 
-        // Whether a hit can stand as its own identity proof: true when the only
-        // things Lusha had to match on are this contact's own email / LinkedIn
-        // URL. Once a name + domain branch rides along, Lusha may have matched
-        // through that instead, and the returned record has to corroborate
-        // itself like Apollo's does.
-        lushaMatchedOwnIdentifierOnly =
-          Boolean(lushaInputs.email || lushaInputs.linkedinUrl) &&
-          !lushaInputs.firstName &&
-          !lushaInputs.lastName;
-
-        const lusha = await ctx.step("lusha-enrich", async () => {
-          try {
-            const searchRes = await sdk.runAction({
-              appKey: LUSHA_APP_KEY,
-              actionType: "search",
-              actionKey: "search_and_enrich_contacts",
-              connection: LUSHA_CONNECTION,
-              inputs: lushaInputs,
-            });
-            // Result shape: { "Request Id", results: [{ id, error, ...fields }] }.
-            const searchOuter = firstResult(searchRes) ?? {};
-            const hit = Array.isArray(searchOuter.results)
-              ? searchOuter.results[0]
-              : searchOuter;
-            const lushaId = firstString(hit?.id);
-            if (!lushaId) {
-              const hitError = firstString(hit?.error);
-              return {
-                contact: null as any,
-                error: hitError ? `search error: ${hitError}` : null,
-              };
-            }
-            // reveal:["emails"] — never spend Lusha phone credits; this
-            // workflow doesn't consume phone data.
-            const enrichRes = await sdk.runAction({
-              appKey: LUSHA_APP_KEY,
-              actionType: "search",
-              actionKey: "enrich_contacts",
-              connection: LUSHA_CONNECTION,
-              inputs: { ids: [lushaId], reveal: ["emails"] },
-            });
-            const enrichOuter = firstResult(enrichRes) ?? {};
-            const person = Array.isArray(enrichOuter.results)
-              ? enrichOuter.results[0]
-              : enrichOuter;
-            const personError = firstString(person?.error);
-            return {
-              contact: person ?? null,
-              error: personError ? `enrich error: ${personError}` : null,
-            };
-          } catch (err) {
-            return {
-              contact: null as any,
-              error: String((err as Error)?.message ?? err),
-            };
-          }
-        });
-
-        if (!lusha.error && lushaContactUsable(lusha.contact)) {
-          enrichedData = extractEnrichedFromLusha(lusha.contact);
-          source = "lusha";
-          console.log(`Lusha enriched ${contact.pageId}`);
-        } else {
-          const why = lusha.error
-            ? `lusha error: ${lusha.error}`
-            : "lusha returned no result";
-          reasons.push(why);
+        // Park until BetterContact POSTs the result, or the deadline passes.
+        // The server decides the outcome once: a late POST after expiry cannot
+        // flip it, so the polling fallback can never double-handle a result.
+        const delivered = await resultPromise;
+        let outcome: BetterContactOutcome;
+        if (delivered.status === "delivered") {
+          outcome = readBetterContactResult(delivered.value);
           console.log(
-            `Lusha enrichment unavailable for ${contact.pageId} (${why}); falling back to NinjaPear`,
+            `BetterContact webhook delivered for ${submit.requestId} (status ${outcome.status})`,
+          );
+        } else {
+          console.log(
+            `BetterContact webhook for ${submit.requestId} not delivered within ${CALLBACK_TIMEOUT_SECONDS}s; polling`,
+          );
+          outcome = await pollBetterContactResult(
+            ctx,
+            "bettercontact",
+            submit.requestId,
           );
         }
-      }
-    }
 
-    // --- Final fallback: NinjaPear — only when neither Apollo nor Lusha
-    //     produced anything.
-    if (!enrichedData) {
-      // NinjaPear find_person_profile.
-      // The ONLY input combination that actually resolves a profile is
-      // `employer_website` + a name. Verified 2026-07-28 against two profiles
-      // NinjaPear demonstrably holds (Megan Anderson, Sachin Kolekar): a lookup
-      // by work_email alone, by linkedin_profile_url alone, and by
-      // name + linkedin_profile_url each returned an empty result, while
-      // name + employer_website matched both times — including for a profile
-      // whose own record carries the exact LinkedIn URL we queried with.
-      // The action's field docs claim a work email is sufficient; it is not.
-      //
-      // The LinkedIn URL and the work email are still passed — they cost
-      // nothing, may sharpen a match, and may start resolving if NinjaPear
-      // fixes it — but neither is treated as a usable identifier on its own.
-      // A personal address in `work_email` additionally sinks the whole
-      // request (NinjaPear rejects personal-email lookups for data-privacy
-      // reasons), so a freemail Primary is stripped from the inputs.
-      // isFreemail is list-based, so an unlisted consumer domain still goes
-      // through and fails like any other no-match.
-      const ninjaEmail = isFreemail(contact.primaryEmail)
-        ? ""
-        : contact.primaryEmail;
-      const ninjaName = contact.firstName || contact.lastName;
-      const ninjaViable = Boolean(contact.domain && ninjaName);
-
-      if (!ninjaViable) {
-        const why = !contact.domain
-          ? isFreemail(contact.primaryEmail)
-            ? "skipped — no company domain (a personal email yields none, and email-only lookups do not resolve)"
-            : "skipped — no company domain, from the Company relation or the Primary Email"
-          : "skipped — no name to pair with the company domain";
-        reasons.push(`ninjapear ${why}`);
-        console.log(`NinjaPear ${why} for ${contact.pageId}`);
-      } else {
-        const ninja = await ctx.step("find-person-profile", async () => {
-          try {
-            const result = await sdk.runAction({
-              appKey: ENRICHMENT_APP_KEY,
-              actionType: "search",
-              actionKey: "find_person_profile",
-              connection: ENRICHMENT_CONNECTION,
-              inputs: {
-                work_email: ninjaEmail,
-                first_name: contact.firstName,
-                last_name: contact.lastName,
-                employer_website: contact.domain,
-                linkedin_profile_url: contact.linkedinUrl,
-                // `detailed` is needed for work_experience, which is where the
-                // company and role come from; `fast` returns before that lands.
-                enrichment: "detailed",
-                // The action runs in a 30s Lambda, but NinjaPear's default
-                // `if-recent` re-scrapes live whenever the cache is over 29
-                // days old and a live enrichment takes 30–60s — that is what
-                // timed out a run on 2026-07-27. `if-present` serves any cached
-                // profile immediately and only goes live for one we have never
-                // seen, so the recency re-scrape can no longer blow the budget.
-                use_cache: "if-present",
-              },
-            });
-            return { result: firstResult(result), error: null as string | null };
-          } catch (err) {
-            return {
-              result: null,
-              error: String((err as Error)?.message ?? err),
-            };
-          }
-        });
-
-        if (ninja.result) {
-          enrichedData = extractEnrichedFromNinjaPear(ninja.result);
-          source = "ninjapear";
-          console.log(`NinjaPear enriched ${contact.pageId}`);
+        if (outcome.status === "terminated" && betterContactRowUsable(outcome.row)) {
+          enrichedData = extractEnrichedFromBetterContact(outcome.row);
+          source = "bettercontact";
+          console.log(`BetterContact enriched ${contact.pageId}`);
+        } else if (outcome.status === "terminated") {
+          // Finished with nothing we write. Name an address that came back
+          // with an unverified status so a person can decide about it.
+          const found = firstString(outcome.row?.contact_email_address);
+          const status = firstString(outcome.row?.contact_email_address_status);
+          reasons.push(
+            found
+              ? `bettercontact found ${found} but its status is ${status ?? "unknown"}; not written`
+              : "bettercontact returned no result",
+          );
+        } else if (outcome.status === "on_hold") {
+          reasons.push(
+            `bettercontact on hold — the account is out of credits (request ${submit.requestId} resumes on its own once topped up)`,
+          );
         } else {
           reasons.push(
-            ninja.error
-              ? `ninjapear error: ${ninja.error}`
-              : "ninjapear returned no result",
+            `bettercontact error: ${
+              outcome.error ??
+              `request ${submit.requestId} still ${outcome.status} after the webhook timeout and ${POLL_ATTEMPTS} polls`
+            }`,
           );
         }
       }
@@ -1630,14 +1119,13 @@ const workflow = defineDurable(
         contact,
         enrichedData,
         source,
-        lushaMatchedOwnIdentifierOnly,
       );
       result = {
         pageId: contact.pageId,
         enriched: true,
         source,
-        // Failures of the sources tried before the one that succeeded, so
-        // the outcome comment can say why the cascade fell through to it.
+        // Notes recorded before the enrichment succeeded (none today, with a
+        // single source; kept so the comment shape survives adding one).
         reasons: reasons.length ? reasons : undefined,
         ...updateResult,
       };

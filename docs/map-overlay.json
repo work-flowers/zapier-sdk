@@ -24,7 +24,9 @@
         "new-buttondown-subscriber-update-in-notion",
         "notion-blog-post-to-hero-image",
         "notion-contact-to-newsletter-subscriber",
+        "goodreads-reviews-to-notion",
         "notion-newsletter-to-buttondown",
+        "save-tagged-docs-to-notion",
         "update-notion-when-rescheduled-in-buttondown"
       ]
     },
@@ -99,7 +101,8 @@
         "workflowers-events-to-scw-busy-peter",
         "slack-thread-to-notion-discussion",
         "notion-comment-to-slack-thread",
-        "slack-notion-thread-sync-sweep"
+        "slack-notion-thread-sync-sweep",
+        "new-authentication-alert"
       ]
     },
     "esignatures-legal": {
@@ -363,6 +366,28 @@
     "app:luma": {
       "type": "external_app",
       "name": "Luma"
+    },
+    "app:readwise": {
+      "type": "external_app",
+      "name": "Readwise Reader"
+    },
+    "app:rss": {
+      "type": "external_app",
+      "name": "RSS by Zapier"
+    },
+    "app:zapier-manager": {
+      "type": "external_app",
+      "name": "Zapier Manager"
+    },
+    "table:readwise-reader-docs": {
+      "type": "table",
+      "id": "01KKNC03EA4Z5Y0KR8H6TP2A8K",
+      "name": "Readwise Reader Documents"
+    },
+    "ds:social-content": {
+      "type": "notion_ds",
+      "id": "14591b07-11ac-8187-934a-000b1a3a474d",
+      "name": "Social Content"
     },
     "app:esignatures": {
       "type": "external_app",
@@ -1090,11 +1115,6 @@
       "kind": "own"
     },
     {
-      "from": "table:user-ids",
-      "to": "whatsapp-slack-bridge",
-      "kind": "read"
-    },
-    {
       "from": "whatsapp-slack-bridge",
       "to": "app:slack",
       "kind": "write"
@@ -1681,6 +1701,41 @@
     },
     {
       "from": "slack-notion-thread-sync-sweep",
+      "to": "app:slack",
+      "kind": "write"
+    },
+    {
+      "from": "app:readwise",
+      "to": "save-tagged-docs-to-notion",
+      "kind": "trigger"
+    },
+    {
+      "from": "save-tagged-docs-to-notion",
+      "to": "table:readwise-reader-docs",
+      "kind": "own"
+    },
+    {
+      "from": "save-tagged-docs-to-notion",
+      "to": "ds:social-content",
+      "kind": "write"
+    },
+    {
+      "from": "app:rss",
+      "to": "goodreads-reviews-to-notion",
+      "kind": "trigger"
+    },
+    {
+      "from": "goodreads-reviews-to-notion",
+      "to": "ds:social-content",
+      "kind": "write"
+    },
+    {
+      "from": "app:zapier-manager",
+      "to": "new-authentication-alert",
+      "kind": "trigger"
+    },
+    {
+      "from": "new-authentication-alert",
       "to": "app:slack",
       "kind": "write"
     }
