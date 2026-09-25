@@ -1,0 +1,41 @@
+{
+  "name": "workflowers-events-to-scw-busy-peter",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "workflowers-events-to-scw-busy-peter",
+    "description": "Peter's copy of workflowers-events-to-scw-busy. One half of the two-way calendar-blocking pair for Peter's calendars (with scw-events-to-workflowers-block-peter; gcal-block-sweep-peter is the horizon backstop). Mirrors every timed, busy, non-declined event on the peter@work.flowers Google Calendar onto pgao@securecodewarrior.com as a PRIVATE, BARE 'Busy' block — no title, description, location or attendees leak into the SCW workspace. Keyed through Peter's own GCal Sync Map table so updates move the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out; the sweep fills those in as they approach.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleCalendarCLIAPI@1.16.0",
+    "action": "event_updated",
+    "authentication_id": "02b0ea0a-9ded-87fb-89a3-5d99b9457b39",
+    "params": {
+      "calendarid": "peter@work.flowers",
+      "expand_recurring": true
+    },
+    "authentication_note": "Peter's work.flowers Google Calendar connection ('peter@work.flowers') — the calendar being READ. Peter's SCW credential is a --connections alias because the workflow writes there. Never Dennis's work.flowers connection (02a752ba-ba43-86d2-b9f7-dc031d6d1aa5).",
+    "trigger_note": "Polling trigger, fires on create AND update — but in practice only ever once per occurrence (Zapier durables dedupe on the raw event id; ticket W6ZE93-VMEWP), so every later change is propagated by gcal-block-sweep-peter's daily reconcile pass. Cancellations DO NOT arrive through it: with expand_recurring: true Zapier silently drops cancelled tombstones (proven on Dennis's pair 2026-08-31). Deletion propagation lives in workflowers-cancellations-to-scw-unblock-peter (event_cancelled). The cancel branch in this workflow is kept as a belt.",
+    "params_note": "expand_recurring: true because blocking needs one mirror per occurrence, keyed on the occurrence id. The workflow's 30-day horizon guard bounds the resulting volume (a weekly series expands ~730 instances in one poll). selected_api pinned at 1.16.0, the version Zapier served at authoring time (2026-09-15)."
+  },
+  "connections": {
+    "gcal_scw": "02edd3ce-6377-8023-bde5-3cd663dea58f"
+  },
+  "connections_note": "gcal_scw is Peter's SCW Google Calendar connection ('pgao@securecodewarrior.com') — the DESTINATION this workflow creates/moves/deletes bare Busy blocks on. Never Dennis's SCW connection (02cb5353-8bd1-82ad-a382-b1900d3d40f2).",
+  "sharing_note": "Peter's connections (02b0ea0a-… work.flowers, 02edd3ce-… SCW) and the GCal Sync Map (Peter) table 01M2HT9XPZEASFV09J4A3QTDGT are owned by Peter's own Zapier profile, not the CI identity. The publish pipeline's CI identity must be able to use all three, so they are shared with the work.flowers account before merge — see gcal-block-sweep-peter/README.md. Shared on: 2026-09-25.",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  },
+  "tables": {
+    "01M2HT9XPZEASFV09J4A3QTDGT": "GCal Sync Map (Peter) — source occurrence id -> mirror event id, both directions. SHARED with scw-events-to-workflowers-block-peter, the two -cancellations- companions and gcal-block-sweep-peter; never with Dennis's Zaps. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7 — the SOURCE title, for debugging; the mirror itself is always 'Busy'), Source Updated (f8)."
+  },
+  "replicates": "workflowers-events-to-scw-busy",
+  "description": "Peter's copy: mirror Peter's work.flowers calendar events onto Peter's SCW calendar as private bare 'Busy' blocks — times only, no details. Creates, moves and deletes the block in step with the source."
+}
