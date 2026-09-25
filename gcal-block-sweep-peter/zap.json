@@ -29,7 +29,7 @@
     "gcal_scw": "02edd3ce-6377-8023-bde5-3cd663dea58f"
   },
   "connections_note": "gcal_wf is Peter's work.flowers Google Calendar connection ('peter@work.flowers'); gcal_scw is Peter's SCW one ('pgao@securecodewarrior.com'). Both are read (event_v2 window search on the source side) and written (detailed_event on the destination side). Never Dennis's ids (02a752ba-… / 02cb5353-…).",
-  "sharing_note": "Peter's connections (02b0ea0a-… work.flowers, 02edd3ce-… SCW) and the GCal Sync Map (Peter) table 01M2HT9XPZEASFV09J4A3QTDGT are owned by Peter's own Zapier profile, not the CI identity. The publish pipeline's CI identity must be able to use all three, so they are shared with the work.flowers account before merge — see gcal-block-sweep-peter/README.md. Shared on: PENDING.",
+  "sharing_note": "Peter's connections (02b0ea0a-… work.flowers, 02edd3ce-… SCW) and the GCal Sync Map (Peter) table 01M2HT9XPZEASFV09J4A3QTDGT are owned by Peter's own Zapier profile, not the CI identity. The publish pipeline's CI identity must be able to use all three, so they are shared with the work.flowers account before merge — see gcal-block-sweep-peter/README.md. Shared on: 2026-09-25.",
   "zapier_durable_version": "0.12.5",
   "dependencies": {
     "zod": "4.4.3",
