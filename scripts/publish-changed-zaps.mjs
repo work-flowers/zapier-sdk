@@ -406,6 +406,11 @@ function createAndPublish(dir, dep, execute) {
   if (!workflowId) {
     fail(`${dir}: create-workflow returned no id — response: ${JSON.stringify(created)}`);
   }
+  // Say the id NOW, before the publish. If the first publish fails (the
+  // analyzer, a bad connection), the container already exists with no version
+  // and the only way to find or delete it is this id — which otherwise appears
+  // nowhere in the run log. Seen 2026-09-25 (PR #176).
+  log(`- 🆕 created container \`${workflowId}\` — publishing v1…`);
 
   // 2. Publish v1 from the declared metadata.
   const rest = ["publish-workflow-version", workflowId, JSON.stringify(sourceFiles)];
