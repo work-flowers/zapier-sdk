@@ -26,7 +26,6 @@ const GCAL_APP_KEY = "GoogleCalendarCLIAPI";
 const DEST_CONNECTION = "gcal_scw";
 const DEST_CALENDAR = "pgao@securecodewarrior.com";
 const DIRECTION = "wf_to_scw";
-const WORKFLOW_NAME = "workflowers-events-to-scw-busy-peter";
 
 /**
  * `GCal Sync Map` — source occurrence id -> mirror event id, shared with
@@ -216,8 +215,11 @@ const MIRROR_GONE_PATTERN = /not\s*found|has been deleted|410|404/i;
 
 // --- Workflow --------------------------------------------------------------------
 
+// The name MUST be a string literal here: Zapier's publish-time analyzer
+// (`missing-run-function`) cannot see the handler when the first argument is
+// an identifier, and refuses the publish.
 const workflow = defineDurable<Input, unknown>(
-  WORKFLOW_NAME,
+  "workflowers-events-to-scw-busy-peter",
   async (ctx: DurableContext, rawInput: Input) => {
     const event = InputSchema.parse(normalizeInput(rawInput));
 

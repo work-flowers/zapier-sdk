@@ -3,6 +3,10 @@
 // Peter's copy of workflowers-cancellations-to-scw-unblock (Dennis's), repointed at Peter's
 // calendars, connections and table. Logic identical; only constants differ.
 //
+// First publish re-queued 2026-09-25: PR #176's publish aborted on a sibling Zap
+// before reaching this one, and the publisher only creates a new Zap off a
+// source change — this note is that change.
+//
 // Deletion propagation for the two-way calendar-blocking pair. The
 // `event_updated` trigger workflowers-events-to-scw-busy-peter runs on delivers
 // cancellations ONLY with `expand_recurring: false`; with `true` (which

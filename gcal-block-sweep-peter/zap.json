@@ -1,12 +1,12 @@
 {
   "name": "gcal-block-sweep-peter",
-  "workflow_id": null,
-  "current_version_id": null,
+  "workflow_id": "01a0d89d-2a35-7f0d-bd8a-7695a7356100",
+  "current_version_id": "01a0d89d-3a3f-713a-b76a-82244b1ef1ee",
   "trigger_url": null,
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "gcal-block-sweep-peter",
     "description": "Peter's copy of gcal-block-sweep. Daily horizon backstop, coming-week reconciler and manual backfill for Peter's two-way calendar-blocking pair (scw-events-to-workflowers-block-peter / workflowers-events-to-scw-busy-peter). Those Zaps refuse to create mirrors for occurrences starting more than 30 days out, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own — so this sweep scans the week rolling INTO the horizon (days 23..30) each morning, in both directions, and creates any mirror Peter's GCal Sync Map table says is missing. It also reconciles the coming week (days 0..7), which is where every change to an already-mirrored occurrence propagates: source gone/cancelled or no longer block-worthy (declined, Free, all-day) -> delete the mirror and mark the row deleted; source moved or renamed -> update the mirror and refresh the row; a row previously marked deleted whose source is block-worthy again is revived. Manual runs take a window override for the cutover backfill ({\"from_days\":0,\"to_days\":30}), a reconcile_days override (0 disables) and a dryRun flag. The inherited cleanup_notion_blocks flag is inert for Peter. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): in the scw_to_wf direction, SCW events whose Google eventType is focusTime, outOfOffice or workingLocation are never mirrored, and the reconcile pass unmirrors one whose source has turned into such a type.",
     "enable_on_publish": true
