@@ -210,8 +210,11 @@ const MIRROR_GONE_PATTERN = /not\s*found|has been deleted|410|404/i;
 
 // --- Workflow --------------------------------------------------------------------
 
+// The name MUST be a string literal here: Zapier's publish-time analyzer
+// (`missing-run-function`) cannot see the handler when the first argument is
+// an identifier, and refuses the publish. Keep it equal to WORKFLOW_NAME.
 const workflow = defineDurable<Input, unknown>(
-  WORKFLOW_NAME,
+  "scw-events-to-workflowers-block",
   async (ctx: DurableContext, rawInput: Input) => {
     const event = InputSchema.parse(normalizeInput(rawInput));
 
