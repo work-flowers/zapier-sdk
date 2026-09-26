@@ -1,7 +1,7 @@
 {
   "name": "scw-events-to-workflowers-block",
   "workflow_id": "01a04796-b7fa-7fa5-ab0b-df9a59724bbf",
-  "current_version_id": "01a04796-c6f1-7877-8cad-6449478d8f75",
+  "current_version_id": "01a0db9c-4d40-7391-b1ed-97dc3825b93f",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASlBn_lZLnJpJoJGV9z0Aw",
   "enabled": true,
   "is_private": false,
