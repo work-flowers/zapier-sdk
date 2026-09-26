@@ -1,7 +1,7 @@
 {
   "name": "workflowers-events-to-scw-busy",
   "workflow_id": "01a04796-d75d-7990-a85c-8e9d420b3655",
-  "current_version_id": "01a04796-e2df-7f5f-948a-012abf5749bd",
+  "current_version_id": "01a0db9c-7451-7e7a-8162-8c1db0680e8a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Afq9-MgjDT1gCP_-ZPK66Q",
   "enabled": true,
   "is_private": false,
