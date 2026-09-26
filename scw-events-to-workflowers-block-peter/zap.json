@@ -1,12 +1,12 @@
 {
   "name": "scw-events-to-workflowers-block-peter",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0db9d-2fad-7612-b586-46eccbefabca",
+  "current_version_id": "01a0db9d-3df9-7a57-8857-576c175ddf39",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVIpbd_bQrw3pGcUNQWtJQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "scw-events-to-workflowers-block-peter",
     "description": "Peter's copy of scw-events-to-workflowers-block. One half of the two-way calendar-blocking pair for Peter's calendars (with workflowers-events-to-scw-busy-peter; gcal-block-sweep-peter is the horizon backstop). Mirrors every timed, busy, non-declined event on the pgao@securecodewarrior.com Google Calendar onto peter@work.flowers WITH ITS FULL TITLE, keyed through Peter's own GCal Sync Map table so updates move/rename the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out (expand_recurring fires an open-ended series ~14 years ahead); the sweep fills those in as they approach. ONE DELIBERATE DEVIATION from Dennis's copy (Peter, 2026-09-15): SCW events whose Google eventType is focusTime, outOfOffice or workingLocation (Focus time, Out of office, 'Unavailable on Fridays', 'Home') are never mirrored, and an existing mirror is deleted if its source turns into one of those types.",
     "enable_on_publish": true

@@ -1,12 +1,12 @@
 {
   "name": "workflowers-events-to-scw-busy-peter",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0db9d-6bdc-71ca-8554-962828c61550",
+  "current_version_id": "01a0db9d-77e7-7b45-ad9f-0378f1dc914a",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXZaJi3ns0IwHOS5jqRbaw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "workflowers-events-to-scw-busy-peter",
     "description": "Peter's copy of workflowers-events-to-scw-busy. One half of the two-way calendar-blocking pair for Peter's calendars (with scw-events-to-workflowers-block-peter; gcal-block-sweep-peter is the horizon backstop). Mirrors every timed, busy, non-declined event on the peter@work.flowers Google Calendar onto pgao@securecodewarrior.com as a PRIVATE, BARE 'Busy' block — no title, description, location or attendees leak into the SCW workspace. Keyed through Peter's own GCal Sync Map table so updates move the block and cancellations delete it. Refuses to create a mirror for an occurrence starting more than 30 days out; the sweep fills those in as they approach.",
     "enable_on_publish": true
