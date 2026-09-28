@@ -8,7 +8,8 @@ too — which the classic Zap never actually did.
 their eSignatures triggers at publish time, so they run in parallel with the classic Zaps as of
 2026-08-04. That is deliberate and benign; see [Cutover](#cutover). Replaces the classic
 **Update SOW / Project Addendum Status When Sent for Signature** and **Signed SOWs / Project
-Addenda** Zaps.
+Addenda** Zaps. Since 2026-09-28 it also moves **NDAs** rows (from
+[`notion-nda-to-esignatures-draft`](../notion-nda-to-esignatures-draft/)) to `Sent` / `Signed`.
 
 **Durable ×2.** One shared [`shared.ts`](shared.ts) deployed twice:
 
@@ -18,6 +19,12 @@ Addenda** Zaps.
 | `esignatures-contract-signed-to-notion` | [`workflow.signed.ts`](workflow.signed.ts) | `contract_signed` |
 
 **Republish both together** whenever `shared.ts` changes.
+
+Each entry file calls `defineDurable` itself, with a string-literal name, and passes its body to
+`runStatusSync` in `shared.ts`. Until 2026-09-28 `shared.ts` exported a `defineStatusSync(phase)`
+factory instead. The publish-time analyzer now rejects that shape: it looks for `defineDurable` in
+`/workflow.ts` only, and refuses with `missing-define-durable`. So the factory published in August
+but would have failed on its next republish.
 
 ## Workflow
 
@@ -32,14 +39,16 @@ flowchart TD
   TY -- "unrecognised" --> SKIP3(["skip — unknown-agreement-type"])
   TY -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
   TY -- "Project Addendum" --> S2["📝 Status → Sent for signing / Executed"]
+  TY -- "NDA" --> S3["📝 Status → Sent / Signed<br/>+ Sent Date / Signed Date (SGT)"]
   S1 --> PH{"phase == signed?"}
   S2 --> PH
+  S3 --> PH
   PH -- no --> DONE["✅ done"]
   PH -- yes --> URL{"PDF url in payload?"}
   URL -- no --> NF["⚠️ pdfError: extract-url<br/><i>status already written, not rolled back</i>"] --> DONE
   URL -- yes --> DL["⬇️ sdk.fetch the presigned PDF"]
   DL --> UP["⬆️ Notion single_part file upload"]
-  UP --> AT["📎 attach to Signed PDF / Executed Agreement"]
+  UP --> AT["📎 attach to Signed PDF (SOW, NDA) / Executed Agreement"]
   AT --> DONE
 ```
 
@@ -120,6 +129,20 @@ Verified 2026-08-04 with `run-durable`.
 | Empty ping | `{"skipped":"empty-payload"}` on both deployments, no error raised. |
 | Types | `npm run build` (tsc, durable 0.12.3 + sdk 0.93.0) | Clean |
 
+Re-verified 2026-09-28 after adding NDAs and restructuring the entry files (deployed deps, durable
+0.12.3 + sdk 0.93.0):
+
+| Case | Result |
+| --- | --- |
+| `validate-workflow` on the new entry-file shape (probe) | No issues; the old factory shape gives `missing-define-durable` |
+| `contract_sent_to_signer`, scratch NDA row + scratch mapping row | `agreementType: NDA`, Status `Sent`, `Sent Date` = 2026-09-28 |
+| `contract_signed`, same scratch row, no PDF in payload | Status `Signed`, `Signed Date` = 2026-09-28, `pdfError: extract-url` (expected) |
+| Unknown contract id | `{"skipped":"no-mapping-row"}` |
+| Raw status PATCH on a real SOW and a real Project Addendum (current value written back) | Accepted, value unchanged |
+| Types | `npm run build` and strict tsc | Clean |
+
+The scratch NDA page was trashed and its mapping row deleted afterwards.
+
 ## Cutover
 
 These are **already live and running alongside the classic Zaps**. That is safe: both write the same
@@ -134,16 +157,23 @@ To stop the parallel run in the meantime: `zapier-sdk --experimental disable-wor
 
 ## Maintainer notes
 
-- **The status option names differ between the two data sources** — SOWs uses `Sent for signature`
-  (lowercase s), Project Addendums uses `Sent for signing`. Likewise `Signed` versus `Executed`, and
-  `Signed PDF` versus `Executed Agreement`. A mismatch fails silently, so all of it lives in one
-  config table.
-- `Status` is a `status`-type property and `update_database_item` writes it fine; no raw PATCH is
-  needed for the status. The raw API is used only for the file upload, which has no action.
+- **The status option names differ between the data sources** — SOWs uses `Sent for signature`
+  (lowercase s), Project Addendums uses `Sent for signing`, NDAs uses `Sent`. Likewise `Signed`
+  versus `Executed`, and `Signed PDF` versus `Executed Agreement`. A mismatch fails silently, so all
+  of it lives in one config table (`TYPES`). Only NDAs have date properties (`Sent Date`,
+  `Signed Date`), stamped with today in Singapore time from a `ctx.step` clock read.
+- **The status is written with a raw `PATCH /v1/pages`** (`{Status: {status: {name}}}`), not
+  `update_database_item`, since 2026-09-28. The action's schema cache lags schema changes, and NDAs'
+  Status had just been converted from select to status. All three `Status` properties are
+  `status`-type. A replayed property PATCH lands in the same state, so the step's default retries are
+  safe.
 - The eSignatures connection is bound as the **trigger's** `authentication_id`, not as a workflow
   connection — no eSignatures action is called here. The triggers live on the *public*
   `EsignaturesioCLIAPI` app, while [`esignatures-send-for-signing`](../esignatures-send-for-signing/)
   calls actions on the *private* `App236843CLIAPI`; that app has no usable trigger.
 - Both triggers take **zero input fields**, so there is nothing to configure and nothing that can be
   mis-shaped into a silent claim failure.
-- The mapping Table is **read-only** here; `esignatures-send-for-signing` owns it.
+- The mapping Table is **read-only** here. `esignatures-send-for-signing` owns it, and
+  `notion-nda-to-esignatures-draft` adds `NDA` rows. `NDA` is not one of the `Agreement Type`
+  field's static choices (the SDK can't edit a field's choices), but the Table accepts it. Add the
+  choice in the Table UI if you want a coloured chip.

@@ -1,7 +1,7 @@
 {
   "name": "notion-nda-to-esignatures-draft",
   "workflow_id": "01a0e77a-792a-7c20-8b45-e35aee5b20e4",
-  "current_version_id": "01a0e77e-cd11-72e5-ab51-13e25e7c9405",
+  "current_version_id": "01a0e789-dba2-7e86-b4c2-f0a14522b3a4",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af_GrfUiPAquoA_jdGXoeQ",
   "enabled": true,
   "is_private": false,
@@ -63,5 +63,8 @@
         "outcome": "`{skipped:\"empty-payload\"}`, no error raised."
       }
     ]
+  },
+  "tables": {
+    "01KHZEP4FA560E9GMTGTBR1E2N": "eSignatures Mapping — this Zap WRITES one row per draft (Page ID, Contract ID, Agreement Type = NDA), find-by-Contract-ID-then-create in one step. Read by esignatures-status-to-notion. The Palmera draft 6adb7c81… (created before this step existed) was backfilled by hand as row 01M3KR37DQC4DX1QDZB6FVGW1H on 2026-09-28."
   }
 }
