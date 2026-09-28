@@ -47,7 +47,9 @@
       "description": "eSignatures contract_signed -> mark the mapped SOW Signed / Project Addendum Executed, and file the executed PDF on the record."
     }
   ],
-  "connections": { "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17" },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
   "connection_notes": {
     "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da).",
     "esignatures": "The eSignatures connection (026935e5-48e9-8cea-9bfc-c46d042addf7, the PUBLIC `EsignaturesioCLIAPI` app) is bound as the TRIGGER's authentication_id, not as a workflow connection — no eSignatures action is ever called here. That app owns the triggers; the private `App236843CLIAPI` app used by `esignatures-send-for-signing` has no usable trigger."
@@ -70,8 +72,17 @@
         "Executed Agreement (files) — the executed PDF, signed phase only"
       ]
     },
-    "status_note": "Both `Status` properties are type `status` and `update_database_item` writes them fine (verified against both data sources — `properties|||Status|||status` is exposed). Note the SOW's option is \"Sent for signature\" while the addendum's is \"Sent for signing\"; the two differ and a mismatch fails silently.",
-    "template_mode_note": "Repo rule 5 does not apply — this workflow only updates existing pages."
+    "status_note": "All three `Status` properties are type `status`. Since 2026-09-28 they are written with a raw PATCH /v1/pages ({Status: {status: {name}}}) rather than update_database_item, whose schema cache lags schema changes (NDAs' Status had just been converted from select). Option names differ per data source — see TYPES in shared.ts.",
+    "template_mode_note": "Repo rule 5 does not apply — this workflow only updates existing pages.",
+    "ndas": {
+      "datasource_id": "354e3731-d2e4-497d-8df0-8ac9738df959",
+      "datasource_name": "NDAs",
+      "properties_written": [
+        "Status (status) = \"Sent\" + Sent Date (sent) / \"Signed\" + Signed Date (signed), dates = today SGT",
+        "Signed PDF (files) — the executed PDF, signed phase only"
+      ],
+      "added": "2026-09-28"
+    }
   },
   "signed_pdf": {
     "behaviour_change": "NEW. The classic Zap passed `properties|||Signed PDF|||files: []` — an empty array, a silent no-op — so the executed PDF was never actually filed on any record. This workflow files it: `Signed PDF` on SOWs, `Executed Agreement` on Project Addendums.",
@@ -93,18 +104,21 @@
     "esignatures_mapping": {
       "id": "01KHZEP4FA560E9GMTGTBR1E2N",
       "name": "eSignatures Mapping",
-      "role": "READ ONLY here. Owned and written by `esignatures-send-for-signing`.",
+      "role": "READ ONLY here. Written by `esignatures-send-for-signing` (SOW, Project Addendum) and `notion-nda-to-esignatures-draft` (NDA).",
       "key_field": "Contract ID",
       "fields": {
         "Page ID": "f1, string — the Notion SOW / Project Addendum page id",
         "Contract ID": "f2, string — the eSignatures contract id, looked up here",
-        "Agreement Type": "f3, labeled_string — \"SOW\" or \"Project Addendum\"; selects the data source, status value and file property"
+        "Agreement Type": "f3, labeled_string — \"SOW\", \"Project Addendum\" or \"NDA\"; selects the data source, status values, date properties and file property. \"NDA\" is not among the field's static choices (the SDK cannot edit a field's choices) but the Table accepts it."
       },
       "miss_note": "A contract with no row here is a SKIP, not an error. The classic Zap's search was configured to fail on a miss (`_zap_search_success_on_miss: false`), which turned every contract created outside these flows into an error alert."
     }
   },
   "zapier_durable_version": "0.12.3",
-  "dependencies": { "@zapier/zapier-sdk": "0.93.0", "zod": "4.4.3" },
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.93.0",
+    "zod": "4.4.3"
+  },
   "live_runs": {
     "note": "Verified 2026-08-04 with `run-durable`.",
     "runs": [
@@ -122,7 +136,10 @@
         "target": "contract 2a875453-… (scratch SOW), nested `{\"contract\":{\"id\":…}}` payload shape",
         "outcome": "resolved the row, agreementType SOW, Status \"Sent for signature\""
       },
-      { "case": "empty ping", "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}} for both deployments, no error raised" }
+      {
+        "case": "empty ping",
+        "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}} for both deployments, no error raised"
+      }
     ]
   },
   "cutover": {
@@ -133,5 +150,6 @@
       "After the first real `contract_signed`, read `pdfError` / `pdfFound` on the run output and tighten `extractSignedPdfUrl`'s candidate list to the actual field name."
     ]
   },
-  "determinism_note": "No `new Date`, `Date.now`, `Math.random`, `setTimeout` or bare `fetch` anywhere — the PDF download uses `sdk.fetch` inside a `ctx.step`."
+  "determinism_note": "No `new Date`, `Date.now`, `Math.random`, `setTimeout` or bare `fetch` anywhere — the PDF download uses `sdk.fetch` inside a `ctx.step`.",
+  "analyzer_note": "2026-09-28: the entry files now call defineDurable with a string-literal name and delegate to shared.ts runStatusSync. The previous defineStatusSync factory in shared.ts fails the publish-time analyzer with `missing-define-durable` (probed with validate-workflow) — it published in August, before the analyzer existed."
 }
