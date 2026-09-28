@@ -20,7 +20,7 @@
         "webhook_url_note": "This is the URL the Notion SOWs `Send for signing` button must POST to. It is NOT returned at get-workflow's top level — it lives at `triggers[0].details.webhook_url`. The `trigger_url` above is Zapier-internal and requires a JWT; do not point Notion at it."
       },
       "created_at": "2026-08-04T10:57:04.213Z",
-      "version_created_at": "2026-08-04T11:18:08.991Z",
+      "version_created_at": "2026-09-28T10:29:45.620Z",
       "replaces_classic_zap": "Send SOW for Signing",
       "description": "Notion SOWs 'Send for signing' button -> eSignatures draft contract built from the SOW page body, contract URL + Status written back, linked Deal moved to In signing."
     },
@@ -42,7 +42,7 @@
         "webhook_url_note": "Target for the Notion Project Addendums `Send for signing` button. Same warning as above — not `trigger_url`."
       },
       "created_at": "2026-08-04T10:57:07.951Z",
-      "version_created_at": "2026-08-04T11:18:12.923Z",
+      "version_created_at": "2026-09-28T10:29:56.522Z",
       "replaces_classic_zap": "Send Project Addendum for Signing",
       "description": "Notion Project Addendums 'Send for signing' button -> eSignatures draft contract built from the addendum page body, addressed to the Consultant."
     }

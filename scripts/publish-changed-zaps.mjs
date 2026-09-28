@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Publish the durable Zaps affected by a merge, and sync current_version_id
-// back into each zap.json (repo rule 4).
+// (plus that version's version_created_at) back into each zap.json (repo rule 4).
 //
 // Consumes the same detection layer as the dry run (detectChangedZaps), then,
 // for each affected deployment, mirrors the workflows-modify "direct publish"
@@ -31,7 +31,7 @@
 // chance to set visibility), publish v1 from the metadata DECLARED in zap.json
 // (there is no live version to read it off), disable it when
 // `deploy.enable_on_publish` is false, then sync workflow_id /
-// current_version_id / trigger_url / enabled back. So a brand-new Zap ships
+// current_version_id / version_created_at / trigger_url / enabled back. So a brand-new Zap ships
 // exactly like a change to an existing one: open a PR, merge it, CI publishes.
 // Every subsequent change takes the republish path above.
 //   - the workflow has an open draft (a direct publish would 409 anyway),
@@ -519,6 +519,7 @@ function createAndPublish(dir, dep, execute) {
     plan,
     workflowId,
     newVersionId,
+    versionCreatedAt: createdAtOf(published),
     triggerUrl: after?.trigger_url || created?.trigger_url || null,
     // Only a catch hook is handed a URL (Schedule triggers report a /hooks/standard/ one that
     // nothing external calls — see isCatchHookTrigger); this is the URL external services call.
@@ -708,6 +709,7 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   return {
     plan,
     newVersionId,
+    versionCreatedAt: createdAtOf(published),
     triggerChanged,
     // Only a catch hook is handed a URL (see isCatchHookTrigger); a changed trigger can be issued a
     // NEW catch URL, which has to land back in zap.json.
@@ -732,6 +734,76 @@ function syncBackVersionId(dir, oldVersionId, newVersionId) {
     fail(`${dir}: could not find current_version_id "${oldVersionId}" in zap.json to sync back`);
   }
   writeFileSync(abs, raw.replace(re, `$1${newVersionId}$2`));
+}
+
+// The publish response is the new version; its created_at is what zap.json
+// records as version_created_at. Null when the response does not carry it, in
+// which case main() reads the version back.
+function createdAtOf(published) {
+  const v = published?.version?.created_at ?? published?.created_at ?? null;
+  return typeof v === "string" && v ? v : null;
+}
+
+// Index of the "{" opening the innermost JSON object that contains position
+// `pos`, or -1. String-aware, so braces inside values do not count.
+function enclosingObjectStart(raw, pos) {
+  const stack = [];
+  let inString = false;
+  for (let i = 0; i < pos; i++) {
+    const c = raw[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") stack.push(i);
+    else if (c === "}") stack.pop();
+  }
+  return stack.length ? stack[stack.length - 1] : -1;
+}
+
+// Set version_created_at in the SAME object as `"current_version_id":
+// "<versionId>"` — the right deployment's entry in a multi-deployment file,
+// since each carries a distinct version id. Pure (text in, text out) and
+// in-place like the other sync-backs, so the rest of the file stays
+// byte-for-byte. It only overwrites a key that is already there (a string or
+// null); a zap.json that never recorded version_created_at is left alone.
+//
+// Returns { raw, status }: "updated", "unchanged" (already that value), or
+// "absent" (no version_created_at in that object).
+export function setVersionCreatedAt(raw, versionId, createdAt) {
+  const idRe = new RegExp('"current_version_id":\\s*"' + versionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + '"');
+  const idMatch = idRe.exec(raw);
+  if (!idMatch) throw new Error(`current_version_id "${versionId}" not found`);
+  const owner = enclosingObjectStart(raw, idMatch.index);
+
+  const keyRe = /("version_created_at":\s*)("(?:[^"\\]|\\.)*"|null)/g;
+  for (let m; (m = keyRe.exec(raw)); ) {
+    if (enclosingObjectStart(raw, m.index) !== owner) continue;
+    const value = JSON.stringify(createdAt);
+    if (m[2] === value) return { raw, status: "unchanged" };
+    return {
+      raw: raw.slice(0, m.index) + m[1] + value + raw.slice(m.index + m[0].length),
+      status: "updated",
+    };
+  }
+  return { raw, status: "absent" };
+}
+
+// Record the new version's created_at. Runs AFTER current_version_id has been
+// synced, and never fails the run: the version is already live, and losing an
+// annotation must not cost the version-id sync-back or the rest of the batch.
+function syncBackVersionCreatedAt(dir, workflowId, newVersionId, createdAt) {
+  try {
+    let at = createdAt;
+    if (!at) at = createdAtOf(unwrap(sdk(["get-workflow-version", workflowId, newVersionId])));
+    if (!at) return `⚠️ Zapier reported no created_at for \`${newVersionId}\` — version_created_at left as it was`;
+    const abs = join(REPO_ROOT, dir, "zap.json");
+    const { raw, status } = setVersionCreatedAt(readFileSync(abs, "utf8"), newVersionId, at);
+    if (status === "updated") writeFileSync(abs, raw);
+    return null;
+  } catch (err) {
+    return `⚠️ could not sync version_created_at (${String(err.message).slice(0, 300)}) — fix it by hand`;
+  }
 }
 
 // A changed catch-hook trigger can be issued a NEW catch URL, and that URL is
@@ -947,6 +1019,8 @@ function main() {
       );
       if (args.execute) {
         syncBackFirstPublish(dir, result);
+        const atWarning = syncBackVersionCreatedAt(dir, result.workflowId, result.newVersionId, result.versionCreatedAt);
+        if (atWarning) log(`- ${atWarning}`);
         synced.push({ dir, workflowId: result.workflowId, newVersionId: result.newVersionId, created: true });
         log(`- ✅ created \`${result.workflowId}\`, published \`${result.newVersionId}\`; zap.json updated`);
         if (!plan.enabled) log(`- ⏸️ left DISABLED as declared — enable it when you cut the classic Zap over`);
@@ -985,6 +1059,8 @@ function main() {
     }
     if (args.execute) {
       syncBackVersionId(dir, currentVersionId, newVersionId);
+      const atWarning = syncBackVersionCreatedAt(dir, dep.workflowId, newVersionId, result.versionCreatedAt);
+      if (atWarning) log(`- ${atWarning}`);
       synced.push({ dir, workflowId: dep.workflowId, newVersionId, triggerChanged: plan.triggerChanged });
       log(`- ✅ published new version \`${newVersionId}\`; zap.json updated`);
       const hookSync = syncBackWebhookUrl(dir, result.declaredWebhookUrl, result.webhookUrl);
