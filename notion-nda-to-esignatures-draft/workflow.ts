@@ -446,7 +446,9 @@ function readNda(page: any): NdaSnapshot {
   return {
     pageId: dashUuid(firstString(page?.id)),
     dataSourceId: dashUuid(firstString(page?.parent?.data_source_id)),
-    status: firstString(props["Status"]?.select?.name),
+    // A `status`-type property since 2026-09-28 (was `select`). Reading the
+    // wrong key returns nothing, which would silently disarm the Status guard.
+    status: firstString(props["Status"]?.status?.name),
     contractUrl: firstString(props["Contract URL"]?.url),
     legalName,
     signerName,
@@ -649,7 +651,7 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
       body: JSON.stringify({
         properties: {
           "Contract URL": { url: contractUrl },
-          Status: { select: { name: DRAFTED_STATUS } },
+          Status: { status: { name: DRAFTED_STATUS } },
         },
       }),
     });
