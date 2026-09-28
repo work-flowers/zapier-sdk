@@ -8,7 +8,7 @@
   "deploy": {
     "state": "published",
     "workflow_name": "notion-nda-to-esignatures-draft",
-    "description": "Notion NDAs 'Send for signature' button -> eSignatures.com DRAFT contract whose text is the row's own page body (started from the NDAs database template, placeholders filled in inline), injected into the 'Mutual NDA' shell template. Counterparty Signer contact is signer 1, Dennis signer 2. Draft link (Contract URL), Status = Sent and Sent Date are written back. Rows already drafted (Contract URL set), finished, missing Signer/legal name, or with unfilled `[placeholders]` get a page comment and no draft.",
+    "description": "Notion NDAs 'Send for signature' button -> eSignatures.com DRAFT contract whose text is the row's own page body (started from the NDAs database template, placeholders filled in inline), injected into the 'Mutual NDA' shell template. Counterparty Signer contact is signer 1, Dennis signer 2. Draft link (Contract URL) and Status = Ready to send are written back. Rows already drafted (Contract URL set), finished, missing Signer/legal name, or with unfilled `[placeholders]` get a page comment and no draft.",
     "enable_on_publish": true
   },
   "trigger": {
@@ -32,7 +32,7 @@
     "database_page": "https://app.notion.com/p/295dcd2fc1b941abb158f2d9bf858ead",
     "api_version": "2026-03-11",
     "properties_read": "Counterparty Legal Name (title), Signer (relation, limit 1), Signer Name / Signer Email (rollups), Override Email (Optional), Status, Contract URL — plus the page BODY via GET /v1/pages/{id}/markdown, which is the contract text",
-    "properties_written": "Contract URL (url) = the eSignatures draft link, Status (select) = \"Sent\", Sent Date (date, today in SGT). There is no Contract ID property (removed 2026-09-28); the contract id is the UUID inside Contract URL, as on SOWs.",
+    "properties_written": "Contract URL (url) = the eSignatures draft link, Status (select) = \"Ready to send\" (changed from \"Sent\" 2026-09-28 — a draft is waiting for review, not sent; Sent Date is no longer written). There is no Contract ID property (removed 2026-09-28); the contract id is the UUID inside Contract URL, as on SOWs.",
     "template_mode_note": "Repo rule 5 does not apply — this workflow only updates an existing page.",
     "template_note": "The NDAs database template holds the full Mutual NDA with each placeholder as inline code around a bracketed label, e.g. `[Short name]`. The user types over each one; a filled value keeps the inline-code formatting but loses the brackets. The Zap refuses while any bracketed inline-code span remains, then strips all inline-code formatting before sending."
   },

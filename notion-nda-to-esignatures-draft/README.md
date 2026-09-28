@@ -39,7 +39,7 @@ flowchart TD
     I -- yes --> K
     I -- no --> J[Strip inline-code formatting]
     J --> L[eSignatures create_contract<br/>Mutual NDA shell, body as contract-body<br/>save_as_draft=yes, metadata = page id<br/>maxAttempts 1]
-    L --> M[PATCH row: Contract URL = draft link,<br/>Status = Sent, Sent Date = today SGT]
+    L --> M[PATCH row: Contract URL = draft link,<br/>Status = Ready to send]
 ```
 
 ## Placeholders
@@ -92,12 +92,13 @@ The row's **Counterparty Legal Name** (title) is still used for the contract tit
   blank line between blocks so clauses don't run together.
 - **A Notion divider becomes a PDF page break** in eSignatures (`---`). The shell already breaks
   before Signatory Details, so leave dividers out of the body unless you want a break.
-- **Status is set to `Sent` when the draft is created**, as the task spec asks, even though the
-  draft hasn't gone to anyone yet. Nothing sets `Signed` yet. The obvious follow-up is to add an
-  `NDA` agreement type to [`esignatures-status-to-notion`](../esignatures-status-to-notion/),
-  which already fires on every contract. That Zap currently skips these contracts (no row in its
-  mapping Table), so it is unaffected by this one. Each contract carries its Notion page id as
-  `metadata`, so the follow-up can find the row without a Table row.
+- **Status becomes `Ready to send` when the draft is created** (it was `Sent` until 2026-09-28):
+  the draft is waiting for review, not sent. Nothing sets `Sent`, `Sent Date` or `Signed` yet.
+  The obvious follow-up is to add an `NDA` agreement type to
+  [`esignatures-status-to-notion`](../esignatures-status-to-notion/), which already fires on
+  every contract. That Zap currently skips these contracts (no row in its mapping Table), so it is
+  unaffected by this one. Each contract carries its Notion page id as `metadata`, so the
+  follow-up can find the row without a Table row.
 - **`create_contract` runs once.** It is not idempotent, so a retry after an ambiguous failure
   could leave a duplicate draft. A failed run is readable instead, and pressing the button again
   is the retry. The write-back PATCH keeps the default retries because replaying it lands in the

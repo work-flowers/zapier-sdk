@@ -44,12 +44,15 @@ const WF_SIGNER = {
 /** eSignatures user who owns the contract and receives its notifications. */
 const ASSIGNED_USER = "dennis@work.flowers";
 
-/** Singapore has no DST, so "today" is a fixed +8h offset from UTC. */
-const SGT_OFFSET_MS = 8 * 3600 * 1000;
-
 /** Status values that mean this row has already been through the Zap. */
 const DONE_STATUSES = new Set(["Sent", "Signed", "Withdrawn"]);
-const SENT_STATUS = "Sent";
+
+/**
+ * Status once the draft exists: it is waiting for a human to review and send
+ * it from eSignatures. "Sent" (and Sent Date) belong to whatever records the
+ * actual send — nothing does yet.
+ */
+const DRAFTED_STATUS = "Ready to send";
 
 // --- Pure helpers ----------------------------------------------------------
 
@@ -196,22 +199,6 @@ function extractDraftUrl(res: any, contractId: string): string {
     found[0] ??
     `https://esignatures.com/draft_contracts/${contractId}/edit`
   );
-}
-
-/** `YYYY-MM-DD` for a UTC epoch-ms value — integer maths, no Date. */
-function isoDateFromEpochMs(ms: number): string {
-  let z = Math.floor(ms / 86400000) + 719468;
-  const era = Math.floor(z / 146097);
-  const doe = z - era * 146097;
-  const yoe = Math.floor(
-    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
-  );
-  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
-  const mp = Math.floor((5 * doy + 2) / 153);
-  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
-  const m = mp + (mp < 10 ? 3 : -9);
-  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
-  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 // --- Placeholders ----------------------------------------------------------
@@ -651,10 +638,7 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
   }
   const contractUrl = extractDraftUrl(contract, contractId);
 
-  // 5. Today's date in Singapore, fixed for every retry of this run.
-  const today = await ctx.step("today-sgt", async () => isoDateFromEpochMs(Date.now() + SGT_OFFSET_MS));
-
-  // 6. Write back in one PATCH. Replaying it lands in the same state, so the
+  // 5. Write back in one PATCH. Replaying it lands in the same state, so the
   //    default retries are safe. Raw REST rather than update_database_item
   //    because the action's schema cache lags newly created databases.
   await ctx.step("update-nda-row", async () => {
@@ -665,8 +649,7 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
       body: JSON.stringify({
         properties: {
           "Contract URL": { url: contractUrl },
-          Status: { select: { name: SENT_STATUS } },
-          "Sent Date": { date: { start: today } },
+          Status: { select: { name: DRAFTED_STATUS } },
         },
       }),
     });
@@ -684,8 +667,7 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
     signer: snap.signerEmail,
     contractId,
     contractUrl,
-    status: SENT_STATUS,
-    sentDate: today,
+    status: DRAFTED_STATUS,
     bodyChars: body.length,
   };
 });
