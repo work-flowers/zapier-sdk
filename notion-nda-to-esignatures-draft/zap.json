@@ -1,12 +1,12 @@
 {
   "name": "notion-nda-to-esignatures-draft",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0e77a-792a-7c20-8b45-e35aee5b20e4",
+  "current_version_id": "01a0e77a-ae06-71e4-854a-3a1a2798cb7d",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af_GrfUiPAquoA_jdGXoeQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "notion-nda-to-esignatures-draft",
     "description": "Notion NDAs 'Send for signature' button -> eSignatures.com DRAFT contract whose text is the row's own page body (started from the NDAs database template, placeholders filled in inline), injected into the 'Mutual NDA' shell template. Counterparty Signer contact is signer 1, Dennis signer 2. Draft link (Contract URL), Status = Sent and Sent Date are written back. Rows already drafted (Contract URL set), finished, missing Signer/legal name, or with unfilled `[placeholders]` get a page comment and no draft.",
     "enable_on_publish": true
@@ -16,7 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/zLRh6xbcxCGWKo0t/",
     "trigger_note": "Catch hook. The sender is the NDAs database's 'Send for signature' button property ('Send webhook' action). After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
   },
   "connections": {
