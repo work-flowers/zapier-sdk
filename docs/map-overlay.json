@@ -110,7 +110,8 @@
       "zaps": [
         "drive-signed-agreement-to-notion",
         "esignatures-send-for-signing",
-        "esignatures-status-to-notion"
+        "esignatures-status-to-notion",
+        "notion-nda-to-esignatures-draft"
       ]
     }
   },
@@ -446,6 +447,11 @@
       "type": "table",
       "id": "01M1DXY3QEF60HX7HW8XYVE5AF",
       "name": "Slack-Notion Message Map"
+    },
+    "ds:ndas": {
+      "type": "notion_ds",
+      "id": "354e3731-d2e4-497d-8df0-8ac9738df959",
+      "name": "NDAs"
     }
   },
   "edges": [
@@ -1385,6 +1391,21 @@
       "kind": "write"
     },
     {
+      "from": "ds:ndas",
+      "to": "notion-nda-to-esignatures-draft",
+      "kind": "trigger"
+    },
+    {
+      "from": "notion-nda-to-esignatures-draft",
+      "to": "app:esignatures",
+      "kind": "write"
+    },
+    {
+      "from": "notion-nda-to-esignatures-draft",
+      "to": "ds:ndas",
+      "kind": "write"
+    },
+    {
       "from": "app:esignatures",
       "to": "esignatures-status-to-notion",
       "kind": "trigger"
@@ -1800,9 +1821,12 @@
       "28e9b5ff-59e7-4e45-98bb-754855e2aff1",
       "2a875453-37cf-4c8a-a55e-5443f7720187",
       "3a091b07-11ac-80d8-8e18-004dbf133f9c",
+      "3e991b07-11ac-8156-a61d-cde50c151003",
       "443d6bed-607d-458e-a0de-27dd627bf96f",
       "62699a8c-3351-40e8-9265-bdca5e037b03",
+      "6325d51d-cd18-47fe-8925-0a0ccff24f3a",
       "699fb6bb-960d-4a7f-ac43-3185e242890a",
+      "6adb7c81-ceec-4666-a20f-0ac1d8775442",
       "6eaa0583-2cde-42d2-bf3e-2fe9b0808f3e",
       "742441f1-81a7-498b-9f8b-bc685bb0183c",
       "93cdde00-bfd7-4321-8e5c-dc9723505826",

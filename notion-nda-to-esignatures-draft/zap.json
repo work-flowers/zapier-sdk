@@ -1,0 +1,67 @@
+{
+  "name": "notion-nda-to-esignatures-draft",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "notion-nda-to-esignatures-draft",
+    "description": "Notion NDAs 'Send for signature' button -> eSignatures.com DRAFT contract whose text is the row's own page body (started from the NDAs database template, placeholders filled in inline), injected into the 'Mutual NDA' shell template. Counterparty Signer contact is signer 1, Dennis signer 2. Draft link (Contract URL), Status = Sent and Sent Date are written back. Rows already drafted (Contract URL set), finished, missing Signer/legal name, or with unfilled `[placeholders]` get a page comment and no draft.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. The sender is the NDAs database's 'Send for signature' button property ('Send webhook' action). After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "esign": "026935e5-48e9-8cea-9bfc-c46d042addf7"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
+    "esign": "The PUBLIC `EsignaturesioCLIAPI` app ('eSignatures'), the same connection esignatures-status-to-notion binds for its triggers. Its create_contract takes a template plus `placeholder_fields_markdown_map`, which does what the private `App236843CLIAPI` app's markdown + placeholder_field_name pair does for SOWs, and also takes a second signer and metadata."
+  },
+  "notion": {
+    "ndas_datasource": "354e3731-d2e4-497d-8df0-8ac9738df959",
+    "database_page": "https://app.notion.com/p/295dcd2fc1b941abb158f2d9bf858ead",
+    "api_version": "2026-03-11",
+    "properties_read": "Counterparty Legal Name (title), Signer (relation, limit 1), Signer Name / Signer Email (rollups), Override Email (Optional), Status, Contract URL — plus the page BODY via GET /v1/pages/{id}/markdown, which is the contract text",
+    "properties_written": "Contract URL (url) = the eSignatures draft link, Status (select) = \"Sent\", Sent Date (date, today in SGT). There is no Contract ID property (removed 2026-09-28); the contract id is the UUID inside Contract URL, as on SOWs.",
+    "template_mode_note": "Repo rule 5 does not apply — this workflow only updates an existing page.",
+    "template_note": "The NDAs database template holds the full Mutual NDA with each placeholder as inline code around a bracketed label, e.g. `[Short name]`. The user types over each one; a filled value keeps the inline-code formatting but loses the brackets. The Zap refuses while any bracketed inline-code span remains, then strips all inline-code formatting before sending."
+  },
+  "esignatures": {
+    "template": "6325d51d-cd18-47fe-8925-0a0ccff24f3a (\"Mutual NDA\")",
+    "template_note": "A bare shell: `{{ contract-body }}`, a page break, and a Signatory Details section holding the `signatory_title` signer field (every signer, required, filled in at signing). The NDA text itself lives in the Notion database template, not here. So `template_id` and the `contract-body` placeholder name are the only template-coupled values.",
+    "action_note": "`save_as_draft: \"yes\"` — nothing reaches a signer until a human sends the draft from eSignatures. `test: \"no\"` explicitly. `metadata` = the Notion page id, so a later contract-signed flow can find the row again. The create step runs with maxAttempts 1: create_contract is not idempotent.",
+    "output_note": "Verified 2026-09-28: create_contract returns `{data:[{status:\"queued\", data:{contract:{id, draft_contract_url, signers, metadata, …}}}]}` — the same double nesting as the private app. `draft_contract_url` is `https://esignatures.com/draft_contracts/<id>/edit`."
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "live_runs": {
+    "note": "2026-09-28 with run-durable against the real Palmera Projects NDA row (3e991b07-11ac-8156-a61d-cde50c151003), at Dennis's request. A draft only; nothing sent.",
+    "runs": [
+      {
+        "case": "main path",
+        "outcome": "Draft 6adb7c81-ceec-4666-a20f-0ac1d8775442 created from the page body (11,592 chars, no placeholders or backticks left), signers Abarna Raj (1) and Dennis (2), metadata = page id. The write-back then FAILED on `Contract ID is not a property that exists` — the property had been deleted. Code changed to guard on and write Contract URL only; the write-back was completed by hand with the corrected PATCH body."
+      },
+      {
+        "case": "second press on the same row",
+        "outcome": "Re-run with the corrected code: `{skipped:\"already-drafted\"}`, one page comment, no second draft."
+      },
+      {
+        "case": "empty ping {\"querystring\":{}}",
+        "outcome": "`{skipped:\"empty-payload\"}`, no error raised."
+      }
+    ]
+  }
+}
