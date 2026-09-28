@@ -1406,6 +1406,11 @@
       "kind": "write"
     },
     {
+      "from": "notion-nda-to-esignatures-draft",
+      "to": "table:esignatures-map",
+      "kind": "write"
+    },
+    {
       "from": "app:esignatures",
       "to": "esignatures-status-to-notion",
       "kind": "trigger"
@@ -1423,6 +1428,11 @@
     {
       "from": "esignatures-status-to-notion",
       "to": "ds:project-addendums",
+      "kind": "write"
+    },
+    {
+      "from": "esignatures-status-to-notion",
+      "to": "ds:ndas",
       "kind": "write"
     },
     {
@@ -1809,6 +1819,7 @@
       "019d489c-35c7-50fd-18ec-c10c03fef69b",
       "019d9007-5623-5f38-9bb1-fc534eea9314",
       "01KZD197ATZRSZG6TKXH38M4R5",
+      "01M3KR37DQC4DX1QDZB6FVGW1H",
       "02b95b31-c152-8800-9036-1107e08f70da",
       "04260295-4ab8-4bd2-896c-b28a684d6696",
       "0cda0de5-d87d-45ec-a654-70a19da84311",

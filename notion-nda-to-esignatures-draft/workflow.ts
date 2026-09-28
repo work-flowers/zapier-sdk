@@ -44,6 +44,14 @@ const WF_SIGNER = {
 /** eSignatures user who owns the contract and receives its notifications. */
 const ASSIGNED_USER = "dennis@work.flowers";
 
+/**
+ * "eSignatures Mapping" Zapier Table — contract id -> Notion page id, read by
+ * esignatures-status-to-notion when eSignatures reports the contract sent or
+ * signed. Shared with the SOW/addendum flows; Table ops cost no tasks.
+ */
+const ESIGN_TABLE = "01KHZEP4FA560E9GMTGTBR1E2N";
+const AGREEMENT_TYPE = "NDA";
+
 /** Status values that mean this row has already been through the Zap. */
 const DONE_STATUSES = new Set(["Sent", "Signed", "Withdrawn"]);
 
@@ -661,6 +669,39 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
     return { ok: true };
   });
 
+  // 6. Map the contract so esignatures-status-to-notion can move this row to
+  //    Sent / Signed later. After the Notion write-back on purpose: Contract URL
+  //    is what stops a second press making a duplicate draft, so it lands
+  //    first. Find-then-create in one step, so a retry re-reads instead of
+  //    adding a second row.
+  const mapping = await ctx.step("table-map-contract", async () => {
+    const found = await sdk.listTableRecords({
+      table: ESIGN_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: "Contract ID", operator: "exact", value: contractId }],
+      pageSize: 10,
+    });
+    const existing = firstString(((found as any)?.data ?? [])[0]?.id);
+    if (existing) return { id: existing, created: false };
+    const created = await sdk.createTableRecords({
+      table: ESIGN_TABLE,
+      keyMode: "names",
+      records: [
+        {
+          data: {
+            "Page ID": snap.pageId,
+            "Contract ID": contractId,
+            // labeled_string cells take { value, label }.
+            "Agreement Type": { value: AGREEMENT_TYPE, label: AGREEMENT_TYPE },
+          },
+        },
+      ],
+    });
+    const id = firstString(firstResult(created)?.id);
+    if (!id) throw new Error("Zapier Table create returned no record id");
+    return { id, created: true };
+  });
+
   console.log(`drafted ${contractId} for ${snap.signerEmail} (${snap.legalName}, ${body.length} chars)`);
 
   return {
@@ -670,6 +711,7 @@ export default defineDurable("notion-nda-to-esignatures-draft", async (ctx, rawI
     contractId,
     contractUrl,
     status: DRAFTED_STATUS,
+    tableRowId: mapping.id,
     bodyChars: body.length,
   };
 });

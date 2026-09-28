@@ -10,22 +10,26 @@
 // listen to and which status they set — plus the signed one also files the
 // executed PDF, which the classic Zap never actually did (it passed an empty
 // array to the files property, a silent no-op).
+//
+// Each entry file calls defineDurable itself, with a string-literal name, and
+// hands its body to runStatusSync here. The publish-time analyzer only looks
+// for defineDurable in /workflow.ts: a factory in this file publishes as
+// `missing-define-durable` (probed 2026-09-28).
 import { createZapierSdk } from "@zapier/zapier-sdk";
-import { defineDurable } from "@zapier/zapier-durable";
 
 export const sdk = createZapierSdk();
 
 // --- Bindings --------------------------------------------------------------
-export const NOTION_APP_KEY = "NotionCLIAPI";
 export const NOTION_CONNECTION = "notion_wf";
 
 export const NOTION_API = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2026-03-11";
 
 /**
- * "eSignatures Mapping" Zapier Table — written by `esignatures-send-for-signing`,
- * read-only here. Fields by name: "Page ID", "Contract ID", "Agreement Type"
- * (labeled_string: "SOW" | "Project Addendum"). Tables auth is automatic.
+ * "eSignatures Mapping" Zapier Table — written by `esignatures-send-for-signing`
+ * and `notion-nda-to-esignatures-draft`, read-only here. Fields by name:
+ * "Page ID", "Contract ID", "Agreement Type" (labeled_string: "SOW" |
+ * "Project Addendum" | "NDA"). Tables auth is automatic.
  */
 export const ESIGN_TABLE = "01KHZEP4FA560E9GMTGTBR1E2N";
 export const T_PAGE_ID = "Page ID";
@@ -33,7 +37,7 @@ export const T_CONTRACT_ID = "Contract ID";
 export const T_AGREEMENT_TYPE = "Agreement Type";
 
 // --- Per-agreement-type configuration --------------------------------------
-type AgreementType = "SOW" | "Project Addendum";
+type AgreementType = "SOW" | "Project Addendum" | "NDA";
 
 interface TypeConfig {
   datasource: string;
@@ -43,6 +47,10 @@ interface TypeConfig {
   signedStatus: string;
   /** Files property that receives the executed PDF. Differs between the two. */
   fileProp: string;
+  /** Date property stamped with today (SGT) on send, if the record has one. */
+  sentDateProp?: string;
+  /** Date property stamped with today (SGT) on signature, if the record has one. */
+  signedDateProp?: string;
 }
 
 const TYPES: Record<AgreementType, TypeConfig> = {
@@ -58,7 +66,20 @@ const TYPES: Record<AgreementType, TypeConfig> = {
     signedStatus: "Executed",
     fileProp: "Executed Agreement",
   },
+  NDA: {
+    datasource: "354e3731-d2e4-497d-8df0-8ac9738df959", // "NDAs"
+    sentStatus: "Sent",
+    signedStatus: "Signed",
+    fileProp: "Signed PDF",
+    sentDateProp: "Sent Date",
+    signedDateProp: "Signed Date",
+  },
 };
+
+const AGREEMENT_TYPES = new Set<string>(Object.keys(TYPES));
+
+/** Singapore has no DST, so "today" is a fixed +8h offset from UTC. */
+const SGT_OFFSET_MS = 8 * 3600 * 1000;
 
 export type Phase = "sent" | "signed";
 
@@ -68,6 +89,22 @@ const PHASE_NAMES: Record<Phase, string> = {
 };
 
 // --- Pure helpers ----------------------------------------------------------
+
+/** `YYYY-MM-DD` for a UTC epoch-ms value — integer maths, no Date. */
+export function isoDateFromEpochMs(ms: number): string {
+  let z = Math.floor(ms / 86400000) + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor(
+    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
+  );
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
 
 export function normalizeInput(rawInput: unknown): unknown {
   let v: unknown = rawInput;
@@ -214,8 +251,7 @@ function readAgreementType(row: any): AgreementType | null {
   const cell = (row?.data ?? {})[T_AGREEMENT_TYPE];
   // labeled_string cells arrive as { value, label }; tolerate a bare string too.
   const raw = firstString(typeof cell === "string" ? cell : cell?.value, cell?.label);
-  if (raw === "SOW" || raw === "Project Addendum") return raw;
-  return null;
+  return AGREEMENT_TYPES.has(raw) ? (raw as AgreementType) : null;
 }
 
 // --- Signed-PDF attachment -------------------------------------------------
@@ -362,119 +398,126 @@ async function attachSignedPdf(
   });
 }
 
-// --- Workflow factory ------------------------------------------------------
+// --- Workflow body ---------------------------------------------------------
 
-export function defineStatusSync(phase: Phase) {
+/** The whole workflow body, run by each entry file's defineDurable. */
+export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
   const name = PHASE_NAMES[phase];
+  const payload = normalizeInput(rawInput);
 
-  return defineDurable<Record<string, unknown>, unknown>(name, async (ctx, rawInput) => {
-    const payload = normalizeInput(rawInput);
+  if (isEmptyPing(payload)) {
+    console.log("empty payload — treating as a ping, not an event");
+    return { skipped: "empty-payload" };
+  }
 
-    if (isEmptyPing(payload)) {
-      console.log("empty payload — treating as a ping, not an event");
-      return { skipped: "empty-payload" };
-    }
+  const contractId = extractContractId(payload);
 
-    const contractId = extractContractId(payload);
-
-    // 1. Which Notion record does this contract belong to? A contract created
-    //    outside the send-for-signing flows has no row here — that is a SKIP, not
-    //    an error. The classic Zap's search was configured to fail on a miss,
-    //    which turned every unrelated contract into an alert.
-    const row = await ctx.step("table-find-by-contract-id", async () => {
-      const found = await sdk.listTableRecords({
-        table: ESIGN_TABLE,
-        keyMode: "names",
-        filters: [{ fieldKey: T_CONTRACT_ID, operator: "exact", value: contractId }],
-        pageSize: 10,
-      });
-      const rows = ((found as any)?.data ?? []) as any[];
-      rows.sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? "")));
-      return rows[0] ?? null;
+  // 1. Which Notion record does this contract belong to? A contract created
+  //    outside the send-for-signing flows has no row here — that is a SKIP, not
+  //    an error. The classic Zap's search was configured to fail on a miss,
+  //    which turned every unrelated contract into an alert.
+  const row = await ctx.step("table-find-by-contract-id", async () => {
+    const found = await sdk.listTableRecords({
+      table: ESIGN_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: T_CONTRACT_ID, operator: "exact", value: contractId }],
+      pageSize: 10,
     });
-
-    if (!row) {
-      console.log(`no mapping row for contract ${contractId} — not one of ours, skipping`);
-      return { skipped: "no-mapping-row", contractId };
-    }
-
-    const pageId = dashUuid(firstString((row.data ?? {})[T_PAGE_ID]));
-    if (!pageId) {
-      console.log(`mapping row ${row.id} has no Page ID — nothing to update`);
-      return { skipped: "row-has-no-page-id", contractId, tableRowId: row.id };
-    }
-
-    const agreementType = readAgreementType(row);
-    if (!agreementType) {
-      const raw = JSON.stringify((row.data ?? {})[T_AGREEMENT_TYPE]);
-      console.log(`mapping row ${row.id} has an unrecognised Agreement Type: ${raw}`);
-      return { skipped: "unknown-agreement-type", contractId, agreementTypeRaw: raw };
-    }
-    const cfg = TYPES[agreementType];
-    const status = phase === "sent" ? cfg.sentStatus : cfg.signedStatus;
-
-    // 2. Move the status on.
-    await ctx.step("update-status", async () =>
-      sdk.runAction({
-        appKey: NOTION_APP_KEY,
-        actionType: "write",
-        actionKey: "update_database_item",
-        connection: NOTION_CONNECTION,
-        inputs: {
-          datasource: cfg.datasource,
-          page: pageId,
-          "properties|||Status|||status": status,
-        },
-      }),
-    );
-
-    // 3. On signature, file the executed PDF. New behaviour — the classic Zap
-    //    passed an empty files array and so never filed anything.
-    let attach: AttachResult | null = null;
-    let pdfUrl = "";
-    if (phase === "signed") {
-      pdfUrl = extractSignedPdfUrl(payload);
-      if (!pdfUrl) {
-        attach = {
-          ok: false,
-          stage: "extract-url",
-          detail: `no https .pdf URL in payload; keys: ${Object.keys(
-            (payload ?? {}) as Record<string, unknown>,
-          ).join(",")}`,
-        };
-      } else {
-        attach = await attachSignedPdf(ctx, {
-          pageId,
-          fileProp: cfg.fileProp,
-          url: pdfUrl,
-          filename: pdfFilename(pdfUrl, `${agreementType} ${contractId}`),
-        });
-      }
-    }
-
-    console.log(
-      `${name}: contract ${contractId} -> ${agreementType} ${pageId} status "${status}"` +
-        (attach
-          ? ` (pdf: ${attach.ok ? `${attach.bytes} bytes` : `NOT FILED at ${attach.stage} — ${attach.detail}`})`
-          : ""),
-    );
-
-    return {
-      contractId,
-      agreementType,
-      pageId,
-      status,
-      tableRowId: row.id,
-      ...(phase === "signed"
-        ? {
-            fileProperty: cfg.fileProp,
-            pdfFound: Boolean(pdfUrl),
-            pdfFiled: attach?.ok === true,
-            pdfBytes: attach?.ok ? attach.bytes : null,
-            // Surfaced in the output because run logs are not retrievable.
-            pdfError: attach && !attach.ok ? `${attach.stage}: ${attach.detail}` : null,
-          }
-        : {}),
-    };
+    const rows = ((found as any)?.data ?? []) as any[];
+    rows.sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? "")));
+    return rows[0] ?? null;
   });
+
+  if (!row) {
+    console.log(`no mapping row for contract ${contractId} — not one of ours, skipping`);
+    return { skipped: "no-mapping-row", contractId };
+  }
+
+  const pageId = dashUuid(firstString((row.data ?? {})[T_PAGE_ID]));
+  if (!pageId) {
+    console.log(`mapping row ${row.id} has no Page ID — nothing to update`);
+    return { skipped: "row-has-no-page-id", contractId, tableRowId: row.id };
+  }
+
+  const agreementType = readAgreementType(row);
+  if (!agreementType) {
+    const raw = JSON.stringify((row.data ?? {})[T_AGREEMENT_TYPE]);
+    console.log(`mapping row ${row.id} has an unrecognised Agreement Type: ${raw}`);
+    return { skipped: "unknown-agreement-type", contractId, agreementTypeRaw: raw };
+  }
+  const cfg = TYPES[agreementType];
+  const status = phase === "sent" ? cfg.sentStatus : cfg.signedStatus;
+
+  // 2. Move the status on, and stamp the date where the record has one.
+  //    Raw REST rather than update_database_item: the action's schema cache
+  //    lags schema changes (NDAs' Status became a status-type property on
+  //    2026-09-28), and a replayed PATCH of properties lands in the same state.
+  const dateProp = phase === "sent" ? cfg.sentDateProp : cfg.signedDateProp;
+  const today = dateProp
+    ? await ctx.step("today-sgt", async () => isoDateFromEpochMs(Date.now() + SGT_OFFSET_MS))
+    : "";
+  await ctx.step("update-status", async () => {
+    const properties: Record<string, unknown> = { Status: { status: { name: status } } };
+    if (dateProp) properties[dateProp] = { date: { start: today } };
+    const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+      connection: NOTION_CONNECTION,
+      method: "PATCH",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({ properties }),
+    });
+    if (!res.ok) {
+      throw new Error(`Notion update page ${pageId} failed (${res.status}): ${await res.text()}`);
+    }
+    return { ok: true };
+  });
+
+  // 3. On signature, file the executed PDF. New behaviour — the classic Zap
+  //    passed an empty files array and so never filed anything.
+  let attach: AttachResult | null = null;
+  let pdfUrl = "";
+  if (phase === "signed") {
+    pdfUrl = extractSignedPdfUrl(payload);
+    if (!pdfUrl) {
+      attach = {
+        ok: false,
+        stage: "extract-url",
+        detail: `no https .pdf URL in payload; keys: ${Object.keys(
+          (payload ?? {}) as Record<string, unknown>,
+        ).join(",")}`,
+      };
+    } else {
+      attach = await attachSignedPdf(ctx, {
+        pageId,
+        fileProp: cfg.fileProp,
+        url: pdfUrl,
+        filename: pdfFilename(pdfUrl, `${agreementType} ${contractId}`),
+      });
+    }
+  }
+
+  console.log(
+    `${name}: contract ${contractId} -> ${agreementType} ${pageId} status "${status}"` +
+      (attach
+        ? ` (pdf: ${attach.ok ? `${attach.bytes} bytes` : `NOT FILED at ${attach.stage} — ${attach.detail}`})`
+        : ""),
+  );
+
+  return {
+    contractId,
+    agreementType,
+    pageId,
+    status,
+    tableRowId: row.id,
+    ...(dateProp ? { dateProperty: dateProp, date: today } : {}),
+    ...(phase === "signed"
+      ? {
+          fileProperty: cfg.fileProp,
+          pdfFound: Boolean(pdfUrl),
+          pdfFiled: attach?.ok === true,
+          pdfBytes: attach?.ok ? attach.bytes : null,
+          // Surfaced in the output because run logs are not retrievable.
+          pdfError: attach && !attach.ok ? `${attach.stage}: ${attach.detail}` : null,
+        }
+      : {}),
+  };
 }
