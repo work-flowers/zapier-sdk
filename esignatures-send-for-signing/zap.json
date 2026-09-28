@@ -1,5 +1,6 @@
 {
   "note": "One shared `shared.ts` deployed as TWO workflows — one per Notion data source — so this file mirrors both deployments instead of one. Each deployment publishes its own `workflow.<kind>.ts` as `workflow.ts` alongside `shared.ts` verbatim, following the `whatsapp-slack-bridge` pattern. Republish both together whenever `shared.ts` changes.",
+  "analyzer_note": "Each entry file calls `defineDurable` with a string-literal name (`sow-send-for-signing` / `project-addendum-send-for-signing`) and delegates to `runSendForSigning(ctx, kind, rawInput)` in `shared.ts`. The original `defineSendForSigning(kind)` factory in `shared.ts` (published 2026-08-04) is refused by the publish-time analyzer as `missing-define-durable` — it only looks for `defineDurable` in `/workflow.ts`. Restructured 2026-09-28 with identical step ids and behaviour.",
   "deployments": [
     {
       "name": "sow-send-for-signing",
