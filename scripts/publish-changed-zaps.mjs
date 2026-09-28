@@ -49,7 +49,8 @@
 // Without --execute it prints the plan and touches nothing — a deeper dry run.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, readdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectChangedZaps } from "./detect-changed-zaps.mjs";
 
@@ -131,6 +132,50 @@ function sdk(rest) {
     );
   }
   return JSON.parse(raw);
+}
+
+// Create a workflow container with its visibility STATED, never defaulted.
+// The CLI's create-workflow can only say `--private`: without it, is_private is
+// left out of the request and Zapier's server-side default decides. That default
+// made all five -peter Zaps private (PRs #176/#177, 2026-09-25/26) although every
+// zap.json said `"is_private": false`, and visibility cannot be changed after
+// creation. The SDK method sends is_private whenever it is given, so the create
+// goes through it: installed once into a temp prefix (this repo has no
+// package.json), then run with that prefix as cwd so the bare import resolves.
+let sdkPrefix = null;
+function createWorkflowContainer(name, description, isPrivate) {
+  if (!sdkPrefix) {
+    sdkPrefix = mkdtempSync(join(tmpdir(), "zapier-sdk-"));
+    execFileSync("npm", ["install", "--no-save", "--silent", "--prefix", sdkPrefix, "@zapier/zapier-sdk"], {
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+  }
+  const code = [
+    'import { createZapierSdk } from "@zapier/zapier-sdk/experimental";',
+    "const sdk = createZapierSdk({ credentials: { clientId: process.env.ZAPIER_CLIENT_ID, clientSecret: process.env.ZAPIER_CLIENT_SECRET } });",
+    "const result = await sdk.createWorkflow(JSON.parse(process.env.CREATE_WORKFLOW_INPUT));",
+    'process.stdout.write("\\n__CREATE_WORKFLOW_RESULT__" + JSON.stringify(result) + "\\n");',
+  ].join("\n");
+  let raw;
+  try {
+    raw = execFileSync("node", ["--input-type=module", "-e", code], {
+      cwd: sdkPrefix,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CREATE_WORKFLOW_INPUT: JSON.stringify({ name, description, private: isPrivate }),
+      },
+    });
+  } catch (err) {
+    const detail = [(err.stderr ?? "").toString().trim(), (err.stdout ?? "").toString().trim()]
+      .filter(Boolean)
+      .join("\n--- stdout ---\n")
+      .slice(0, 4000);
+    fail(`createWorkflow failed (exit ${err.status ?? "?"})` + (detail ? `:\n${detail}` : ""));
+  }
+  const line = raw.split("\n").find((l) => l.startsWith("__CREATE_WORKFLOW_RESULT__"));
+  if (!line) fail(`createWorkflow printed no result — output: ${raw.slice(0, 2000)}`);
+  return JSON.parse(line.slice("__CREATE_WORKFLOW_RESULT__".length));
 }
 
 // Some CLI responses wrap the payload in { data: ... }; some don't.
@@ -398,13 +443,21 @@ function createAndPublish(dir, dep, execute) {
 
   if (!execute) return { plan };
 
-  // 1. Create the container. --private is the ONLY chance to set visibility.
-  const createArgs = ["create-workflow", spec.workflowName, "--description", spec.description];
-  if (spec.isPrivate) createArgs.push("--private");
-  const created = unwrap(sdk(createArgs));
+  // 1. Create the container. This is the ONLY chance to set visibility, so it
+  // is sent explicitly either way (see createWorkflowContainer) and read back.
+  const created = unwrap(createWorkflowContainer(spec.workflowName, spec.description, spec.isPrivate));
   const workflowId = created?.id || created?.workflow?.id || null;
   if (!workflowId) {
     fail(`${dir}: create-workflow returned no id — response: ${JSON.stringify(created)}`);
+  }
+  if (created.is_private !== spec.isPrivate) {
+    // Wrong visibility is unrecoverable, so the container must not survive to
+    // be published. It has no version yet, so deleting it loses nothing.
+    sdk(["delete-workflow", workflowId]);
+    fail(
+      `${dir}: Zapier created \`${workflowId}\` with is_private=${created.is_private} although zap.json ` +
+        `declares ${spec.isPrivate} — deleted it rather than publish a Zap whose visibility can never be fixed`,
+    );
   }
   // Say the id NOW, before the publish. If the first publish fails (the
   // analyzer, a bad connection), the container already exists with no version
