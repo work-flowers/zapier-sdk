@@ -19,6 +19,13 @@ The two flows differ only in configuration, so they share one code path and one 
 than being two near-identical workflows that drift apart. **Republish both together** whenever
 `shared.ts` changes.
 
+Each entry file calls `defineDurable` itself, with its deployment name as a **string literal**, and
+delegates the whole body to `runSendForSigning(ctx, kind, rawInput)` in `shared.ts`. Don't fold that
+back into a factory in `shared.ts`: Zapier's publish-time analyzer only looks for `defineDurable` in
+the file published as `/workflow.ts`, so a `defineSendForSigning(kind)` factory — the shape these
+deployments were first published with on 2026-08-04 — is refused with `missing-define-durable`.
+Same fix as [`esignatures-status-to-notion`](../esignatures-status-to-notion/).
+
 ## Workflow
 
 ```mermaid
@@ -174,5 +181,9 @@ exposes no Get-Contract action.
   somewhere to go. Read and create happen in one `ctx.step` so a retry re-reads rather than
   committing over state a previous attempt already wrote.
 - Repo rule 5 (default templates) does not apply — these workflows only update existing pages.
+- **2026-09-28: restructured for the publish-time analyzer, no behaviour change.** Probing
+  `validate-workflow` with the old entry file plus a factory `shared.ts` returned
+  `missing-define-durable`, so the next republish of either deployment would have failed the publish
+  job. The entry files now call `defineDurable` with a literal name; every step id is unchanged.
 - Missing data is a **skip with a comment on the page**, not an error. A person has to fix it, and
   an error alert nobody can action is just noise.

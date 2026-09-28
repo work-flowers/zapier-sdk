@@ -11,8 +11,12 @@
 // signature", where the signer comes from, and the eSignatures template — so
 // they share one code path and one config table rather than two near-identical
 // workflows that drift apart.
+//
+// Each entry file calls defineDurable itself, with a string-literal name, and
+// hands its body to runSendForSigning here. The publish-time analyzer only
+// looks for defineDurable in /workflow.ts: a factory in this file publishes as
+// `missing-define-durable` (probed 2026-09-28).
 import { createZapierSdk } from "@zapier/zapier-sdk";
-import { defineDurable } from "@zapier/zapier-durable";
 
 export const sdk = createZapierSdk();
 
@@ -514,183 +518,182 @@ async function findOrCreateRow(
   return row;
 }
 
-// --- Workflow factory ------------------------------------------------------
+// --- Workflow body ---------------------------------------------------------
 
-export function defineSendForSigning(kind: Kind) {
+/** The whole workflow body, run by each entry file's defineDurable. */
+export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown) {
   const cfg = CONFIG[kind];
 
-  return defineDurable<Record<string, unknown>, unknown>(cfg.name, async (ctx, rawInput) => {
-    const payload = normalizeInput(rawInput);
+  const payload = normalizeInput(rawInput);
 
-    // Guard BEFORE any id extraction — see isEmptyPing.
-    if (isEmptyPing(payload)) {
-      console.log("empty payload — treating as a ping of the catch URL, not an event");
-      return { skipped: "empty-payload" };
-    }
+  // Guard BEFORE any id extraction — see isEmptyPing.
+  if (isEmptyPing(payload)) {
+    console.log("empty payload — treating as a ping of the catch URL, not an event");
+    return { skipped: "empty-payload" };
+  }
 
-    const pageId = extractPageId(payload);
+  const pageId = extractPageId(payload);
 
-    // 1. Read the page fresh. Fetched rather than taken from the payload
-    //    because the signer lives behind ROLLUPS ("Signatory Primary Email",
-    //    "SOW Name"), which the Notion actions' cached schema and SQL-mode
-    //    queries both omit — they are listed as not-available-in-query.
-    const page = await ctx.step("fetch-page", async () => {
-      const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
-        connection: NOTION_CONNECTION,
-        headers: { "Notion-Version": NOTION_VERSION },
-      });
-      if (!res.ok) {
-        throw new Error(`Notion get page ${pageId} failed (${res.status}): ${await res.text()}`);
-      }
-      return res.json();
+  // 1. Read the page fresh. Fetched rather than taken from the payload
+  //    because the signer lives behind ROLLUPS ("Signatory Primary Email",
+  //    "SOW Name"), which the Notion actions' cached schema and SQL-mode
+  //    queries both omit — they are listed as not-available-in-query.
+  const page = await ctx.step("fetch-page", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION },
     });
+    if (!res.ok) {
+      throw new Error(`Notion get page ${pageId} failed (${res.status}): ${await res.text()}`);
+    }
+    return res.json();
+  });
 
-    const snap = readPage(kind, page);
+  const snap = readPage(kind, page);
 
-    // 2. Validate. A person has to fix the data, so this is a skip with a
-    //    comment on the page — not an error alert nobody can action.
-    const problem = validate(kind, snap);
-    if (problem) {
-      await ctx.step("comment-missing-data", async () => {
-        try {
-          const res = await sdk.fetch(`${NOTION_API}/comments`, {
-            connection: NOTION_CONNECTION,
-            method: "POST",
-            headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              parent: { page_id: snap.pageId },
-              rich_text: [{ text: { content: cfg.missingDataComment } }],
-            }),
-          });
-          if (!res.ok) {
-            console.log(`Failed to add missing-data comment (${res.status}): ${await res.text()}`);
-          }
-        } catch (err) {
-          console.log(`Failed to add missing-data comment: ${String((err as Error)?.message ?? err)}`);
+  // 2. Validate. A person has to fix the data, so this is a skip with a
+  //    comment on the page — not an error alert nobody can action.
+  const problem = validate(kind, snap);
+  if (problem) {
+    await ctx.step("comment-missing-data", async () => {
+      try {
+        const res = await sdk.fetch(`${NOTION_API}/comments`, {
+          connection: NOTION_CONNECTION,
+          method: "POST",
+          headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            parent: { page_id: snap.pageId },
+            rich_text: [{ text: { content: cfg.missingDataComment } }],
+          }),
+        });
+        if (!res.ok) {
+          console.log(`Failed to add missing-data comment (${res.status}): ${await res.text()}`);
         }
-      });
-      console.log(`not ready to send: ${problem}`);
-      return { skipped: "missing-required-properties", reason: problem, pageId: snap.pageId };
-    }
-
-    // 3. Claim the Table row before creating the contract, so the contract id
-    //    always has somewhere to go.
-    const row = await findOrCreateRow(ctx, snap.pageId, cfg.agreementType);
-
-    // 4. The page body becomes the contract body.
-    const markdown = await ctx.step("fetch-page-markdown", async () => {
-      const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}/markdown`, {
-        connection: NOTION_CONNECTION,
-        headers: { "Notion-Version": NOTION_VERSION },
-      });
-      if (!res.ok) {
-        throw new Error(`Notion markdown export failed (${res.status}): ${await res.text()}`);
+      } catch (err) {
+        console.log(`Failed to add missing-data comment: ${String((err as Error)?.message ?? err)}`);
       }
-      const data: any = await res.json();
-      return String(data?.markdown ?? "");
     });
+    console.log(`not ready to send: ${problem}`);
+    return { skipped: "missing-required-properties", reason: problem, pageId: snap.pageId };
+  }
 
-    const body = notionMarkdownToContract(markdown);
-    if (!body) {
-      // An empty body would produce a contract with no terms in it. That is a
-      // real problem with a real event, so it raises.
-      throw new Error(`Notion page ${snap.pageId} exported an empty body — nothing to put in the contract`);
+  // 3. Claim the Table row before creating the contract, so the contract id
+  //    always has somewhere to go.
+  const row = await findOrCreateRow(ctx, snap.pageId, cfg.agreementType);
+
+  // 4. The page body becomes the contract body.
+  const markdown = await ctx.step("fetch-page-markdown", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}/markdown`, {
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+    if (!res.ok) {
+      throw new Error(`Notion markdown export failed (${res.status}): ${await res.text()}`);
     }
+    const data: any = await res.json();
+    return String(data?.markdown ?? "");
+  });
 
-    // 5. Create the draft contract. save_as_draft keeps it out of the signer's
-    //    inbox until a human sends it; test:false is explicit because the
-    //    action's own default is "true" and would create throwaway contracts.
-    const contract = await ctx.step("create-esignatures-draft", async () =>
-      sdk.runAction({
-        appKey: ESIGN_APP_KEY,
-        actionType: "write",
-        actionKey: "create_contract",
-        connection: ESIGN_CONNECTION,
-        inputs: {
-          template_id: cfg.templateId,
-          title: snap.title,
-          signers__name: [snap.signer.name],
-          signers__email: [snap.signer.email],
-          signers__signing_order: [1],
-          markdown: body,
-          placeholder_field_name: cfg.placeholderField,
-          save_as_draft: true,
-          test: false,
-        },
-      }),
+  const body = notionMarkdownToContract(markdown);
+  if (!body) {
+    // An empty body would produce a contract with no terms in it. That is a
+    // real problem with a real event, so it raises.
+    throw new Error(`Notion page ${snap.pageId} exported an empty body — nothing to put in the contract`);
+  }
+
+  // 5. Create the draft contract. save_as_draft keeps it out of the signer's
+  //    inbox until a human sends it; test:false is explicit because the
+  //    action's own default is "true" and would create throwaway contracts.
+  const contract = await ctx.step("create-esignatures-draft", async () =>
+    sdk.runAction({
+      appKey: ESIGN_APP_KEY,
+      actionType: "write",
+      actionKey: "create_contract",
+      connection: ESIGN_CONNECTION,
+      inputs: {
+        template_id: cfg.templateId,
+        title: snap.title,
+        signers__name: [snap.signer.name],
+        signers__email: [snap.signer.email],
+        signers__signing_order: [1],
+        markdown: body,
+        placeholder_field_name: cfg.placeholderField,
+        save_as_draft: true,
+        test: false,
+      },
+    }),
+  );
+
+  const contractId = extractContractId(contract);
+  if (!contractId) {
+    throw new Error(
+      `eSignatures create_contract returned no contract id: ${JSON.stringify(contract).slice(0, 400)}`,
     );
+  }
+  const contractUrl = `https://esignatures.com/draft_contracts/${contractId}/edit`;
 
-    const contractId = extractContractId(contract);
-    if (!contractId) {
-      throw new Error(
-        `eSignatures create_contract returned no contract id: ${JSON.stringify(contract).slice(0, 400)}`,
-      );
-    }
-    const contractUrl = `https://esignatures.com/draft_contracts/${contractId}/edit`;
+  // 6. Write the draft link and status back in one call. `Status` is a
+  //    status-type property; update_database_item handles it (verified against
+  //    both data sources) so no raw PATCH is needed.
+  await ctx.step("update-notion-record", async () =>
+    sdk.runAction({
+      appKey: NOTION_APP_KEY,
+      actionType: "write",
+      actionKey: "update_database_item",
+      connection: NOTION_CONNECTION,
+      inputs: {
+        datasource: cfg.datasource,
+        page: snap.pageId,
+        [`properties|||${cfg.urlProp}|||url`]: contractUrl,
+        "properties|||Status|||status": cfg.sentStatus,
+      },
+    }),
+  );
 
-    // 6. Write the draft link and status back in one call. `Status` is a
-    //    status-type property; update_database_item handles it (verified against
-    //    both data sources) so no raw PATCH is needed.
-    await ctx.step("update-notion-record", async () =>
+  // 7. Record the contract id, so esignatures-status-to-notion can find this
+  //    page when eSignatures fires.
+  await ctx.step("table-write-contract-id", async () =>
+    sdk.updateTableRecords({
+      table: ESIGN_TABLE,
+      keyMode: "names",
+      records: [{ id: row.id, data: { [T_CONTRACT_ID]: contractId } }],
+    }),
+  );
+
+  // 8. SOW only: advance the linked deal. Skipped cleanly when there is no
+  //    deal, which is normal — not every SOW hangs off one.
+  let dealUpdated = false;
+  if (kind === "sow" && snap.dealIds.length) {
+    await ctx.step("update-deal-status", async () =>
       sdk.runAction({
         appKey: NOTION_APP_KEY,
         actionType: "write",
         actionKey: "update_database_item",
         connection: NOTION_CONNECTION,
         inputs: {
-          datasource: cfg.datasource,
-          page: snap.pageId,
-          [`properties|||${cfg.urlProp}|||url`]: contractUrl,
-          "properties|||Status|||status": cfg.sentStatus,
+          datasource: DEALS_DS,
+          page: snap.dealIds[0],
+          "properties|||Status|||status": DEAL_IN_SIGNING,
         },
       }),
     );
+    dealUpdated = true;
+  }
 
-    // 7. Record the contract id, so esignatures-status-to-notion can find this
-    //    page when eSignatures fires.
-    await ctx.step("table-write-contract-id", async () =>
-      sdk.updateTableRecords({
-        table: ESIGN_TABLE,
-        keyMode: "names",
-        records: [{ id: row.id, data: { [T_CONTRACT_ID]: contractId } }],
-      }),
-    );
+  console.log(
+    `${cfg.name}: drafted ${contractId} for ${snap.signer.email} (${body.length} chars of body)`,
+  );
 
-    // 8. SOW only: advance the linked deal. Skipped cleanly when there is no
-    //    deal, which is normal — not every SOW hangs off one.
-    let dealUpdated = false;
-    if (kind === "sow" && snap.dealIds.length) {
-      await ctx.step("update-deal-status", async () =>
-        sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "update_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: {
-            datasource: DEALS_DS,
-            page: snap.dealIds[0],
-            "properties|||Status|||status": DEAL_IN_SIGNING,
-          },
-        }),
-      );
-      dealUpdated = true;
-    }
-
-    console.log(
-      `${cfg.name}: drafted ${contractId} for ${snap.signer.email} (${body.length} chars of body)`,
-    );
-
-    return {
-      pageId: snap.pageId,
-      title: snap.title,
-      signer: snap.signer.email,
-      contractId,
-      contractUrl,
-      status: cfg.sentStatus,
-      tableRowId: row.id,
-      tableRowCreated: row.created,
-      dealUpdated,
-      bodyChars: body.length,
-    };
-  });
+  return {
+    pageId: snap.pageId,
+    title: snap.title,
+    signer: snap.signer.email,
+    contractId,
+    contractUrl,
+    status: cfg.sentStatus,
+    tableRowId: row.id,
+    tableRowCreated: row.created,
+    dealUpdated,
+    bodyChars: body.length,
+  };
 }
