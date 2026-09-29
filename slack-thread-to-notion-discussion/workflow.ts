@@ -107,7 +107,7 @@ function parseSlackMessage(raw: Record<string, unknown>): SlackMessage | null {
     channelId,
     channelName:
       typeof channel === "object" && channel ? firstString(channel.name) : "",
-    text: firstString(raw.text),
+    text: firstString(raw.raw_text) || firstString(raw.text),
     permalink: firstString(raw.permalink),
     isBot: typeof user === "object" && user ? user.is_bot === true : false,
     authorName:
@@ -209,6 +209,43 @@ async function findMessageMapRow(
 }
 
 type NotionComment = { commentId: string; discussionId: string };
+
+/**
+ * The trigger's and thread_replies' `text` is Zapier's pre-processed copy: links
+ * lose their <, | and > and formatting markers are dropped, so it cannot be
+ * converted back. `raw_text` is Slack's original mrkdwn, but leaves mentions as
+ * bare <@U123> ids — resolve each to its handle (what `text` showed) before the
+ * markdown conversion. A failed lookup falls back to the id, never a red run.
+ * Takes ctx because the step id carries the mention id (the publish analyzer
+ * does not follow ctx into a helper, which is what permits a dynamic id).
+ */
+async function resolveMentions(
+  ctx: DurableContext,
+  stepPrefix: string,
+  text: string,
+): Promise<string> {
+  const ids = [...new Set([...text.matchAll(/<@([UW][A-Z0-9]+)>/g)].map((m) => m[1]))];
+  let out = text;
+  for (const id of ids) {
+    const name = await ctx.step(`${stepPrefix}-mention-${id}`, async () => {
+      try {
+        const res = await sdk.runAction({
+          appKey: SLACK_APP_KEY,
+          actionType: "search",
+          actionKey: "user_by_id",
+          connection: SLACK_CONNECTION,
+          inputs: { id },
+        });
+        const row = (res as { data?: Array<{ name?: unknown }> }).data?.[0];
+        return firstString(row?.name);
+      } catch {
+        return "";
+      }
+    });
+    out = out.split(`<@${id}>`).join(`<@${id}|${name || id}>`);
+  }
+  return out;
+}
 
 /**
  * Slack delivers emoji as :shortcode: syntax (e.g. ":ok_hand:"). Notion's
@@ -482,10 +519,11 @@ async function syncReply(
     );
   }
 
+  const body = await resolveMentions(ctx, "mirror", msg.text);
   const comment = await ctx.step("post-notion-comment", async () =>
     postNotionComment(
       { discussion_id: discussionId },
-      msg.text || "(empty message)",
+      body || "(empty message)",
       `${msg.authorName} (via Slack)`,
     ),
   );
@@ -691,10 +729,11 @@ async function linkThread(
 
   let mirrored = 0;
   for (const m of toMirror) {
+    const body = await resolveMentions(ctx, `backfill-${m.ts}`, m.text);
     const comment = await ctx.step(`backfill-comment-${m.ts}`, async () =>
       postNotionComment(
         { discussion_id: header.discussionId },
-        m.text || "(empty message)",
+        body || "(empty message)",
         `${m.authorName} (via Slack)`,
       ),
     );
