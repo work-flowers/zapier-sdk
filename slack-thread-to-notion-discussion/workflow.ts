@@ -280,6 +280,37 @@ async function pageAccessible(pageId: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Title of a page we already know is accessible, for the approval prompt.
+ * Falls back to "Notion page" when the title property is empty. Must be called
+ * inside a ctx.step.
+ */
+async function pageTitle(pageId: string): Promise<string> {
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    connection: NOTION_CONNECTION,
+    method: "GET",
+    headers: { "Notion-Version": NOTION_VERSION },
+  });
+  if (!res.ok) {
+    throw new Error(
+      `Notion page lookup failed (${res.status}): ${await res.text()}`,
+    );
+  }
+  const json = (await res.json()) as {
+    properties?: Record<
+      string,
+      { type?: string; title?: Array<{ plain_text?: string }> }
+    >;
+  };
+  for (const prop of Object.values(json.properties ?? {})) {
+    if (prop.type === "title") {
+      const title = (prop.title ?? []).map((t) => t.plain_text ?? "").join("").trim();
+      if (title) return title;
+    }
+  }
+  return "Notion page";
+}
+
 async function writeMessageMapRow(
   ctx: DurableContext,
   stepName: string,
@@ -484,6 +515,50 @@ async function linkThread(
       );
       return { handled: "external-notion-page" };
     }
+  }
+
+  // Approval gate: a mention alone no longer links a thread. The Request
+  // Approval action BLOCKS the durable until someone clicks (verified by spike
+  // 2026-09-29) and expires after 30 days, so an ignored request simply never
+  // resumes. There is deliberately no pending row and no Decline button: an
+  // unanswered or ignored request means "do nothing", and mentioning a page
+  // again (same thread or another) re-prompts. Anyone in the thread may approve.
+  const title = await ctx.step("get-page-title", async () => pageTitle(pageId!));
+  const approval = await ctx.step("request-approval", async () =>
+    sdk.runAction({
+      appKey: SLACK_APP_KEY,
+      actionType: "write",
+      actionKey: "request_approval",
+      connection: SLACK_CONNECTION,
+      inputs: {
+        request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
+        send_as: "bot",
+        approval_type: "channel",
+        channel: msg.channelId,
+        thread_ts: msg.threadTs,
+        username: "Notion Sync",
+      },
+    }),
+  );
+  const decision = (approval as { data?: Array<{ status?: unknown }> }).data?.[0]
+    ?.status;
+  if (decision !== "Approved") {
+    console.log(`approval for ${msg.channelId}/${msg.threadTs} returned ${String(decision)} — not linking`);
+    return { handled: "not-approved", decision: String(decision) };
+  }
+
+  // The run may have been parked for days; another approval (or mention) can
+  // have linked this thread meanwhile. Re-check so we never open a second
+  // discussion for the same thread.
+  const linkedMeanwhile = await findThreadMapRow(
+    ctx,
+    "recheck-thread-map",
+    msg.channelId,
+    msg.threadTs,
+  );
+  if (linkedMeanwhile) {
+    console.log(`thread ${msg.channelId}/${msg.threadTs} linked while awaiting approval — skipping`);
+    return { skipped: "linked-while-awaiting-approval" };
   }
 
   // Open the discussion with a header comment linking back to Slack.

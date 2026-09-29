@@ -8,7 +8,7 @@
   "deploy": {
     "state": "published",
     "workflow_name": "slack-thread-to-notion-discussion",
-    "description": "Slack -> Notion half of the thread <-> discussion two-way sync. Listens to every public-channel message (instant Slack event subscription; fires on thread replies too — verified by deployed test 2026-09-01). A message in a mapped thread mirrors into the mapped Notion discussion as a comment under the Slack author's own display_name. A message in an unmapped thread that names a ticket (TKT-###) or pastes a Notion page URL links the thread: opens a page-level discussion (joins the newest open page-level thread if the page already has one — API limitation), backfills the thread, and confirms in-thread. Everything else exits at the free guard path.",
+    "description": "Slack -> Notion half of the thread <-> discussion two-way sync. Listens to every public-channel message (instant Slack event subscription; fires on thread replies too — verified by deployed test 2026-09-01). A message in a mapped thread mirrors into the mapped Notion discussion as a comment under the Slack author's own display_name. A message in an unmapped thread that names a ticket (TKT-###) or pastes a Notion page URL asks for approval in-thread (Slack Request Approval, one Approve button, anyone may click; expires after 30 days) and on approval links the thread: opens a page-level discussion (joins the newest open page-level thread if the page already has one — API limitation), backfills the thread, and confirms in-thread. Everything else exits at the free guard path.",
     "enable_on_publish": true,
     "note": "Never attempted by failed publish run 33483876845 (2026-09-01) — the job died on the sweep before reaching this directory. Touched so the retry merge picks it up."
   },
@@ -40,5 +40,5 @@
     "tasks_data_source_id": "27a91b07-11ac-81ed-973f-000ba6da1441",
     "ticket_property": "Ticket ID"
   },
-  "description": "Slack -> Notion half of the Slack thread <-> Notion discussion two-way sync (TKT-825). Mention a TKT-### (or paste a Notion page URL) in any public Slack thread to link it to that task; from then on every human message in the thread mirrors into the task's Notion discussion, attributed via display_name. Companion Zaps: notion-comment-to-slack-thread (reverse direction) and slack-notion-thread-sync-sweep (resolve detection + self-healing backstop)."
+  "description": "Slack -> Notion half of the Slack thread <-> Notion discussion two-way sync (TKT-825). Mention a TKT-### (or paste a Notion page URL) in any public Slack thread, then approve the in-thread prompt to link it to that task; from then on every human message in the thread mirrors into the task's Notion discussion, attributed via display_name. Companion Zaps: notion-comment-to-slack-thread (reverse direction) and slack-notion-thread-sync-sweep (resolve detection + self-healing backstop)."
 }
