@@ -531,7 +531,7 @@ async function linkThread(
       actionKey: "request_approval",
       connection: SLACK_CONNECTION,
       inputs: {
-        request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
+        request_message: `:notion: Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
         send_as: "bot",
         approval_type: "channel",
         channel: msg.channelId,
@@ -659,7 +659,7 @@ async function linkThread(
       inputs: {
         channel: msg.channelId,
         thread_ts: msg.threadTs,
-        text: `:link: Thread linked to ${
+        text: `:notion: Thread linked to ${
           ticketNumber !== null
             ? `<${notionPageUrl(pageId!)}|TKT-${ticketNumber}>`
             : `<${notionPageUrl(pageId!)}|Notion>`
