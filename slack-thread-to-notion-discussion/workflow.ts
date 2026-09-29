@@ -491,6 +491,7 @@ async function linkThread(
             text: `:warning: Couldn't find TKT-${ticketNumber} in Notion Tasks — thread not linked.`,
             as_bot: "yes",
             username: "Notion Sync",
+            icon: ":notion:",
             unfurl: "no",
             link_names: "no",
             reply_broadcast: "no",
@@ -531,12 +532,13 @@ async function linkThread(
       actionKey: "request_approval",
       connection: SLACK_CONNECTION,
       inputs: {
-        request_message: `:notion: Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
+        request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
         send_as: "bot",
         approval_type: "channel",
         channel: msg.channelId,
         thread_ts: msg.threadTs,
         username: "Notion Sync",
+        icon: ":notion:",
       },
     }),
   );
@@ -659,13 +661,14 @@ async function linkThread(
       inputs: {
         channel: msg.channelId,
         thread_ts: msg.threadTs,
-        text: `:notion: Thread linked to ${
+        text: `:link: Thread linked to ${
           ticketNumber !== null
             ? `<${notionPageUrl(pageId!)}|TKT-${ticketNumber}>`
             : `<${notionPageUrl(pageId!)}|Notion>`
         } — replies here now sync to the page's discussion.`,
         as_bot: "yes",
         username: "Notion Sync",
+        icon: ":notion:",
         unfurl: "no",
         link_names: "no",
         reply_broadcast: "no",
