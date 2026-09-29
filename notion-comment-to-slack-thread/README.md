@@ -6,7 +6,7 @@ Companions: [`slack-thread-to-notion-discussion`](../slack-thread-to-notion-disc
 
 ## Trigger
 
-`NotionCLIAPI@2.39.2` / `new_comment`, **scoped to the Tasks data source** (`datasource_id` param) — one trigger covers every task page. Verified deployed 2026-09-01: fires ~4 seconds after a comment is created and delivers the **full comment object** (`id`, `discussion_id`, `rich_text`, `created_by`, `display_name`), so no fetch-back call is needed. **Do not drop the scope** — an unscoped poll returned nothing. This replaced the original catch-hook + Notion-webhook design entirely (no webhook subscription, verification token, or HMAC anywhere).
+`NotionCLIAPI@2.39.2` / `new_comment`, **deliberately unscoped** (no `datasource_id`/`database_id`/`page_id`) — it sees every comment on every page shared with the integration, and the Slack→Notion side links *any* pasted Notion page, so a scope would silently drop replies on pages outside it. It was scoped to the Tasks data source until 2026-09-29, when a reply on a Projects page (SEO Remediation) never reached Slack. Verified with a throwaway private probe 2026-09-29: the unscoped deployed trigger fired ~60s after a comment on a Projects page. Verified deployed 2026-09-01: fires ~4 seconds after a comment is created and delivers the **full comment object** (`id`, `discussion_id`, `rich_text`, `created_by`, `display_name`), so no fetch-back call is needed. **Do not re-add a scope.** (The 2026-09-01 note that an unscoped poll returned nothing was a sample poll, not the deployed trigger.) Comments on unlinked discussions exit at the free `thread_map` lookup, so the broader trigger costs no tasks. This replaced the original catch-hook + Notion-webhook design entirely (no webhook subscription, verification token, or HMAC anywhere).
 
 ```mermaid
 flowchart TD
@@ -37,6 +37,5 @@ flowchart TD
 | `thread_map` Table | `01M1DXXXH3E7K7JWDJYA1R50CF` |
 | `message_map` Table | `01M1DXY3QEF60HX7HW8XYVE5AF` |
 | Internal User IDs Table | `01JM3J9SG5X6S8GBSSC8AS28AT` |
-| Tasks data source (trigger scope) | `27a91b07-11ac-81ed-973f-000ba6da1441` |
 
 Design + spike evidence: [Notion task TKT-825](https://app.notion.com/p/3ce91b0711ac811aa266cfae9b977315).
