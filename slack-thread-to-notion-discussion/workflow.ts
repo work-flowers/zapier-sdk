@@ -537,6 +537,7 @@ async function linkThread(
         channel: msg.channelId,
         thread_ts: msg.threadTs,
         username: "Notion Sync",
+        icon: ":notion:",
       },
     }),
   );
