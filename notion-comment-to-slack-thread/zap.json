@@ -15,11 +15,9 @@
     "selected_api": "NotionCLIAPI@2.39.2",
     "action": "new_comment",
     "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "params": {
-      "datasource_id": "27a91b07-11ac-81ed-973f-000ba6da1441"
-    },
-    "trigger_note": "Scoped to the Tasks data source — covers every task page in one trigger. Do NOT drop the scope: an unscoped poll returned nothing (verified 2026-09-01). Replaces the task doc's original catch-hook + Notion-webhook design entirely, so no webhook subscription, verification token, or signature validation exists.",
-    "params_note": "datasource_id = Tasks data source in Project Management DB.",
+    "params": {},
+    "trigger_note": "UNSCOPED (all comments the integration can see) since 2026-09-29. It was scoped to the Tasks data source, which silently ignored replies on any other page — e.g. Projects pages — even though the Slack side links any pasted Notion page. Verified 2026-09-29 with a throwaway private probe: an unscoped deployed trigger fired ~60s after a comment on a Projects page and delivered the full comment object. (The 2026-09-01 note that an unscoped poll returned nothing was a sample poll, not the deployed trigger.) Unlinked discussions exit at the free thread_map lookup.",
+    "params_note": "No params on purpose — do not re-add datasource_id/database_id/page_id, or replies on pages outside that scope stop syncing.",
     "webhook_url": "https://hooks.zapier.com/hooks/standard/20495893/1ac54650f81c44039e93622a5dab9553/"
   },
   "connections": {
