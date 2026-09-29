@@ -143,7 +143,7 @@ function sdk(rest) {
 // goes through it: installed once into a temp prefix (this repo has no
 // package.json), then run with that prefix as cwd so the bare import resolves.
 let sdkPrefix = null;
-function createWorkflowContainer(name, description, isPrivate) {
+function createWorkflowExplicit(name, description, isPrivate) {
   if (!sdkPrefix) {
     sdkPrefix = mkdtempSync(join(tmpdir(), "zapier-sdk-"));
     execFileSync("npm", ["install", "--no-save", "--silent", "--prefix", sdkPrefix, "@zapier/zapier-sdk"], {
@@ -444,18 +444,22 @@ function createAndPublish(dir, dep, execute) {
   if (!execute) return { plan };
 
   // 1. Create the container. This is the ONLY chance to set visibility, so it
-  // is sent explicitly either way (see createWorkflowContainer) and read back.
-  const created = unwrap(createWorkflowContainer(spec.workflowName, spec.description, spec.isPrivate));
+  // is sent explicitly either way (see createWorkflowExplicit) and read back.
+  const created = unwrap(createWorkflowExplicit(spec.workflowName, spec.description, spec.isPrivate));
   const workflowId = created?.id || created?.workflow?.id || null;
   if (!workflowId) {
     fail(`${dir}: create-workflow returned no id — response: ${JSON.stringify(created)}`);
   }
-  if (created.is_private !== spec.isPrivate) {
+  // Read it back from get-workflow rather than trusting the create response:
+  // the server's view is what decides who can see the Zap.
+  const readBack = unwrap(sdk(["get-workflow", workflowId]));
+  const actualPrivate = readBack?.is_private ?? readBack?.workflow?.is_private;
+  if (actualPrivate !== spec.isPrivate) {
     // Wrong visibility is unrecoverable, so the container must not survive to
     // be published. It has no version yet, so deleting it loses nothing.
     sdk(["delete-workflow", workflowId]);
     fail(
-      `${dir}: Zapier created \`${workflowId}\` with is_private=${created.is_private} although zap.json ` +
+      `${dir}: Zapier created \`${workflowId}\` with is_private=${actualPrivate} although zap.json ` +
         `declares ${spec.isPrivate} — deleted it rather than publish a Zap whose visibility can never be fixed`,
     );
   }
