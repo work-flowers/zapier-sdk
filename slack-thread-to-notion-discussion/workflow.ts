@@ -220,17 +220,23 @@ type NotionComment = { commentId: string; discussionId: string };
  *
  * Slack's <url|label> links become [label](url), <url> a bare URL, and the
  * &amp; &lt; &gt; entities are decoded; channel/special mentions keep their label.
+ * Slack *bold* / ~strike~ become **bold** / ~~strike~~ and • bullets become "- " lists;
+ * code spans and blocks are passed through untouched.
  */
 function sanitizeForNotionMarkdown(text: string): string {
-  // Slack mrkdwn wraps links and mentions in <...>. Convert them to Markdown
-  // BEFORE the emoji strip below, and park the results behind placeholders so
-  // the strip can never touch a URL (https://host/a:b:c would lose its colons).
+  // Park anything that must survive the passes below untouched (code, and Slack
+  // links converted to Markdown) behind placeholders: the emoji strip and the
+  // bold/strike conversion must never reach inside a URL or a code span.
   const parked: string[] = [];
   const park = (s: string): string => {
     parked.push(s);
     return `\u0000${parked.length - 1}\u0000`;
   };
-  const linked = text.replace(/<([^<>\n]+)>/g, (whole, inner: string) => {
+  const codeParked = text
+    .replace(/```[\s\S]*?```/g, park)
+    .replace(/`[^`\n]+`/g, park);
+  // Slack mrkdwn wraps links and mentions in <...>; convert to Markdown.
+  const linked = codeParked.replace(/<([^<>\n]+)>/g, (whole, inner: string) => {
     const bar = inner.indexOf("|");
     const target = bar === -1 ? inner : inner.slice(0, bar);
     const label = bar === -1 ? "" : inner.slice(bar + 1);
@@ -254,7 +260,20 @@ function sanitizeForNotionMarkdown(text: string): string {
     return whole;
   });
   const stripped = linked.replace(/:[a-zA-Z0-9_+\-]+:/g, (m) => m.slice(1, -1));
-  return stripped
+  // Slack emphasis: *bold* -> **bold**, ~strike~ -> ~~strike~~ (_italic_ and
+  // > quotes are already valid Markdown). Slack only formats a span whose
+  // delimiters hug non-space text at word edges, so a stray "2 * 3" is left be.
+  const formatted = stripped
+    .replace(
+      /(^|[\s(])\*([^\s*](?:[^*\n]*[^\s*])?)\*(?=$|[\s.,!?;:)])/gm,
+      "$1**$2**",
+    )
+    .replace(
+      /(^|[\s(])~([^\s~](?:[^~\n]*[^\s~])?)~(?=$|[\s.,!?;:)])/gm,
+      "$1~~$2~~",
+    )
+    .replace(/^([ \t]*)[•◦▪]\s+/gm, "$1- ");
+  return formatted
     .replace(/\u0000(\d+)\u0000/g, (_m, i: string) => parked[Number(i)])
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
