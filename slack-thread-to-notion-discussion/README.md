@@ -48,7 +48,7 @@ flowchart TD
 - **A pasted Notion URL pointing at a page outside the work.flowers workspace** is checked with a `GET /v1/pages/{id}` against `notion_wf` before any discussion is opened; a 404 means the page isn't ours, and the thread is just left unlinked — no reply, since (unlike a mistyped `TKT-###`) pasting a link to another workspace isn't a mistake the poster needs to be told about. This also avoids posting into channels the sync bot isn't permitted to post in (e.g. Slack Connect channels the app isn't approved for) — a real failure mode hit in `#proj-notion-setup-sessions-ops` when an earlier version of this guard tried to reply.
 - **Backfill caps at 50 messages** (newest kept), logged loudly when hit; the sweep can pick up stragglers.
 - **Concurrency**: two first-messages racing the link can in theory both create a discussion (Tables have no atomic create-if-absent). Accepted as rare + cleanup-able per repo posture; everything is keyed on `thread_ts`.
-- Slack `text` is sent as Notion markdown as-is; Slack mrkdwn syntax differences (e.g. `*bold*`) are accepted v1 roughness.
+- Slack `text` is converted to Notion markdown for links and entities: `<url|label>` → `[label](url)`, `<url>` → bare URL, `<#C1|chan>`/`<@U1|name>`/`<!here>` keep their label, and `&amp; &lt; &gt;` are decoded (links are parked behind placeholders so the `:emoji:` strip can't mangle URL colons). Other mrkdwn differences (e.g. `*bold*`) remain accepted v1 roughness. `slack-notion-thread-sync-sweep` carries the same converter for backstop mirrors.
 - Slack-side **edits and deletes do not propagate** (no Zapier trigger exists for them); the sweep may reconcile text later (v2).
 
 ## Data

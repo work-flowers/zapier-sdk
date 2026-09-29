@@ -108,9 +108,48 @@ function parseSlackMessage(raw: Record<string, unknown>): SlackMessage | null {
  * custom_emoji") because custom_emoji mentions are not supported in comment
  * bodies. Strip the colon delimiters so the emoji name becomes plain text
  * (:ok_hand: → ok_hand), preserving meaning without triggering the parser.
+ *
+ * Slack's <url|label> links become [label](url), <url> a bare URL, and the
+ * &amp; &lt; &gt; entities are decoded; channel/special mentions keep their label.
  */
 function sanitizeForNotionMarkdown(text: string): string {
-  return text.replace(/:[a-zA-Z0-9_+\-]+:/g, (m) => m.slice(1, -1));
+  // Slack mrkdwn wraps links and mentions in <...>. Convert them to Markdown
+  // BEFORE the emoji strip below, and park the results behind placeholders so
+  // the strip can never touch a URL (https://host/a:b:c would lose its colons).
+  const parked: string[] = [];
+  const park = (s: string): string => {
+    parked.push(s);
+    return `\u0000${parked.length - 1}\u0000`;
+  };
+  const linked = text.replace(/<([^<>\n]+)>/g, (whole, inner: string) => {
+    const bar = inner.indexOf("|");
+    const target = bar === -1 ? inner : inner.slice(0, bar);
+    const label = bar === -1 ? "" : inner.slice(bar + 1);
+    if (/^(https?:|mailto:|tel:)/i.test(target)) {
+      const url = target.replace(/\)/g, "%29");
+      if (!label || label === target) return park(url);
+      return park(`[${label.replace(/[\[\]]/g, "\\$&")}](${url})`);
+    }
+    if (target.startsWith("#") || target.startsWith("@")) {
+      // <#C123|channel>, <@U123|name>: show the human label when there is one.
+      return label ? (target[0] === "#" ? `#${label}` : `@${label.replace(/^@/, "")}`) : whole;
+    }
+    if (target.startsWith("!")) {
+      // <!here>, <!channel>, <!subteam^S1|@group>, <!date^...|fallback>
+      const special = target.slice(1).split("^")[0];
+      if (label) return label;
+      if (special === "here" || special === "channel" || special === "everyone") {
+        return `@${special}`;
+      }
+    }
+    return whole;
+  });
+  const stripped = linked.replace(/:[a-zA-Z0-9_+\-]+:/g, (m) => m.slice(1, -1));
+  return stripped
+    .replace(/\u0000(\d+)\u0000/g, (_m, i: string) => parked[Number(i)])
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 // --- Workflow -------------------------------------------------------------------
