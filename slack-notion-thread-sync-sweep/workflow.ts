@@ -287,7 +287,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             inputs: {
               channel: row.channelId,
               thread_ts: row.threadTs,
-              text: `:white_check_mark: The linked <https://www.notion.so/${row.pageId.replace(/-/g, "")}|Notion discussion> was resolved — this thread is no longer syncing.`,
+              text: `:white_check_mark: The linked <{{https://www.notion.so/${row.pageId.replace(/-/g}}, "")}|Notion discussion> was resolved — this thread is no longer syncing.`,
               as_bot: "yes",
               username: "Notion Sync",
               unfurl: "no",
@@ -303,19 +303,47 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       // 2b. Reply backstop: diff the full Slack thread against message_map and
       // mirror anything the event path missed. Idempotent — the event durable
       // and this sweep converge on the same slack_ts-keyed rows.
-      const thread = await ctx.step(`fetch-thread-${row.recordId}`, async () =>
-        sdk.runAction({
-          appKey: SLACK_APP_KEY,
-          actionType: "read_bulk",
-          actionKey: "thread_replies",
-          connection: SLACK_CONNECTION,
-          inputs: {
-            channel: row.channelId,
-            thread_ts: row.threadTs,
-            listen_for_bots: "no",
-          },
-        }),
-      );
+      // Slack answers thread_replies with thread_not_found once the thread's
+      // parent message is deleted, but the Notion discussion may still be open —
+      // the resolve check above cannot see that. Skip such a thread instead of
+      // letting the step exhaust its retries and kill the rest of the sweep;
+      // the row stays active, so a recreated thread resumes syncing.
+      const thread = await ctx.step(`fetch-thread-${row.recordId}`, async () => {
+        try {
+          return await sdk.runAction({
+            appKey: SLACK_APP_KEY,
+            actionType: "read_bulk",
+            actionKey: "thread_replies",
+            connection: SLACK_CONNECTION,
+            inputs: {
+              channel: row.channelId,
+              thread_ts: row.threadTs,
+              listen_for_bots: "no",
+            },
+          });
+        } catch (err) {
+          if (
+            /thread_not_found/.test(
+              err instanceof Error ? err.message : String(err),
+            )
+          ) {
+            return null;
+          }
+          throw err;
+        }
+      });
+      if (thread === null) {
+        console.log(
+          `thread ${row.threadTs}: Slack reports thread_not_found — skipping this sweep (row stays active)`,
+        );
+        summary.push({
+          thread: row.threadTs,
+          resolved: false,
+          backfilled: 0,
+          skipped: "thread_not_found",
+        });
+        continue;
+      }
       const messages = (((thread as { data?: unknown[] }).data ?? []) as Array<
         Record<string, unknown>
       >)
