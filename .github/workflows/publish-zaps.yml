@@ -11,8 +11,9 @@
 #                merge, with no separate environment gate. (There used to be a
 #                `production` environment with a required-reviewer rule here; it
 #                was removed 2026-08-18 as redundant with the act of merging.)
-#                The sync-back also carries a regenerated docs/map.html — see the
-#                note on that step for why it has to.
+#                The sync-back does NOT regenerate docs/map.html, even though
+#                it can drift the map's data block — refresh-map.yml catches
+#                the map up daily.
 #
 # ┌─ SETUP NOTES ───────────────────────────────────────────────────────────────┐
 # │ Secrets: the existing repository secrets ZAPIER_CLIENT_ID /                 │
@@ -124,27 +125,22 @@ jobs:
           mapfile -t FILES < changed.txt
           node scripts/publish-changed-zaps.mjs --files "${FILES[@]}" --execute
 
-      # The workflow map's data block is DERIVED from zap.json — including
-      # workflow_id and enabled, both of which the sync-back above can change. A
-      # first publish is the sharp case: a "pending-create" zap.json has
-      # workflow_id null, which build-map reads as "not deployed", so filling the
-      # ids in silently makes the committed map stale. Regenerating here, in the
-      # same commit as the zap.json changes that caused it, is what keeps `main`
-      # green for the check-map PR gate — which never sees this commit, because
-      # the sync-back is [skip ci].
-      - name: Regenerate the workflow map
-        run: node scripts/build-map.mjs
-
+      # The workflow map is deliberately NOT regenerated here. Its data block is
+      # derived from zap.json (workflow_id, enabled), so this sync-back leaves the
+      # committed map stale — a first publish most visibly, since build-map reads
+      # workflow_id null as "not deployed". refresh-map.yml catches it up daily,
+      # and the check-map PR gate only validates curation, so the drift never
+      # fails a PR.
       - name: Commit the sync-back
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if git diff --quiet -- '**/zap.json' docs/map.html; then
+          if git diff --quiet -- '**/zap.json'; then
             echo "Nothing to sync back."
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- '**/zap.json' docs/map.html
-          git commit -m "Sync current_version_id and workflow map after publishing (PR #${PR_NUMBER}) [skip ci]"
+          git add -- '**/zap.json'
+          git commit -m "Sync current_version_id after publishing (PR #${PR_NUMBER}) [skip ci]"
           git push origin HEAD:main

@@ -1,19 +1,19 @@
-# Check the workflow map is in sync
+# Check the workflow map's curation
 #
 # `docs/map.html` carries a generated data block built from the repo's zap.json /
 # workflow sources merged with the curated semantics in `docs/map-overlay.json`
-# (see scripts/build-map.mjs). Nothing regenerates it automatically, and GitHub
-# Pages publishes whatever bytes are committed — so a PR that adds a Zap, changes
-# a Table relationship or re-statuses a deployment without running the generator
-# publishes a stale public map, silently.
+# (see scripts/build-map.mjs). The data block itself is regenerated DAILY by
+# refresh-map.yml, not per PR — so this gate does not care whether the committed
+# map is current.
 #
-# This is the gate for that. `--check` never writes; it fails when the repo, the
-# overlay and the committed map disagree (unregistered asset ids, a zap dir in no
-# cluster, a zap touching an asset with no curated edge, a stale data block).
+# What it does check is the part only a human can supply: the overlay. `--validate`
+# never writes; it fails when the repo and the overlay disagree (unregistered
+# asset ids, a zap dir in no cluster, a zap touching an asset with no curated
+# edge). Those would make the daily refresh refuse, so they have to be fixed in
+# the PR that introduces them, not discovered by the next scheduled run.
 #
-# It runs on PULL REQUESTS, deliberately: `publish-zaps.yml` only fires on PR
-# *close*, which is after the map has already published. This has to block before
-# the merge, not report after it.
+# It runs on PULL REQUESTS, deliberately: this has to block before the merge,
+# not report after it.
 #
 # No secrets, no network, no permissions beyond reading the repo — build-map.mjs
 # is pure filesystem reads. Safe to make a required status check.
@@ -37,15 +37,15 @@ jobs:
         with:
           node-version: 22
 
-      # No path filter on purpose: drift can be introduced by adding a Zap
-      # directory, editing an overlay entry, or changing a zap.json's enabled
-      # state — filtering paths would let some of those through. The script
+      # No path filter on purpose: curation drift can be introduced by adding a
+      # Zap directory, editing an overlay entry, or a workflow.ts / zap.json
+      # picking up a new asset id — filtering paths would let some through. The script
       # takes a couple of seconds, so it just always runs.
-      - name: Verify docs/map.html matches the repo
+      - name: Verify docs/map-overlay.json matches the repo
         id: check
         run: |
           set -o pipefail
-          node scripts/build-map.mjs --check 2>&1 | tee map-check.txt
+          node scripts/build-map.mjs --validate 2>&1 | tee map-check.txt
 
       - name: Summary
         if: always()
@@ -54,17 +54,17 @@ jobs:
             echo "## Workflow map"
             echo ""
             if [ "${{ steps.check.outcome }}" = "success" ]; then
-              echo "✅ \`docs/map.html\` matches the repo."
+              echo "✅ \`docs/map-overlay.json\` is consistent with the repo. (The map itself refreshes daily.)"
             else
-              echo "❌ **The map is out of sync.** Regenerate it and commit the result:"
+              echo "❌ **The map overlay is out of step with the repo.** Update"
+              echo "\`docs/map-overlay.json\` — register the asset id, place the zap in a"
+              echo "cluster, or add the missing edge — then re-run:"
               echo ""
               echo '```bash'
-              echo "node scripts/build-map.mjs"
+              echo "node scripts/build-map.mjs --validate"
               echo '```'
               echo ""
-              echo "If the failure names an unregistered asset id, a zap in no cluster, or a"
-              echo "missing edge, that is curation rather than regeneration — update"
-              echo "\`docs/map-overlay.json\` first, then run the generator. See the \`zap-map\` skill."
+              echo "See the \`zap-map\` skill."
               echo ""
               echo "<details><summary>Checker output</summary>"
               echo ""
