@@ -134,7 +134,7 @@ function extractNotionPageId(text: string): string | null {
 
 /** Canonical Notion page URL from a dashed page id. */
 function notionPageUrl(pageId: string): string {
-  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
+  return `{{https://www.notion.so/${pageId.replace(/-/g}}, "")}`;
 }
 
 type TableRow = { recordId: string; data: Record<string, unknown> };
@@ -358,7 +358,11 @@ async function postNotionComment(
 /**
  * A page id parsed from a URL may belong to another Notion workspace entirely
  * — our integration can't see it, and Notion returns 404 rather than a
- * permissions error. Must be called inside a ctx.step.
+ * permissions error. A pasted URL can also point at a database rather than a
+ * page: Notion answers GET /v1/pages with a permanent 400 validation_error
+ * ("Provided ID ... is a database, not a page"), which no retry can fix. Both
+ * mean "not a linkable page" — return false and let the caller skip quietly.
+ * Must be called inside a ctx.step.
  */
 async function pageAccessible(pageId: string): Promise<boolean> {
   const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
@@ -368,9 +372,11 @@ async function pageAccessible(pageId: string): Promise<boolean> {
   });
   if (res.status === 404) return false;
   if (!res.ok) {
-    throw new Error(
-      `Notion page lookup failed (${res.status}): ${await res.text()}`,
-    );
+    const body = await res.text();
+    if (res.status === 400 && /is a database, not a page/i.test(body)) {
+      return false;
+    }
+    throw new Error(`Notion page lookup failed (${res.status}): ${body}`);
   }
   return true;
 }
@@ -604,12 +610,13 @@ async function linkThread(
     );
     if (!accessible) {
       // Unlike a mistyped TKT-###, this isn't something the poster did wrong
-      // — a link to another workspace's Notion is a normal thing to paste in
-      // Slack. No reply needed; just don't link the thread.
+      // — a link to another workspace's Notion (or to a database, which can't
+      // host a page-level discussion) is a normal thing to paste in Slack. No
+      // reply needed; just don't link the thread.
       console.log(
-        `Notion page ${pageId} not accessible to notion_wf (external workspace) — not linking ${msg.channelId}/${msg.threadTs}`,
+        `Notion page ${pageId} not linkable (external workspace or a database) — not linking ${msg.channelId}/${msg.threadTs}`,
       );
-      return { handled: "external-notion-page" };
+      return { handled: "page-not-linkable" };
     }
   }
 

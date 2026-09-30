@@ -26,7 +26,7 @@ flowchart TD
     R -- yes --> Q[resolve page: unique_id query / URL parse]
     Q -- not found --> N[post warning reply in Slack thread]
     Q -- found --> X{URL-provided page:\naccessible to notion_wf?}
-    X -- no --> S5[skip - external workspace, no reply]
+    X -- no --> S5[skip - not a linkable page, no reply]
     X -- yes --> AP[post Request Approval in thread\nrun parks until click]
     AP -- "no click, expires after 30 days" --> S6[nothing happens]
     AP -- Approve --> RC{thread linked meanwhile?}
@@ -45,7 +45,7 @@ flowchart TD
 - **Republishing this Zap may orphan waiting approvals.** Zapier's docs say pending runs on a previous version won't run (documented for classic Zaps; untested on durables). Anyone whose request was pending after a republish just re-mentions the page.
 - **Echo suppression** is two-layer: the companion Zap posts to Slack `as_bot`, so `user.is_bot` drops it here (the trigger's `listen_for_bots: no` is set too but has proven inconsistent — the code re-checks); `message_map` dedupe covers replays.
 - **A `TKT-###` that doesn't resolve** posts a `:warning:` reply into the thread — visible to the person who typed it, never a silent drop or a red run for a typo.
-- **A pasted Notion URL pointing at a page outside the work.flowers workspace** is checked with a `GET /v1/pages/{id}` against `notion_wf` before any discussion is opened; a 404 means the page isn't ours, and the thread is just left unlinked — no reply, since (unlike a mistyped `TKT-###`) pasting a link to another workspace isn't a mistake the poster needs to be told about. This also avoids posting into channels the sync bot isn't permitted to post in (e.g. Slack Connect channels the app isn't approved for) — a real failure mode hit in `#proj-notion-setup-sessions-ops` when an earlier version of this guard tried to reply.
+- **A pasted Notion URL that can't host a discussion** is checked with a `GET /v1/pages/{id}` against `notion_wf` before any discussion is opened, and the thread is just left unlinked — no reply, since (unlike a mistyped `TKT-###`) none of these is a mistake the poster needs to be told about. A **404** means the page is outside the work.flowers workspace. A **400 validation_error ("Provided ID … is a database, not a page")** means the URL points at a database (full-page database links parse identically — hit live 2026-09-28 in `#general` when the NDA-workflow announcement linked the NDAs database, ticket 54); the 400 is deterministic, so retrying cannot succeed, and `pageAccessible` returns false for both cases. The access check also avoids posting into channels the sync bot isn't permitted to post in (e.g. Slack Connect channels the app isn't approved for) — a real failure mode hit in `#proj-notion-setup-sessions-ops` when an earlier version of this guard tried to reply.
 - **Backfill caps at 50 messages** (newest kept), logged loudly when hit; the sweep can pick up stragglers.
 - **Concurrency**: two first-messages racing the link can in theory both create a discussion (Tables have no atomic create-if-absent). Accepted as rare + cleanup-able per repo posture; everything is keyed on `thread_ts`.
 - **The trigger's `text` is unusable for formatting** — Zapier pre-processes it (link `<`/`|`/`>` and emphasis markers stripped, e.g. `…copy_linkproject>`). The Zap reads `raw_text` (Slack's original mrkdwn; also present on `thread_replies`), falling back to `text`, and resolves bare `<@U123>` mentions to handles via Slack `user_by_id` (one task per distinct mention; a failed lookup falls back to the id).
@@ -60,4 +60,4 @@ flowchart TD
 | `message_map` Table | `01M1DXY3QEF60HX7HW8XYVE5AF` |
 | Tasks data source (`Ticket ID` unique_id) | `27a91b07-11ac-81ed-973f-000ba6da1441` |
 
-Design + spike evidence: [Notion task TKT-825](https://app.notion.com/p/3ce91b0711ac811aa266cfae9b977315).
+Design + spike evidence: [Notion task TKT-825](https://www.notion.so/3ce91b0711ac811aa266cfae9b977315).
