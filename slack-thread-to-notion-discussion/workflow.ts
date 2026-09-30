@@ -134,7 +134,7 @@ function extractNotionPageId(text: string): string | null {
 
 /** Canonical Notion page URL from a dashed page id. */
 function notionPageUrl(pageId: string): string {
-  return `{{https://www.notion.so/${pageId.replace(/-/g}}, "")}`;
+  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
 }
 
 type TableRow = { recordId: string; data: Record<string, unknown> };
