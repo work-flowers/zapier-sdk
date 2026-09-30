@@ -1,44 +1,50 @@
 ---
 name: zap-map
-description: Mechanics for regenerating this repo's interactive workflow map — docs/map-overlay.json curated semantics, scripts/build-map.mjs and its --check drift gate, why map.html must stay a standalone document, and the fact that merging to main publishes it publicly. Use when a Zap is added, removed or re-statused, when an asset relationship changes, or when build-map.mjs --check fails.
+description: Mechanics for this repo's interactive workflow map — docs/map-overlay.json curated semantics, scripts/build-map.mjs and its --validate PR gate, the daily refresh-map.yml job that regenerates the data block, why map.html must stay a standalone document, and the fact that the map publishes publicly from main. Use when a Zap is added, removed or re-statused, when an asset relationship changes, or when build-map.mjs --validate fails.
 ---
 
 # The interactive workflow map
 
-Repo rule (in `CLAUDE.md`): keep the map in sync. This skill is the how-to.
+Repo rule (in `CLAUDE.md`): keep the map's curation in sync. This skill is the how-to.
 
-## Regenerating
+## Curating (your job, per PR)
 
 [`docs/map.html`](../../../docs/map.html) is a generated atlas of every Zap and
 the shared assets connecting them. When a Zap is added/removed/re-statused or an
 asset relationship changes (a Table read/write, a Notion data source, a Drive
 folder, the one zap→zap HTTP edge), update the curated semantics in
-[`docs/map-overlay.json`](../../../docs/map-overlay.json) and run
-`node scripts/build-map.mjs` to regenerate.
+[`docs/map-overlay.json`](../../../docs/map-overlay.json).
 
-`node scripts/build-map.mjs --check` is the drift gate — it fails when the repo,
-the overlay and the map disagree (new asset ids must be registered or explicitly
-ignored; every zap dir must sit in exactly one cluster).
+`node scripts/build-map.mjs --validate` is the gate — it fails when the repo and
+the overlay disagree (new asset ids must be registered or explicitly ignored;
+every zap dir must sit in exactly one cluster; every zap→asset reference needs a
+curated edge). **It runs on every PR** ([`check-map.yml`](../../../.github/workflows/check-map.yml)),
+so a curation gap fails the PR instead of breaking the next scheduled refresh.
 
-**That gate runs on every PR** ([`check-map.yml`](../../../.github/workflows/check-map.yml)),
-so forgetting to regenerate fails the PR rather than publishing a stale map. It
-does not regenerate for you — CI only refuses the drift; running the generator
-and committing the result is still yours to do.
+## Regenerating (daily, automatic)
 
-## A publish drifts the map, and the pipeline handles that itself
+**Don't commit a regenerated `docs/map.html` in an ordinary PR.** The data block
+is one long line of JSON, so two PRs that both regenerate it conflict with each
+other, and the regeneration is redundant anyway:
+[`refresh-map.yml`](../../../.github/workflows/refresh-map.yml) runs
+`node scripts/build-map.mjs` daily at 01:00 UTC and pushes the result
+straight to `main`. The committed map can therefore trail the repo by up to a
+day — that is by design, not drift to hand-fix. Trigger the job by hand
+(`gh workflow run refresh-map.yml`) when a change should show sooner.
 
-The map's data block is derived from `zap.json` — including `workflow_id` and
-`enabled`. A **first publish** is the sharp case: a Zap awaiting creation has
-`workflow_id: null`, which the extractor reads as "not deployed", so when the
-publish pipeline fills the ids in, the committed map silently goes stale. The
-sync-back commit is `[skip ci]`, so the PR gate above never sees it.
+The exception is a PR that edits `map.html`'s own markup/JS or `build-map.mjs`'s
+rendering: run the generator locally to check the page still works, and commit
+the result so the review covers what will publish.
 
-[`publish-zaps.yml`](../../../.github/workflows/publish-zaps.yml) therefore runs
-`build-map.mjs` and commits `docs/map.html` alongside the `zap.json` changes that
-caused the drift. **Don't hand-fix that kind of drift after a merge** — if `main`
-is stale following a publish, the pipeline step is what's broken.
+The publish pipeline doesn't regenerate either. A **first publish** fills in
+`workflow_id` (which the extractor reads as "not deployed" while `null`), so the
+map shows a freshly shipped Zap as undeployed until the next daily refresh.
 
-## The map is published, so a merge to `main` is a deploy
+`node scripts/build-map.mjs --check` still exists — it fails when the committed
+map differs from a fresh build. It is no longer a gate; use it locally to ask
+"is the published map current?".
+
+## The map is published, so a push to `main` is a deploy
 
 GitHub Pages serves `/docs` from `main` at
 `https://work-flowers.github.io/zapier-sdk/map.html`, and

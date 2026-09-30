@@ -1,5 +1,5 @@
 {
-  "$comment": "Curated semantics for docs/map.html, merged with extracted facts by scripts/build-map.mjs. Read/write direction lives in zap.json prose, not parseable structure, so the edges here are hand-maintained. `node scripts/build-map.mjs --check` fails when the repo and this file drift apart.",
+  "$comment": "Curated semantics for docs/map.html, merged with extracted facts by scripts/build-map.mjs. Read/write direction lives in zap.json prose, not parseable structure, so the edges here are hand-maintained. `node scripts/build-map.mjs --validate` (a required PR check) fails when the repo and this file drift apart.",
   "clusters": {
     "crm-contacts": {
       "label": "CRM & Contacts",

@@ -1,0 +1,88 @@
+# Refresh the workflow map
+#
+# `docs/map.html` carries a generated data block built from the repo's zap.json /
+# workflow sources merged with the curated semantics in `docs/map-overlay.json`
+# (see scripts/build-map.mjs). GitHub Pages publishes whatever bytes are
+# committed on `main`, so this is the job that keeps the public map current.
+#
+# It runs DAILY rather than on every publish. The data block is derived from
+# zap.json — workflow_id, enabled — so a publish's sync-back drifts it, and
+# PRs that add or re-status a Zap drift it too. Neither regenerates the map any
+# more: the PR gate (check-map.yml) only validates the overlay's curation, and
+# the publish sync-back commits zap.json alone. This job catches all of that up
+# in one commit a day. Up to a day of staleness on the public map is the
+# accepted trade; run it by hand (workflow_dispatch) when a change should show
+# sooner.
+#
+# The commit goes straight to `main`, like the publish sync-back: it contains
+# nothing but output derived from what is already on `main`, which was reviewed
+# when it merged. Deliberately NOT [skip ci] — nothing else fires on a push to
+# `main`, and the commit has to reach the Pages build.
+#
+# If the overlay is out of step with the repo (an unregistered asset id, a zap
+# in no cluster, a missing edge), build-map.mjs refuses and this job fails
+# rather than publishing a map it can't vouch for. The PR gate should stop that
+# ever landing; if it happens anyway, fix docs/map-overlay.json in a PR.
+
+name: Refresh workflow map
+
+on:
+  schedule:
+    # Daily at 01:00 UTC (09:00 Singapore). A day with no map-affecting
+    # change exits before committing, so this is not a commit a day.
+    - cron: "0 1 * * *"
+  workflow_dispatch: {}
+
+# Its own group, NOT publish-zaps: GitHub keeps only one PENDING run per group,
+# so joining that group could cancel a queued publish. A race with the publish
+# sync-back is handled by the rebase-and-retry on push below instead.
+concurrency:
+  group: refresh-map
+  cancel-in-progress: false
+
+permissions:
+  contents: write         # to push the regenerated map to main
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Regenerate the workflow map
+        run: node scripts/build-map.mjs
+
+      - name: Commit the refreshed map
+        run: |
+          if git diff --quiet -- docs/map.html; then
+            echo "Map already current — nothing to commit."
+            echo "Map already current — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- docs/map.html
+          git commit -m "Daily workflow map refresh"
+          # A publish sync-back may land between checkout and push. Reset onto
+          # the new main and regenerate, so the pushed map reflects the zap.json
+          # it lands on.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then break; fi
+            [ "$attempt" = 3 ] && { echo "push rejected three times"; exit 1; }
+            git fetch origin main
+            git reset --hard origin/main
+            node scripts/build-map.mjs
+            if git diff --quiet -- docs/map.html; then
+              echo "Map already current after rebase — nothing to commit."
+              exit 0
+            fi
+            git add -- docs/map.html
+            git commit -m "Daily workflow map refresh"
+          done
+          echo "Refreshed \`docs/map.html\` and pushed to \`main\`." >> "$GITHUB_STEP_SUMMARY"
