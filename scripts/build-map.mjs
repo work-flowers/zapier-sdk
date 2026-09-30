@@ -2,8 +2,10 @@
 // Builds docs/map.html's embedded graph data from the repo's zap.json /
 // workflow sources merged with the curated semantics in docs/map-overlay.json.
 //
-//   node scripts/build-map.mjs           regenerate the data block in docs/map.html
-//   node scripts/build-map.mjs --check   verify committed output matches (never writes)
+//   node scripts/build-map.mjs            regenerate the data block in docs/map.html
+//                                         (CI does this daily: .github/workflows/refresh-map.yml)
+//   node scripts/build-map.mjs --validate check the overlay against the repo (the PR gate)
+//   node scripts/build-map.mjs --check    verify committed output matches (never writes)
 //   node scripts/build-map.mjs --report  print the extracted inventory (debug)
 
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";

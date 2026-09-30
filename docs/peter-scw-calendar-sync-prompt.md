@@ -50,7 +50,7 @@
 - Each directory gets `workflow.ts`, `zap.json`, and a `README.md` with a Mermaid diagram, per repo rules 1–4.
 - `is_private: false`; author `zap.json` in the `pending-create` shape (null ids + `deploy` block) so the pipeline first-publishes on merge — declare `trigger`, `is_private`, `enable_on_publish` explicitly (a catch-hook isn't used here, these are polling triggers).
 - **Park every Zap disabled until cutover** (`deploy.enable_on_publish: false`, `enabled: false`) if any prior/manual blocking is still live, so nothing double-writes the moment the PR merges. Record the cutover date in `zap.json` when we flip them on.
-- Update the root `README.md` index and regenerate the interactive workflow map (`docs/map-overlay.json` + `node scripts/build-map.mjs`) in the same PR — the map's `--check` is a required CI gate.
+- Update the root `README.md` index and the interactive workflow map's curation (`docs/map-overlay.json`) in the same PR — `node scripts/build-map.mjs --validate` is a required CI gate. Don't commit a regenerated `docs/map.html`; the daily `refresh-map.yml` job does that.
 - Open a PR; **do not merge without Dennis's explicit go-ahead** (merge = deploy in this repo).
 
 **Before you write anything, confirm back to me:** my two exact calendar addresses, the final four workflow names, and whether any old blocking (Notion Calendar or otherwise) is still live on either of my calendars that we need to disable at cutover.
