@@ -90,6 +90,7 @@
         "notion-page-deleted-to-zapier-tables",
         "scw-cancellations-to-workflowers-unblock",
         "scw-events-to-workflowers-block",
+        "start-a-timer-from-knoxx-notion-task",
         "start-a-timer-from-notion-task",
         "whatsapp-slack-bridge",
         "workflowers-cancellations-to-scw-unblock",
@@ -452,6 +453,12 @@
       "type": "notion_ds",
       "id": "354e3731-d2e4-497d-8df0-8ac9738df959",
       "name": "NDAs"
+    },
+    "ds:knoxx-tasks": {
+      "type": "notion_ds",
+      "id": "3d58094c-3d8a-82fb-9bd8-07fbdf40b4cc",
+      "name": "Knoxx Tasks",
+      "external_owner": "Knoxx Foods client Notion workspace"
     }
   },
   "edges": [
@@ -1768,6 +1775,26 @@
     {
       "from": "new-authentication-alert",
       "to": "app:slack",
+      "kind": "write"
+    },
+    {
+      "from": "ds:knoxx-tasks",
+      "to": "start-a-timer-from-knoxx-notion-task",
+      "kind": "trigger"
+    },
+    {
+      "from": "table:time-entry-map",
+      "to": "start-a-timer-from-knoxx-notion-task",
+      "kind": "read"
+    },
+    {
+      "from": "start-a-timer-from-knoxx-notion-task",
+      "to": "table:time-entry-map",
+      "kind": "write"
+    },
+    {
+      "from": "start-a-timer-from-knoxx-notion-task",
+      "to": "app:harvest",
       "kind": "write"
     }
   ],
