@@ -1,0 +1,38 @@
+{
+  "name": "harvest-new-project-to-zapier-table",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "harvest-new-project-to-zapier-table",
+    "description": "New Harvest project -> upsert its row (project_id, client_id, is_active, Name) in the Harvest Projects (New) Zapier Table 01K8A2KV9X1W95GAB6Y69D7G4C, keyed on project_id. Never writes Project Page ID. Migrated from the classic Zap 'Add Harvest Project to Zapier Table'.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "HarvestCLIAPI@1.0.14",
+    "action": "new_project",
+    "authentication_id": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362",
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Polling trigger on the official Harvest app, one event per project id — a 'new' trigger, so the durable polling-dedupe bug (CLAUDE.md) does not bite. A manual `run-action HarvestCLIAPI read new_project` returns `[]`, so the payload shape is taken from the classic Zap's mappings (`record_id`, `client.id`, `is_active`, `name`); the code also accepts the plain API shape (`id`, `client_id`)."
+  },
+  "connections": {},
+  "connections_note": "No connection alias: the workflow only calls Zapier Tables. The trigger authenticates with the Harvest connection 02df9d5d-89ea-8dab-bb40-8ee0c2ac4362 (\"Harvest dennis@work.flowers : Company Flow Pte. Ltd.\"), the same one the timer Zaps bind.",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / create_record / update_record — no connection, no task cost"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "tables": {
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. f5 is maintained by hand outside this repo and is never written by these Zaps; update_record leaves omitted columns alone (verified 2026-09-30)."
+  },
+  "classic_zap": {
+    "title": "Add Harvest Project to Zapier Table",
+    "note": "The classic Zap created a row blindly on every event. This one finds by project_id first and updates instead, so a replay or a re-delivered project cannot duplicate a row."
+  }
+}

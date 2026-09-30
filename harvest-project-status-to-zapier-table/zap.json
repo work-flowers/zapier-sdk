@@ -1,0 +1,38 @@
+{
+  "name": "harvest-project-status-to-zapier-table",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "harvest-project-status-to-zapier-table",
+    "description": "Harvest project activated/deactivated -> set is_active on its row in the Harvest Projects (New) Zapier Table 01K8A2KV9X1W95GAB6Y69D7G4C. If the row doesn't exist yet (a brand-new project), waits 30 min for harvest-new-project-to-zapier-table to create it, then throws if it's still missing. Migrated from the classic Zap 'Update Harvest Project Status'.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "App237841CLIAPI@1.0.0",
+    "action": "project_active_status_changed",
+    "authentication_id": "0222f130-4dea-8cbe-8646-363ed384c489",
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Polling trigger on the private 'Harvest Project Status' app (source: ~/Repos/work-flowers/zapier/integrations/zapier-harvest/triggers/projectActiveStatusChanged.js). Each poll returns every project with dedupe id `{project_id}-{is_active}`, so a flip produces a new id. KNOWN GAP (kept deliberately, same as the classic Zap): an id is never re-delivered, so a project that goes active -> inactive -> active again does not fire the second activation. The durable polling-dedupe bug (CLAUDE.md) has the same effect here as classic dedupe."
+  },
+  "connections": {},
+  "connections_note": "No connection alias: the workflow only calls Zapier Tables. The trigger authenticates with the private app's connection 0222f130-4dea-8cbe-8646-363ed384c489 (the only one on App237841CLIAPI).",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / update_record — no connection, no task cost"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "tables": {
+    "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. f5 is maintained by hand outside this repo and is never written by these Zaps; update_record leaves omitted columns alone (verified 2026-09-30)."
+  },
+  "classic_zap": {
+    "title": "Update Harvest Project Status",
+    "note": "The classic Zap halted silently on a missing row (`_zap_search_success_on_miss: false`). This one waits 30 minutes for the new-project Zap, then throws. It also skips the write when the row already holds the new value."
+  }
+}

@@ -84,6 +84,8 @@
         "gcal-block-sweep",
         "gcal-event-updated-to-meeting-note",
         "gws-new-user-provisioning",
+        "harvest-new-project-to-zapier-table",
+        "harvest-project-status-to-zapier-table",
         "internal-user-ids-to-table-and-notion",
         "notion-companies-to-zapier-table",
         "notion-company-renamed-to-xero-harvest-drive",
@@ -213,8 +215,7 @@
     "table:harvest-projects": {
       "type": "table",
       "id": "01K8A2KV9X1W95GAB6Y69D7G4C",
-      "name": "Harvest Projects (New)",
-      "external_owner": "maintained outside this repo"
+      "name": "Harvest Projects (New)"
     },
     "table:time-entry-map": {
       "type": "table",
@@ -1795,6 +1796,26 @@
     {
       "from": "start-a-timer-from-knoxx-notion-task",
       "to": "app:harvest",
+      "kind": "write"
+    },
+    {
+      "from": "app:harvest",
+      "to": "harvest-new-project-to-zapier-table",
+      "kind": "trigger"
+    },
+    {
+      "from": "harvest-new-project-to-zapier-table",
+      "to": "table:harvest-projects",
+      "kind": "own"
+    },
+    {
+      "from": "app:harvest",
+      "to": "harvest-project-status-to-zapier-table",
+      "kind": "trigger"
+    },
+    {
+      "from": "harvest-project-status-to-zapier-table",
+      "to": "table:harvest-projects",
       "kind": "write"
     }
   ],
