@@ -6,7 +6,7 @@ The Table is what [`start-a-timer-from-notion-task`](../start-a-timer-from-notio
 
 Its companion [`harvest-project-status-to-zapier-table`](../harvest-project-status-to-zapier-table/) keeps `is_active` current after the row exists.
 
-**Status:** ⏳ Pending first publish, which happens on merge and enables the workflow. This Zap replaces the classic Zap **Add Harvest Project to Zapier Table**.
+**Status:** ✅ Enabled. Cutover completed 2026-09-30: the classic Zap **Add Harvest Project to Zapier Table** is disabled.
 
 ## What it does
 

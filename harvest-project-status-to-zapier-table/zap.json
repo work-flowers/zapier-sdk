@@ -34,5 +34,8 @@
   "classic_zap": {
     "title": "Update Harvest Project Status",
     "note": "The classic Zap halted silently on a missing row (`_zap_search_success_on_miss: false`). This one waits 30 minutes for the new-project Zap, then throws. It also skips the write when the row already holds the new value."
+  },
+  "cutover": {
+    "classic_zap_disabled": "2026-09-30"
   }
 }
