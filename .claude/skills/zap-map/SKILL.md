@@ -44,10 +44,13 @@ map shows a freshly shipped Zap as undeployed until the next daily refresh.
 map differs from a fresh build. It is no longer a gate; use it locally to ask
 "is the published map current?".
 
-## The map is published, so a push to `main` is a deploy
+## The map is published, so a `docs/` change on `main` is a deploy
 
-GitHub Pages serves `/docs` from `main` at
-`https://work-flowers.github.io/zapier-sdk/map.html`, and
+[`deploy-pages.yml`](../../../.github/workflows/deploy-pages.yml) publishes
+`docs/` to `https://work-flowers.github.io/zapier-sdk/map.html` whenever `docs/`
+changes on `main` (a merged PR touching it, or a `refresh-map.yml` run that
+pushed — that job calls the deploy itself, since its bot push can't trigger
+workflows). Pages' source must stay set to "GitHub Actions". And
 [work.flowers/zap-map](https://www.work.flowers/zap-map) embeds that URL in an
 `<iframe>`. Regenerating the map therefore changes a public page — no extra step,
 but no undo either.
