@@ -16,8 +16,8 @@
 #
 # The commit goes straight to `main`, like the publish sync-back: it contains
 # nothing but output derived from what is already on `main`, which was reviewed
-# when it merged. Deliberately NOT [skip ci] — nothing else fires on a push to
-# `main`, and the commit has to reach the Pages build.
+# when it merged. A GITHUB_TOKEN push starts no other workflow, so the `deploy`
+# job below calls deploy-pages.yml itself when (and only when) it pushed.
 #
 # If the overlay is out of step with the repo (an unregistered asset id, a zap
 # in no cluster, a missing edge), build-map.mjs refuses and this job fails
@@ -46,6 +46,8 @@ permissions:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.commit.outputs.pushed }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,6 +61,7 @@ jobs:
         run: node scripts/build-map.mjs
 
       - name: Commit the refreshed map
+        id: commit
         run: |
           if git diff --quiet -- docs/map.html; then
             echo "Map already current — nothing to commit."
@@ -85,4 +88,14 @@ jobs:
             git add -- docs/map.html
             git commit -m "Daily workflow map refresh"
           done
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
           echo "Refreshed \`docs/map.html\` and pushed to \`main\`." >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: refresh
+    if: needs.refresh.outputs.pushed == 'true'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/deploy-pages.yml

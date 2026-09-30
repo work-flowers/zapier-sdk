@@ -1,0 +1,63 @@
+# Deploy GitHub Pages
+#
+# Publishes `docs/` to https://work-flowers.github.io/zapier-sdk/ — the workflow
+# map (map.html, embedded by work.flowers/zap-map) and the publishing-pipeline
+# explainer (zap-publishing-pipeline.html, linked from the README).
+#
+# This replaced Pages' "Deploy from a branch" mode, which rebuilt and redeployed
+# the site on EVERY push to `main` — each PR merge and each publish sync-back —
+# republishing identical bytes. Here a deploy happens only when `docs/` changes.
+#
+# REQUIRES the repo's Pages source to be "GitHub Actions" (Settings → Pages →
+# Build and deployment → Source). Under the old branch mode this job fails.
+#
+# Triggers:
+#   push       — a merged PR that touches docs/.
+#   workflow_call — refresh-map.yml, after it pushes a regenerated map. Its push
+#                uses GITHUB_TOKEN, and GitHub never starts workflows from a
+#                GITHUB_TOKEN push, so the path filter below would not see it.
+#   workflow_dispatch — manual redeploy.
+#
+# No Jekyll: docs/ is uploaded as-is. The .md files in docs/ are served raw
+# rather than rendered; nothing links to their Pages URLs.
+
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**"]
+  workflow_call: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; never cancel one mid-flight (GitHub's recommended shape).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # ref: main, so a workflow_call from refresh-map deploys the commit it
+      # just pushed rather than the SHA that run started on.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
