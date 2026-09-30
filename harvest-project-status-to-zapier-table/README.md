@@ -4,7 +4,7 @@ When a Harvest project is activated or deactivated, this Zap updates the project
 
 [`start-a-timer-from-notion-task`](../start-a-timer-from-notion-task/) only books time against rows where `is_active = true`. Rows are created by [`harvest-new-project-to-zapier-table`](../harvest-new-project-to-zapier-table/). This Zap writes nothing but `is_active`.
 
-**Status:** ⏳ Pending first publish, which happens on merge and enables the workflow. It replaces the classic Zap **Update Harvest Project Status**.
+**Status:** ✅ Enabled. Cutover completed 2026-09-30: the classic Zap **Update Harvest Project Status** is disabled.
 
 ## What it does
 
