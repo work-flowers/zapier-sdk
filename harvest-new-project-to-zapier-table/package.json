@@ -1,0 +1,15 @@
+{
+  "name": "harvest-new-project-to-zapier-table",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@zapier/zapier-durable": "0.12.6",
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  },
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals workflow.ts"
+  }
+}
