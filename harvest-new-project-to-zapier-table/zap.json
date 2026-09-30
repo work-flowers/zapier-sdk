@@ -1,12 +1,12 @@
 {
   "name": "harvest-new-project-to-zapier-table",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0f071-7aaa-7fec-9343-77dc74adacea",
+  "current_version_id": "01a0f071-b5c4-73c9-8498-78ba1d33c903",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASyQiiqbZ0vpQjZXDg3lLw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "harvest-new-project-to-zapier-table",
     "description": "New Harvest project -> upsert its row (project_id, client_id, is_active, Name) in the Harvest Projects (New) Zapier Table 01K8A2KV9X1W95GAB6Y69D7G4C, keyed on project_id. Never writes Project Page ID. Migrated from the classic Zap 'Add Harvest Project to Zapier Table'.",
     "enable_on_publish": true

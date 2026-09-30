@@ -1,12 +1,12 @@
 {
   "name": "harvest-project-status-to-zapier-table",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0f071-c65e-77c4-9b2a-1df6252fd45a",
+  "current_version_id": "01a0f071-dcbe-7d4a-9ee5-0caae9809a28",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AdUDHcaQg9jUkEKNzMFRSQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "harvest-project-status-to-zapier-table",
     "description": "Harvest project activated/deactivated -> set is_active on its row in the Harvest Projects (New) Zapier Table 01K8A2KV9X1W95GAB6Y69D7G4C. If the row doesn't exist yet (a brand-new project), waits 30 min for harvest-new-project-to-zapier-table to create it, then throws if it's still missing. Migrated from the classic Zap 'Update Harvest Project Status'.",
     "enable_on_publish": true
