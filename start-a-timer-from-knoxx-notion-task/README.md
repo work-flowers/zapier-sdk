@@ -6,7 +6,7 @@ It runs one timer per task per day. The `(task, day) → Harvest time entry` map
 
 This is the Knoxx twin of [`start-a-timer-from-notion-task`](../start-a-timer-from-notion-task/), which does the same for the work.flowers workspace. The two share the Harvest actions and the mapping Table but write different columns.
 
-**Status:** ⏳ Pending first publish, which happens on merge and enables the workflow. It replaces the classic Zap **(Knoxx) Start a Timer From Linear Description Emoji**. Despite that name, the classic Zap is triggered by a Notion button, not by Linear. Dennis is disabling it by hand.
+**Status:** ✅ Enabled, and the Knoxx Tasks button automation posts to the catch URL `https://hooks.zapier.com/hooks/catch/20495893/CoZ537EFlFrXjBVaY/`. Cutover completed 2026-09-30: the classic Zap **(Knoxx) Start a Timer From Linear Description Emoji** is disabled. Despite its name, it was triggered by a Notion button, not by Linear. The first real click has not run yet — see [Verified cases](#verified-cases).
 
 ## What it does
 
