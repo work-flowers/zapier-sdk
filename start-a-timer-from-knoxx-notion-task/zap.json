@@ -1,0 +1,53 @@
+{
+  "name": "start-a-timer-from-knoxx-notion-task",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "start-a-timer-from-knoxx-notion-task",
+    "description": "Knoxx Notion Tasks 'Track Time' button -> start (or restart) a Harvest timer for that task on the fixed Knoxx Foods - AI Ops Retainer project / Build task. One timer per task per day: the (task, day) -> time entry mapping lives in Zapier Table 01K5060J1B1FHCJEWVVH597B71 (Knoxx Notion Page ID column), so a second click the same day restarts the existing entry. Migrated from the classic Zap '(Knoxx) Start a Timer From Linear Description Emoji'.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. The sender is the 'Track Time' button automation on the Tasks Database in the KNOXX Notion workspace. After the first publish, paste the `webhook_url` readback into that automation (it currently posts to the classic Zap's catch URL). `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
+  },
+  "connections": {
+    "harvestcliapi_connection": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+  },
+  "connections_note": "Same Harvest connection and alias as start-a-timer-from-notion-task (numeric id 53227756, the classic Zap's authentication c600277…). Title: \"Harvest dennis@work.flowers : Company Flow Pte. Ltd. (dba Work.Flowers\". No Notion connection: the workflow reads only the button payload.",
+  "connectionless_apps": {
+    "TableCLIAPI": "find_record / create_record — Zapier Tables auth is automatic, no connection and no task cost"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "dependencies_note": "zod is gone: the payload is extracted defensively by hand and nothing was being validated by the z.unknown() the sibling carries.",
+  "external_ids": {
+    "harvest_user_id": "5171104",
+    "harvest_user_note": "Dennis Chiuten, from GET /v2/users/me on the bound connection — the value behind the classic Zap's Components.variables['019d489c-…'].",
+    "harvest_project_id": "48185265",
+    "harvest_project_note": "\"Knoxx Foods - AI Ops Retainer\" (client Knoxx Business Group Pty Ltd), is_active true on 2026-09-30.",
+    "harvest_task_id": "26909407",
+    "harvest_task_note": "\"Build\", active task assignment on that project on 2026-09-30.",
+    "notion_actor_id": "121d872b-594c-810b-ba5a-000206eeef1e",
+    "notion_actor_note": "Dennis. Notion user ids are global; confirmed present in the Knoxx workspace's GET /v1/users (dennis@work.flowers) on 2026-09-30. Replaces the classic Zap's Components.variables['019d48a3-…'].",
+    "knoxx_tasks_data_source": "3d58094c-3d8a-82fb-9bd8-07fbdf40b4cc",
+    "knoxx_tasks_note": "\"Tasks Database\" in the Knoxx Notion workspace. `Task ID` is its unique_id property. Only named here — the workflow never calls Knoxx Notion."
+  },
+  "tables": {
+    "01K5060J1B1FHCJEWVVH597B71": "Linear Issue to Harvest Time Entry Mapping — f3 Time Entry ID, f4 Date (datetime), f5 Knoxx Notion Page ID. Shared with start-a-timer-from-notion-task, which writes f6 instead."
+  },
+  "classic_zap": {
+    "title": "(Knoxx) Start a Timer From Linear Description Emoji",
+    "note": "Despite the title, the classic Zap is a Notion button catch hook, not Linear. Dennis is disabling it by hand (classic Zaps can't be disabled via CLI/MCP)."
+  }
+}
