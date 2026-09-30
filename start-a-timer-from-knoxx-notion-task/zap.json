@@ -49,5 +49,10 @@
   "classic_zap": {
     "title": "(Knoxx) Start a Timer From Linear Description Emoji",
     "note": "Despite the title, the classic Zap is a Notion button catch hook, not Linear. Dennis is disabling it by hand (classic Zaps can't be disabled via CLI/MCP)."
+  },
+  "cutover": {
+    "classic_zap_disabled": "2026-09-30",
+    "button_repointed": "2026-09-30",
+    "note": "Knoxx Tasks 'Track Time' automation repointed to the catch URL; the save delivered an empty ping (run 01a0f05d-28ce-75f5-b696-5e4a0da246c7, skipped: empty-payload)."
   }
 }
