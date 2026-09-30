@@ -1,12 +1,12 @@
 {
   "name": "start-a-timer-from-knoxx-notion-task",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0f05b-ba10-76f3-9fc1-a596551d4db2",
+  "current_version_id": "01a0f05b-ecd3-73ee-97e4-3c6fc1347293",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYPMY-6P-xJaqT0pIV7JIw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "start-a-timer-from-knoxx-notion-task",
     "description": "Knoxx Notion Tasks 'Track Time' button -> start (or restart) a Harvest timer for that task on the fixed Knoxx Foods - AI Ops Retainer project / Build task. One timer per task per day: the (task, day) -> time entry mapping lives in Zapier Table 01K5060J1B1FHCJEWVVH597B71 (Knoxx Notion Page ID column), so a second click the same day restarts the existing entry. Migrated from the classic Zap '(Knoxx) Start a Timer From Linear Description Emoji'.",
     "enable_on_publish": true
@@ -16,7 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CoZ537EFlFrXjBVaY/",
     "trigger_note": "Catch hook. The sender is the 'Track Time' button automation on the Tasks Database in the KNOXX Notion workspace. After the first publish, paste the `webhook_url` readback into that automation (it currently posts to the classic Zap's catch URL). `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
   },
   "connections": {
