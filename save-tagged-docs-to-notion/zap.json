@@ -12,14 +12,13 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
-    "action": "hook_v2",
-    "authentication_id": null,
+    "selected_api": "App228555CLIAPI@1.0.3",
+    "action": "document_tag_updated",
+    "authentication_id": "021a17e9-57d7-8909-893a-54a412a1644d",
     "params": {},
-    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CB2jpmJKqcZnLmG73/",
-    "trigger_note": "Catch hook. The sender is a Readwise webhook (Readwise's webhook settings) subscribed to the Reader `tags_updated` event, which POSTs the document object (top-level `id`, `title`, `source_url`, `tags` keyed by slug, `event_type`, `secret`). `webhook_url` is what that Readwise webhook must POST to; `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401.",
-    "why_not_app_trigger": "Switched 2026-10-01 from the Readwise Reader app trigger (`App228555CLIAPI@1.0.3` / `document_tag_updated`, on the d.chiuten@icloud.com Reader connection). That trigger is a REST hook (Zapier subscribed `https://hooks.zapier.com/hooks/standard/20495893/21f32aab2b074e47be8523778e320f46/` in Readwise), but the durable dedupe layer from Zapier bug W6ZE93-VMEWP keyed every delivery on the document id, so a document fired once ever. Reader's auto-tagging on save consumed that one firing, and a later `sendtonotion` tag was dropped: 5 of the 9 documents tagged between 2026-09-16 and 2026-09-29 were missed (backfilled 2026-10-01). A raw catch hook bypasses the app trigger's dedupe.",
-    "dedupe_probe": "UNVERIFIED: whether the durable dedupe layer also keys catch-hook deliveries on a payload's top-level `id` (Readwise's payload carries the document id there). After the publish, POST the same non-`sendtonotion` payload twice to `webhook_url`; two `not-tagged` runs means the fix holds. One run means it does not, and the fallback is a scheduled Reader-vs-dedup-Table sweep."
+    "trigger_note": "Readwise Reader 'Document Tags Updated' — a polling (read) trigger with NO input fields; it fires on any tag change to any document, so the `sendtonotion` gate lives in workflow.ts. authentication_id is the Readwise Reader connection (d.chiuten@icloud.com).",
+    "polling_dedup_caveat": "Known open Zapier bug W6ZE93-VMEWP: the durable runtime dedupes trigger deliveries on the record id, so this trigger fires ONCE per Reader document, ever. Reader auto-tags articles on save, which usually uses up that firing, so a `sendtonotion` tag added later is dropped. 5 of 9 documents tagged 2026-09-16..29 were missed. No automated backstop: a scheduled sweep would need a Readwise access token (Zapier's relay won't attach the Reader connection's credentials, because the Readwise app declares no domain filter) and Dennis chose not to store one (2026-10-01). Missed tags are backfilled by hand; see the README.",
+    "catch_hook_probe_2026_10_01": "Tried and reverted (PR #207 -> revert). A raw WebHookCLIAPI catch hook does NOT escape the bug: two identical POSTs carrying top-level `id: dedupe-probe-20261001` produced one run (the second was accepted with `status: success` and never ran), while a control with a different id ran within seconds. The durable dedupe keys catch-hook payloads on their top-level `id`, and Readwise puts the document id there. The native trigger was restored because it is simpler and no worse."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"

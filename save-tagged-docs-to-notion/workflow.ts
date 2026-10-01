@@ -28,12 +28,8 @@ const DEDUP_TABLE = "01KKNC03EA4Z5Y0KR8H6TP2A8K";
 // Filter step).
 const TRIGGER_TAG = "sendtonotion";
 
-// A Readwise webhook (Reader `tags_updated` event) POSTs the document object to
-// this workflow's catch hook; accept anything and extract defensively. This is
-// a raw catch hook rather than the Readwise Reader app trigger, because that
-// trigger's deliveries were deduped on the document id by the durable runtime
-// (Zapier bug W6ZE93-VMEWP), so a document fired only once ever and a
-// `sendtonotion` tag added after Reader's auto-tagging was dropped.
+// The Readwise Reader "Document Tags Updated" trigger delivers a document
+// object; accept anything and extract defensively.
 const InputSchema = z.unknown();
 
 // --- Pure helpers ----------------------------------------------------------
@@ -146,7 +142,7 @@ function extractDoc(raw: unknown): ReaderDoc | null {
 }
 
 // --- Workflow --------------------------------------------------------------
-// Readwise webhook (Reader `tags_updated`) -> create a Social Content "Article
+// Readwise Reader "Document Tags Updated" -> create a Social Content "Article
 // Share" idea in Notion, deduped through a free Zapier Table so a document is
 // only ever turned into a page once.
 //
