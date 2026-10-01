@@ -1,7 +1,7 @@
 {
   "name": "save-tagged-docs-to-notion",
   "workflow_id": "01a0a866-5019-7a15-9f92-00aa437a0b6c",
-  "current_version_id": "01a0f4f9-3f3c-7383-8a99-2b0d50cbc35f",
+  "current_version_id": "01a0f53a-3c76-7fb3-8122-d793bbe850b2",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS6Zq4TY1HZZnYhr3nHbUw",
   "enabled": true,
   "is_private": false,
