@@ -1,7 +1,7 @@
 {
   "name": "save-tagged-docs-to-notion",
   "workflow_id": "01a0a866-5019-7a15-9f92-00aa437a0b6c",
-  "current_version_id": "01a0a866-6295-7ac2-a032-3906a9d6d753",
+  "current_version_id": "01a0f4f9-3f3c-7383-8a99-2b0d50cbc35f",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS6Zq4TY1HZZnYhr3nHbUw",
   "enabled": true,
   "is_private": false,
@@ -16,7 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CB2jpmJKqcZnLmG73/",
     "trigger_note": "Catch hook. The sender is a Readwise webhook (Readwise's webhook settings) subscribed to the Reader `tags_updated` event, which POSTs the document object (top-level `id`, `title`, `source_url`, `tags` keyed by slug, `event_type`, `secret`). `webhook_url` is what that Readwise webhook must POST to; `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401.",
     "why_not_app_trigger": "Switched 2026-10-01 from the Readwise Reader app trigger (`App228555CLIAPI@1.0.3` / `document_tag_updated`, on the d.chiuten@icloud.com Reader connection). That trigger is a REST hook (Zapier subscribed `https://hooks.zapier.com/hooks/standard/20495893/21f32aab2b074e47be8523778e320f46/` in Readwise), but the durable dedupe layer from Zapier bug W6ZE93-VMEWP keyed every delivery on the document id, so a document fired once ever. Reader's auto-tagging on save consumed that one firing, and a later `sendtonotion` tag was dropped: 5 of the 9 documents tagged between 2026-09-16 and 2026-09-29 were missed (backfilled 2026-10-01). A raw catch hook bypasses the app trigger's dedupe.",
     "dedupe_probe": "UNVERIFIED: whether the durable dedupe layer also keys catch-hook deliveries on a payload's top-level `id` (Readwise's payload carries the document id there). After the publish, POST the same non-`sendtonotion` payload twice to `webhook_url`; two `not-tagged` runs means the fix holds. One run means it does not, and the fallback is a scheduled Reader-vs-dedup-Table sweep."
