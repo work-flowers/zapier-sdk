@@ -264,7 +264,7 @@ shape of step from the AI by Zapier prompt it replaced on 2026-10-02:
 
 | | AI by Zapier `standard/auto` (before) | Jev (now) |
 | --- | --- | --- |
-| Cost per email | 1 Zapier task | TypeSafe tokens, ~$0.0001 (billed by TypeSafe, not Zapier) |
+| Cost per email | 1 Zapier task | 1 Zapier task (the authenticated call to Jev), plus ~$0.0001 of TypeSafe usage billed by TypeSafe |
 | Latency, real emails | 7.7s median, 22.9s p90, 76s worst | 1.5s median, 2.3s p90, 2.5s worst |
 | Output | category, payment flags, vendor, amount, currency, dates, evidence, justification | category and payment flags, each with a probability |
 
