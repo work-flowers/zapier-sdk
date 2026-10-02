@@ -7,29 +7,24 @@ const sdk = createZapierSdk();
 
 // --- Bindings --------------------------------------------------------------
 // Connection aliases are resolved at run/publish time via --connections.
-// Only Google Drive needs one: the Gmail credential lives on the TRIGGER
-// (publish --trigger authentication_id), and Files by Zapier / AI by Zapier
-// both run on built-in credentials with no connection at all.
+// The Gmail credential lives on the TRIGGER (publish --trigger
+// authentication_id); Files by Zapier runs on built-in credentials.
 const DRIVE_APP_KEY = "GoogleDriveCLIAPI";
 const DRIVE_CONNECTION = "gdrive";
 
 const FILES_APP_KEY = "FilesByZapierCLIAPI";
-const AI_APP_KEY = "AICLIAPI";
 
-// AI by Zapier on Zapier's built-in credentials ("0" = Included in Plan).
-//
-// TIER = TASK COST. The only valid values are `standard/auto`, `advanced/auto`
-// and `premium/auto`, billed at 1x / 3x / 5x tasks per run respectively (plus
-// the same multiplier again per tool call — this step makes none). Standard is
-// Zapier's recommended tier for classification and extraction, which is exactly
-// this workload; the Advanced default exists mainly to enable tool calls.
-//
-// Standard was verified to reach the same routing verdict as Advanced on every
-// case in the README's "Verified behaviour" table, including SimplePay's
-// statement-history inference, stable across repeat runs. Re-run those cases
-// before changing this.
-const AI_MODEL = "standard/auto";
-const AI_AUTHENTICATION = "0";
+// Jev, called through Zapier's authenticated fetch: the API key lives in an
+// "API by Zapier" connection (Bearer auth), so it never appears in source, and
+// the request goes out through Zapier's Relay rather than the durable sandbox's
+// own network. Billed per input token by TypeSafe (fractions of a cent per
+// email), not in Zapier tasks.
+const JEV_CONNECTION = "typesafe";
+const JEV_URL = "https://api.typesafe.ai/v1/systemone";
+// `jev-latest` moves when TypeSafe ships a new release. The thresholds below
+// were checked against jev-1.13.0; the response's `model` is logged on every
+// run so a silent model change shows up in run history.
+const JEV_MODEL = "jev-latest";
 
 // Destination folders under Google Drive.
 const FOLDER_INVOICES = "14RpcjSzye4BVZPS_1OzspabmQzDwFVRE";
@@ -83,6 +78,12 @@ const MAX_ATTACHMENTS = 10;
 /** Extracted characters per PDF fed to the classifier. Long agreements are cut;
  *  the category is always evident well inside this budget. */
 const MAX_TEXT_CHARS = 20000;
+
+/** Extracted characters across ALL attachments on one email. Jev accepts about
+ *  32k tokens of state per request (~4 chars a token), and a request over that
+ *  is rejected outright, so an email with many long PDFs shares this budget
+ *  equally instead. The largest email in the 48-email test set used ~22k. */
+const MAX_TOTAL_TEXT_CHARS = 80000;
 
 /** Email body characters fed to the classifier as context. */
 const MAX_BODY_CHARS = 2000;
@@ -308,211 +309,110 @@ function blockReason(email: Email): string | null {
 }
 
 // --- Classifier -------------------------------------------------------------
+//
+// Jev (TypeSafe's System One model) answers TYPED QUESTIONS about the email and
+// its attachments: one Choice for the category and four yes/no "Nouls" for the
+// payment signals, per attachment, all in one request. It returns
+// probabilities, never generated text, so there is nothing to parse and no
+// field it can invent. These question definitions are the reviewable "prompt"
+// for this step (repo rule 6 — see CLAUDE.md for why they live in code rather
+// than a *-prompt.md file).
+//
+// Verified offline on the 48 most recent real emails (59 PDFs) against the AI by
+// Zapier classifier this replaced: same filing outcome on 58, and the 59th was
+// a misfile by the old classifier — see the README's "Verified behaviour".
 
 /**
- * PROMPT SOURCE OF TRUTH: ./classifier-prompt.md
- *
- * The markdown file is the reviewable copy and this literal must match its
- * "## Prompt" section verbatim (repo rule 6). `node scripts/check-prompts.mjs`
- * from the repo root fails the moment the two drift apart.
- *
- * Backticks and `${` are escaped here only to survive the template literal —
- * the check script reverses that before comparing.
+ * Category -> what it means. Every key must stay in step with CATEGORY_FOLDERS
+ * and decide(), which match on these exact strings. The money-direction clauses
+ * (payments TO us, credit notes) were added after the first offline run filed
+ * remittance advices and a Slack credit note as receipts and invoices.
  */
-const CLASSIFIER_PROMPT = `You are a document-filing assistant for **Company Flow Pte. Ltd.**, trading as **workFlowers** — a private limited company incorporated in Singapore (UEN 202442050M). Your classifications drive an automation that files business documents into Google Drive, so accuracy matters more than speed.
+const CATEGORY_CRITERIA: Record<string, string> = {
+  Invoice:
+    "A request for payment addressed to us (Company Flow Pte. Ltd. / workFlowers) for a charge we owe. States an amount owed and typically an invoice number, issue date and due date. Includes invoices stamped paid. A credit note or notice of credit added to our account is not an invoice.",
+  Receipt:
+    "A confirmation that a payment WE (Company Flow / workFlowers) made to a vendor has been completed: payment confirmations, card-charge confirmations, tax receipts for our purchases.",
+  "Legal Agreement":
+    "A fully executed business contract between us and a counterparty — SOW, project addendum, MSA, NDA — that is signed or evidently executed (e.g. a signing certificate or completed e-signature). An unsigned draft for review is Other.",
+  "Governance Document":
+    "Corporate governance records: directors' or shareholder resolutions, board minutes, share certificates.",
+  "Vendor Account Statement":
+    "A periodic statement of account from a vendor summarising activity (invoices and payments) over a period, rather than billing one transaction.",
+  "Financial Statements":
+    "Financial statements, management accounts, tax filings or incorporation documents for Company Flow Pte. Ltd. / workFlowers itself. Another company's financials are Other.",
+  Other:
+    "Anything else: money coming IN to us (remittance or payment advices from customers or banks, a customer's goods-received note), credit notes, product warranty or coverage terms, marketing, newsletters, tickets, boarding passes, booking confirmations, unsigned drafts, personal documents, documents issued BY us to a client.",
+};
 
-You are given **one email** — its sender, subject, date and body — together with **every PDF attachment on that email**, each with its filename and extracted text. Attachments are numbered starting at 1.
-
-Return **one result object per attachment, in the same order as the attachments were given**. Never merge, reorder, split or omit attachments: if you are given 3 attachments, return exactly 3 objects.
-
-### Categories
-
-Classify each attachment as exactly one of:
-
-- **Invoice** — a request for payment addressed to us. States an amount owed and typically an invoice number, issue date and due date.
-- **Receipt** — confirmation that a payment has already been completed. Includes payment confirmations, credit-card charge confirmations and tax receipts.
-- **Legal Agreement** — a fully executed contract, including statements of work, project addendums, master services agreements and NDAs. Only classify here when the document is signed or otherwise evidently executed; an unsigned draft for review is **Other**.
-- **Governance Document** — corporate governance records such as directors' resolutions, shareholder resolutions, board minutes and share certificates.
-- **Vendor Account Statement** — a periodic statement of account from a vendor summarising activity over a period, rather than billing a single transaction.
-- **Financial Statements** — financial statements, management accounts, tax filings or incorporation documents **for Company Flow Pte. Ltd. / workFlowers itself**. Another company's financial statements are **Other**.
-- **Other** — anything that fits none of the above: marketing material, newsletters, tickets, boarding passes, unsigned drafts, personal documents.
-
-### The rule that matters most
-
-The Invoices folder exists to hold **bills that still need to be paid**. An invoice that has already been settled must not be filed there.
-
-So for every attachment you classify as **Invoice**, you must also work out whether it is already paid.
-
-#### Payment evidence within the document
-
-Mark **Payment Status** as \`Paid\` when the document itself shows any of:
-
-- an amount due of zero
-- an explicit paid marker — "Paid", "Paid on <date>", "Date paid", "Payment received", "Thank you for your payment", "No payment due"
-- a payment method and card last-four digits recorded against the transaction
-- a payment-history table with a settled row covering the full amount
-
-Mark it \`Unpaid\` when the document requests payment, shows a non-zero amount outstanding, and carries none of the above.
-
-**Do not treat a due date equal to the issue date as evidence of payment.** Due-on-receipt terms are common on invoices that are genuinely unpaid and still need attention.
-
-Use \`Not Applicable\` for any attachment that is not an Invoice or a Receipt.
-
-#### Payment evidence from a sibling attachment
-
-This is the case that a document-by-document reading gets wrong.
-
-SaaS vendors charging a credit card routinely send **a single email carrying both the invoice and its receipt**. Read alone, the invoice looks unpaid — it shows an amount due, a "pay online" link and payment instructions, with no paid marker anywhere on it. The only proof of settlement is the *other* attachment.
-
-For each **Invoice**, set **Superseded By Receipt** to \`Yes\` when another attachment on this same email is a receipt or payment confirmation for the same transaction. Establish that they are the same transaction by, in order of preference:
-
-1. **the same invoice number** appearing on both documents — receipts normally quote the invoice number they settle;
-2. failing that, the same vendor, the same total amount and dates within a few days of each other.
-
-Set it to \`No\` when there is no such sibling. Set it to \`No\` for every attachment that is not an Invoice.
-
-Also weigh the email itself. A subject such as "Your receipt from <vendor>", or a body confirming that a card has been charged, is strong evidence that the transaction the attachments describe is already settled.
-
-#### Payment evidence from a sibling account statement
-
-There is a second way a vendor bills a card automatically, and it leaves no receipt at all.
-
-Some vendors email a monthly invoice together with an **account statement**, where the statement is generated the moment the invoice is issued — before that month's card charge has posted. The statement therefore shows the new invoice as an open balance even though it will be settled automatically within the day. What gives it away is the *history* above that line: every previous invoice on the same statement is immediately followed by a payment that clears it.
-
-For an **Invoice**, set **Auto-Paid By Recurring Charge** to \`Yes\` only when **all** of these hold:
-
-1. Another attachment on this email is an account statement for the same vendor and account.
-2. That statement lists **at least three prior invoices**, and **every one of them** is followed by a payment entry that clears its balance to zero.
-3. Those settling payments post **on the same day as their invoice**, or within one day of it — that is what marks the charge as automatic rather than manually paid later.
-4. The invoice being classified is the **most recent** line on the statement, and the only one left outstanding.
-5. Nothing indicates the arrangement has lapsed — no dunning notice, no overdue or suspension warning, no failed-payment entry, no change-of-payment-method notice.
-
-When every one of those holds, also set **Payment Status** to \`Paid\`, and say in **Payment Evidence** how many prior invoices show the pattern and what the settling entries are called.
-
-If any condition fails — a gap in the history, payments posting weeks later, more than one outstanding balance, fewer than three priors — set it to \`No\` and treat the invoice as unpaid. A vendor that merely *offers* card payment, without a statement history proving it is actually being used, does **not** qualify.
-
-Set **Auto-Paid By Recurring Charge** to \`No\` for every attachment that is not an Invoice.
-
-### Bias
-
-When you genuinely cannot tell, prefer \`Unpaid\` / \`No\` over guessing.
-
-Filing an already-paid invoice is a small annoyance — someone deletes it. Skipping a genuinely unpaid invoice means a real bill is never seen and goes unpaid. Err toward filing.
-
-### Per-attachment fields
-
-For each attachment return:
-
-- **Attachment Filename** — copied verbatim from the attachment you are describing, so each result can be matched back to its file.
-- **Document Category** — one of the seven categories above.
-- **Payment Status** — \`Paid\`, \`Unpaid\`, or \`Not Applicable\`.
-- **Superseded By Receipt** — \`Yes\` or \`No\`, per the sibling-receipt rule above.
-- **Auto-Paid By Recurring Charge** — \`Yes\` or \`No\`, per the sibling-statement rule above.
-- **Payment Evidence** — one sentence naming the specific text or sibling attachment your Payment Status, Superseded By Receipt and Auto-Paid By Recurring Charge conclusions rest on. Quote the wording where you can. Leave blank where Payment Status is \`Not Applicable\`.
-- **Invoice Number** — the invoice number the document relates to. Populate for both invoices and receipts, since matching the two depends on it. Blank if absent.
-- **Invoice Date** — issue date, ISO-8601 (\`YYYY-MM-DD\`). Blank if absent.
-- **Due Date** — payment due date, ISO-8601 (\`YYYY-MM-DD\`). Blank if absent.
-- **Amount** — the document's total, digits and decimal point only, no currency symbol or thousands separators (e.g. \`133.58\`). Blank if absent.
-- **Currency** — ISO-4217 code (e.g. \`SGD\`, \`USD\`). Blank if absent.
-- **Vendor** — the counterparty issuing the document, not us. Blank if unclear.
-- **Justification** — two or three sentences explaining the category you chose and why.`;
+/** The five questions asked about attachment `i` (0-based in `attachments`). */
+function jevQuestions(count: number): Record<string, unknown> {
+  const qs: Record<string, unknown> = {};
+  for (let i = 0; i < count; i++) {
+    const ref = `attachments[${i}]`;
+    qs[`category_${i}`] = {
+      type: "choice",
+      instructions: `Which kind of business document is \`${ref}\`, from the point of view of Company Flow Pte. Ltd. (workFlowers) filing its own records?`,
+      criteria: CATEGORY_CRITERIA,
+    };
+    qs[`paid_${i}`] = {
+      type: "noul",
+      instructions: `Does \`${ref}\` itself show that the payment it describes has already been completed?`,
+      criteria: {
+        true: 'The document shows an amount due of zero, an explicit paid marker ("Paid", "Date paid", "Payment received", "Thank you for your payment", "No payment due"), a card or payment method recorded against the transaction, or a payment-history row settling the full amount.',
+        false:
+          "The document requests payment or shows a non-zero amount outstanding, with none of those markers. A due date equal to the issue date is NOT evidence of payment.",
+      },
+    };
+    qs[`superseded_${i}`] = {
+      type: "noul",
+      instructions: `Is a DIFFERENT attachment on this email a receipt or payment confirmation for the same transaction as \`${ref}\` (same invoice number, or same vendor, same total and dates within a few days)?`,
+    };
+    qs[`autopaid_${i}`] = {
+      type: "noul",
+      instructions: `Is a DIFFERENT attachment on this email an account statement for the same vendor as \`${ref}\` whose history lists at least three earlier invoices, EACH followed by a payment clearing it on the same day or the next day, with \`${ref}\` being the newest and only outstanding line?`,
+    };
+    qs[`lapsed_${i}`] = {
+      type: "noul",
+      instructions: `Does anything on this email indicate that automatic payment for \`${ref}\` has lapsed — a dunning or overdue notice, suspension warning, failed payment, or payment-method change?`,
+    };
+  }
+  return qs;
+}
 
 /**
- * Structured output, one object per attachment (`isOutputArray: true`).
- * Descriptions are kept in step with the wording in classifier-prompt.md.
+ * Yes/no thresholds. 0.5 is the natural cut for a calibrated probability; the
+ * "when unsure, file it" bias lives in decide(), which only withholds an
+ * invoice on a positive signal. Re-run the offline cases before moving these.
  */
-const OUTPUT_FIELDS = [
-  {
-    name: "Attachment Filename",
-    description: "Filename copied verbatim from the attachment being described, so the result can be matched back to its file.",
-    type: "text",
-    isRequired: true,
-  },
-  {
-    name: "Document Category",
-    description: "The category of the document.",
-    type: "category_single",
-    isRequired: true,
-    options: [
-      "Invoice",
-      "Receipt",
-      "Legal Agreement",
-      "Governance Document",
-      "Vendor Account Statement",
-      "Financial Statements",
-      "Other",
-    ],
-  },
-  {
-    name: "Payment Status",
-    description: "Whether the document shows its amount as already paid. Not Applicable for anything that is not an invoice or a receipt.",
-    type: "category_single",
-    isRequired: true,
-    options: ["Paid", "Unpaid", "Not Applicable"],
-  },
-  {
-    name: "Superseded By Receipt",
-    description: "For an Invoice: whether another attachment on this same email is a receipt or payment confirmation for the same transaction.",
-    type: "category_single",
-    isRequired: true,
-    options: ["Yes", "No"],
-  },
-  {
-    name: "Auto-Paid By Recurring Charge",
-    description: "For an Invoice: whether an account statement on this same email proves the vendor auto-charges a card — at least three prior invoices each cleared by a same-day payment, this invoice the only one outstanding.",
-    type: "category_single",
-    isRequired: true,
-    options: ["Yes", "No"],
-  },
-  {
-    name: "Payment Evidence",
-    description: "One sentence naming the specific text or sibling attachment the payment conclusions rest on.",
-    type: "text",
-    isRequired: false,
-  },
-  {
-    name: "Invoice Number",
-    description: "The invoice number the document relates to. Populated for both invoices and receipts, since matching the two depends on it.",
-    type: "text",
-    isRequired: false,
-  },
-  {
-    name: "Invoice Date",
-    description: "Issue date, ISO-8601 (YYYY-MM-DD).",
-    type: "date",
-    isRequired: false,
-  },
-  {
-    name: "Due Date",
-    description: "Payment due date, ISO-8601 (YYYY-MM-DD).",
-    type: "date",
-    isRequired: false,
-  },
-  {
-    name: "Amount",
-    description: "The document total, digits and decimal point only, no currency symbol or thousands separators.",
-    type: "text",
-    isRequired: false,
-  },
-  {
-    name: "Currency",
-    description: "ISO-4217 currency code.",
-    type: "text",
-    isRequired: false,
-  },
-  {
-    name: "Vendor",
-    description: "The counterparty issuing the document, not us.",
-    type: "text",
-    isRequired: false,
-  },
-  {
-    name: "Justification",
-    description: "Two or three sentences explaining the chosen category and the reasoning behind it.",
-    type: "text",
-    isRequired: true,
-  },
-];
+const PAID_THRESHOLD = 0.5;
+const SIGNAL_THRESHOLD = 0.5;
+
+/**
+ * The invoice number a document quotes, found in CODE rather than by the model:
+ * signal 1 of decide() is a deterministic join between an invoice and the
+ * receipt that settles it, so the join key must be copied verbatim from the
+ * text. "Invoice number YIGHXGH9-0008", "Invoice #1148057", "Invoice No: X",
+ * or a bare "INV-0083".
+ *
+ * Table-layout PDFs extract the label and its value apart ("Invoice No:\r\n
+ * Billing Period:\r\nInvoice Date:\r\n…\r\nINV-26-0008"), so after the label
+ * this takes the first nearby token that contains a digit and isn't a date,
+ * rather than the next word. On the 48-email test set that matched the old AI
+ * classifier's number on every invoice and receipt that arrived in a pair.
+ */
+function invoiceNumberFromText(text: string): string {
+  const label = /invoice\s*(?:number|no\b\.?|num(?:ber)?\b|#)/gi;
+  const date = /^(?:\d{1,4}[\/.-]\d{1,2}[\/.-]\d{1,4}|\d{1,2}-[A-Za-z]{3}-\d{2,4})$/;
+  for (const m of text.matchAll(label)) {
+    const window = text.slice(m.index + m[0].length, m.index + m[0].length + 200);
+    for (const t of window.matchAll(/[A-Z0-9][A-Z0-9\-\/]{3,}/gi)) {
+      if (/\d/.test(t[0]) && !date.test(t[0])) return t[0];
+    }
+  }
+  const bare = text.match(/\b(INV-?\d{3,})\b/i);
+  return bare ? bare[1] : "";
+}
 
 interface Classification {
   filename: string;
@@ -520,68 +420,67 @@ interface Classification {
   paymentStatus: string;
   supersededByReceipt: boolean;
   autoPaidByRecurringCharge: boolean;
-  paymentEvidence: string;
   invoiceNumber: string;
-  invoiceDate: string | null;
-  dueDate: string | null;
-  amount: string;
-  currency: string;
-  vendor: string;
-  justification: string;
 }
 
-/** Map one model row onto the fields the routing logic reads. */
-function readClassification(row: any, fallbackFilename: string): Classification {
-  const get = (k: string) => firstString(row?.[k]) ?? "";
+/** Jev's per-attachment probabilities, kept in the run output for review. */
+interface JevSignals {
+  category: string;
+  categoryProbability: number;
+  paid: number;
+  superseded: number;
+  autoPaid: number;
+  lapsed: number;
+}
+
+/** Read one attachment's answers off a Jev response; null if any is missing. */
+function readJevSignals(answers: any, i: number): JevSignals | null {
+  const category = answers?.[`category_${i}`];
+  const nouls = ["paid", "superseded", "autopaid", "lapsed"].map(
+    (k) => answers?.[`${k}_${i}`]?.noul,
+  );
+  if (typeof category?.choice !== "string" || nouls.some((n) => typeof n !== "number")) {
+    return null;
+  }
   return {
-    filename: get("Attachment Filename") || fallbackFilename,
-    category: get("Document Category"),
-    paymentStatus: get("Payment Status"),
-    supersededByReceipt: get("Superseded By Receipt").toLowerCase() === "yes",
-    autoPaidByRecurringCharge:
-      get("Auto-Paid By Recurring Charge").toLowerCase() === "yes",
-    paymentEvidence: get("Payment Evidence"),
-    invoiceNumber: get("Invoice Number"),
-    invoiceDate: firstString(row?.["Invoice Date"]),
-    dueDate: firstString(row?.["Due Date"]),
-    amount: get("Amount"),
-    currency: get("Currency"),
-    vendor: get("Vendor"),
-    justification: get("Justification"),
+    category: category.choice,
+    categoryProbability: Number(category.probabilities?.[category.choice] ?? 0),
+    paid: nouls[0],
+    superseded: nouls[1],
+    autoPaid: nouls[2],
+    lapsed: nouls[3],
   };
 }
 
-/**
- * Pair each attachment with its classification.
- *
- * Matched on filename first — the model is asked to echo it back precisely so
- * results survive any reordering — then falling back to positional order for a
- * row whose filename didn't come back clean. Each row is consumed at most once,
- * so two attachments sharing a name can't both bind to the same result.
- */
-function alignClassifications(
-  attachments: Attachment[],
-  rows: any[],
-): Array<Classification | null> {
-  const used = new Set<number>();
-  const byName = new Map<string, number>();
-  rows.forEach((row, i) => {
-    const name = firstString(row?.["Attachment Filename"]);
-    if (name && !byName.has(name)) byName.set(name, i);
-  });
+/** Turn Jev's probabilities into the yes/no fields decide() routes on. */
+function toClassification(
+  filename: string,
+  text: string,
+  s: JevSignals | null,
+): Classification | null {
+  if (!s) return null;
+  const isInvoice = s.category === "Invoice";
+  const isMoney = isInvoice || s.category === "Receipt";
+  return {
+    filename,
+    category: s.category,
+    // A receipt is by definition a completed payment; only an invoice's paid
+    // state is in question.
+    paymentStatus: !isMoney
+      ? "Not Applicable"
+      : s.category === "Receipt" || s.paid >= PAID_THRESHOLD
+        ? "Paid"
+        : "Unpaid",
+    supersededByReceipt: isInvoice && s.superseded >= SIGNAL_THRESHOLD,
+    autoPaidByRecurringCharge:
+      isInvoice && s.autoPaid >= SIGNAL_THRESHOLD && s.lapsed < SIGNAL_THRESHOLD,
+    invoiceNumber: isMoney ? invoiceNumberFromText(text) : "",
+  };
+}
 
-  return attachments.map((att, i) => {
-    const named = byName.get(att.filename);
-    if (named !== undefined && !used.has(named)) {
-      used.add(named);
-      return readClassification(rows[named], att.filename);
-    }
-    if (i < rows.length && !used.has(i)) {
-      used.add(i);
-      return readClassification(rows[i], att.filename);
-    }
-    return null;
-  });
+/** Jev statuses worth a step retry: rate limits and server-side failures. */
+function isRetryableJevStatus(status: number): boolean {
+  return status === 429 || status >= 500;
 }
 
 type Decision =
@@ -817,41 +716,60 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       ),
     );
 
-    // 2. Classify every attachment in ONE call, with the email as context.
-    const inputFields: Record<string, string> = {
-      Email: [
+    // 2. Classify every attachment in ONE Jev call, with the email as context.
+    // Questions address attachments by index (`attachments[i]`), so answers map
+    // back by position with no filename matching.
+    const perAttachmentChars = Math.min(
+      MAX_TEXT_CHARS,
+      Math.floor(MAX_TOTAL_TEXT_CHARS / Math.max(attachments.length, 1)),
+    );
+    const state = {
+      email: [
         `FROM: ${email.fromName} <${email.fromEmail}>`,
         `SUBJECT: ${email.subject}`,
         `DATE: ${email.date}`,
         "BODY:",
         email.bodyPlain.slice(0, MAX_BODY_CHARS),
       ].join("\n"),
+      attachments: attachments.map((att, index) => ({
+        number: index + 1,
+        filename: att.filename,
+        text: extracted[index].text.slice(0, perAttachmentChars) || "(no text could be extracted)",
+      })),
     };
-    attachments.forEach((att, index) => {
-      inputFields[`Attachment ${index + 1} filename`] = att.filename;
-      inputFields[`Attachment ${index + 1} extracted text`] =
-        extracted[index].text.slice(0, MAX_TEXT_CHARS) || "(no text could be extracted)";
-    });
 
-    const completion = await ctx.step("classify-attachments", async () =>
-      sdk.runAction({
-        appKey: AI_APP_KEY,
-        actionType: "write",
-        actionKey: "get_completion",
-        inputs: {
-          provider_id: "",
-          authentication_id: AI_AUTHENTICATION,
-          model_id: AI_MODEL,
-          isOutputArray: true,
-          instructions: CLASSIFIER_PROMPT,
-          inputFields,
-          outputFields: OUTPUT_FIELDS,
-        },
-      }),
+    const jev = await ctx.step("classify-attachments", async () => {
+      const res = await sdk.fetch(JEV_URL, {
+        connection: JEV_CONNECTION,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: JEV_MODEL,
+          state,
+          questions: jevQuestions(attachments.length),
+        }),
+      });
+      const body = await res.text();
+      // Throw only where a retry can help. Any other failure is returned so the
+      // run fails below with TypeSafe's own message, rather than the step's
+      // "exhausted all retry attempts" after three identical rejections.
+      if (isRetryableJevStatus(res.status)) {
+        throw new Error(`Jev ${res.status}: ${body.slice(0, 500)}`);
+      }
+      return { status: res.status, body };
+    });
+    if (jev.status !== 200) {
+      throw new Error(`Jev rejected the classification request (${jev.status}): ${jev.body.slice(0, 1000)}`);
+    }
+    const response = JSON.parse(jev.body);
+    console.log(
+      `classified by ${response.model} (${response.usage?.input_tokens ?? "?"} input tokens)`,
     );
 
-    const rows: any[] = firstResult(completion)?.result?.items ?? [];
-    const classifications = alignClassifications(attachments, rows);
+    const signals = attachments.map((_, index) => readJevSignals(response.answers, index));
+    const classifications = attachments.map((att, index) =>
+      toClassification(att.filename, extracted[index].text, signals[index]),
+    );
     // An attachment is only filed on evidence we could actually read out of it.
     const readable = extracted.map((e) => e.ok && e.text.length > 0);
     const decisions = decide(classifications, readable);
@@ -866,13 +784,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           category: classification?.category ?? null,
           paymentStatus: classification?.paymentStatus ?? null,
           invoiceNumber: classification?.invoiceNumber || null,
-          vendor: classification?.vendor || null,
-          amount: classification?.amount || null,
-          currency: classification?.currency || null,
-          invoiceDate: classification?.invoiceDate ?? null,
-          dueDate: classification?.dueDate ?? null,
-          paymentEvidence: classification?.paymentEvidence || null,
-          justification: classification?.justification || null,
+          // Jev's raw probabilities, so a surprising decision can be read
+          // straight off the run output.
+          signals: signals[index],
           textExtracted: readable[index],
           // Why the text is missing — an encrypted PDF and a Files by Zapier
           // failure both land on textExtracted:false but need different fixes.
