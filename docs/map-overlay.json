@@ -105,7 +105,8 @@
         "slack-thread-to-notion-discussion",
         "notion-comment-to-slack-thread",
         "slack-notion-thread-sync-sweep",
-        "new-authentication-alert"
+        "new-authentication-alert",
+        "notion-button-to-skills-sync"
       ]
     },
     "esignatures-legal": {
@@ -460,6 +461,14 @@
       "id": "3d58094c-3d8a-82fb-9bd8-07fbdf40b4cc",
       "name": "Knoxx Tasks",
       "external_owner": "Knoxx Foods client Notion workspace"
+    },
+    "ds:skills": {
+      "type": "notion_ds",
+      "name": "Skills"
+    },
+    "app:github": {
+      "type": "external_app",
+      "name": "GitHub"
     }
   },
   "edges": [
@@ -1817,6 +1826,16 @@
       "from": "harvest-project-status-to-zapier-table",
       "to": "table:harvest-projects",
       "kind": "write"
+    },
+    {
+      "from": "ds:skills",
+      "to": "notion-button-to-skills-sync",
+      "kind": "trigger"
+    },
+    {
+      "from": "notion-button-to-skills-sync",
+      "to": "app:github",
+      "kind": "write"
     }
   ],
   "excluded_zaps": {
@@ -1858,7 +1877,8 @@
     "email-contact-page-zap": "Classic Code-step Zap: files inbound email into the sender's Notion contact page, resolving addresses through the Email → Contact Page IDs Table.",
     "deal-won-set-up-client-workspace": "Design record for provisioning a client Notion workspace on Deal Won — never deployed.",
     "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record.",
-    "agent-chat-session-to-notion": "embeddable-agent-chat session.ended webhook → fetch the transcript via the Notion Agents Unofficial custom integration → AI summary (standard/auto) → record in the Agent Chat Sessions Notion database with the transcript as the page body."
+    "agent-chat-session-to-notion": "embeddable-agent-chat session.ended webhook → fetch the transcript via the Notion Agents Unofficial custom integration → AI summary (standard/auto) → record in the Agent Chat Sessions Notion database with the transcript as the page body.",
+    "notion-button-to-skills-sync": "Notion Skills DB \"Sync now\" button → dispatches the synced-skills GitHub Actions sync (sync.yml on main) instead of waiting for the hourly schedule."
   },
   "ignored_ids": {
     "$comment": "Ids the regex sweep finds that are real but are not shared assets: test artifacts, fixed per-zap configuration, foreign-system record ids, one Table row id, and the Notion DATABASE id of a data source already registered as an asset (kept in a zap.json for provenance, because the classic Zap addressed the database rather than the data source).",

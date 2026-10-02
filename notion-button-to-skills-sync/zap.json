@@ -1,0 +1,36 @@
+{
+  "name": "notion-button-to-skills-sync",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "notion-button-to-skills-sync",
+    "description": "Notion Skills DB 'Sync now' button -> dispatch the work-flowers/synced-skills GitHub Actions sync (sync.yml on main) via workflow_dispatch, so a skill edit lands without waiting for the hourly schedule.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. The sender is a button property's 'Send webhook' action on the Notion Skills database. After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it. The Notion payload has no top-level `id` (it is `{ source, data }`), so the catch-hook dedupe on a repeated top-level id (CLAUDE.md) does not swallow repeat clicks."
+  },
+  "connections": {
+    "github_wf": "02581386-b46a-8abe-ad7a-bb264a3bd2ff"
+  },
+  "connections_note": "GitHubCLIAPI connection \"GitHub denchiuten #3\". Used only through sdk.fetch: the GitHub app has no workflow-dispatch action. Verified 2026-10-02 with a read of the workflow and a live dispatch. No Notion connection: the workflow reads only the button payload.",
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "external_ids": {
+    "github_repo": "work-flowers/synced-skills",
+    "github_workflow": "sync.yml",
+    "github_workflow_id": "362006678",
+    "github_ref": "main"
+  }
+}
