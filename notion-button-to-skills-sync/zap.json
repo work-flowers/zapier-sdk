@@ -1,12 +1,12 @@
 {
   "name": "notion-button-to-skills-sync",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a0fb96-6594-71c4-a0a7-49d520aa622a",
+  "current_version_id": "01a0fb96-9fea-7d46-9725-2e9f642e9ca9",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AdPKuX1RHJVm8bMtgfaKuA",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "notion-button-to-skills-sync",
     "description": "Notion Skills DB 'Sync now' button -> dispatch the work-flowers/synced-skills GitHub Actions sync (sync.yml on main) via workflow_dispatch, so a skill edit lands without waiting for the hourly schedule.",
     "enable_on_publish": true
@@ -16,7 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/C5AHadTHnjwDavgIF/",
     "trigger_note": "Catch hook. The sender is a button property's 'Send webhook' action on the Notion Skills database. After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it. The Notion payload has no top-level `id` (it is `{ source, data }`), so the catch-hook dedupe on a repeated top-level id (CLAUDE.md) does not swallow repeat clicks."
   },
   "connections": {
