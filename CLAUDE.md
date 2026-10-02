@@ -42,6 +42,14 @@ Worked examples for the shared rules: the empty-ping guard exists because [`gcal
 
 Current state (2026-07-25): **Contacts has** a default template (blue `user-circle-filled` icon); **Events and Event Attendance do not**. Exception: `contrast-registrations-to-event-attendance` predates repo rule 5 and is retired/disabled — leave it as-is rather than editing source that can't be republished without re-enabling the Zap.
 
+## AI-step exception: Jev in `gmail-attachments-to-drive-by-type`
+
+The shared rules say AI steps run on AI by Zapier. **This repo makes one exception:** [`gmail-attachments-to-drive-by-type`](gmail-attachments-to-drive-by-type/) classifies with **Jev**, TypeSafe's typed-judgement model, since 2026-10-02. Jev returns probabilities for typed questions (choice / yes-no / score), never generated text, so it fits classification and routing, not extraction or writing. It is called through `sdk.fetch` with the `typesafe` connection (`02c36cbc-669d-8c82-9c72-7b7813e5cde0`, an *API by Zapier* connection titled *Jev* holding the TypeSafe key as a Bearer token). That keeps the key out of source and goes out through Zapier's Relay, which the durable sandbox allows (verified with `run-durable`). It bills TypeSafe tokens, not Zapier tasks.
+
+- **Why there:** on the 48 most recent real emails it matched the AI by Zapier classifier's filing on 58 of 59 PDFs (the 59th was a production misfile) at ~1/5 the latency. The comparison, and what was given up, is in that Zap's README.
+- **Repo rule 6 doesn't fit it:** Jev's "prompt" is structured question objects, not a prose literal, so `check-prompts.mjs` can't embed it. The questions live in `workflow.ts` (`jevQuestions`, `CATEGORY_CRITERIA`) and are tabulated in the README. That README, not a `*-prompt.md`, is where they get reviewed.
+- **Don't extend this by default.** Any other Zap still starts on AI by Zapier `standard/auto`. Moving one to Jev needs the same kind of offline comparison on real cases first. The TypeSafe agent skill (`typesafe:typesafe-ai`) has the API and question-design guidance.
+
 ## Tooling baseline for this repo
 
 Zaps are managed via the Zapier SDK CLI or the Zapier MCP connector. **In this repo, prefer the CLI wherever possible** — it's faster and more cost-effective; fall back to the MCP connector (`list_workflows`, `get_workflow_version`, publish tools) only when the CLI can't do the job. CLI setup (install, login, experimental flag for Durables) is documented in the root README under "Setting up the Zapier CLI". This CLI-over-MCP preference is about *reads and one-off operations* — **publishing a durable defaults to the merge pipeline** (see `.claude/rules/durables.md`), and any direct `publish-workflow-version`, by CLI or MCP, bypasses PR review.

@@ -25,11 +25,12 @@ Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Path
    [Nothing is filed on evidence we couldn't read](#nothing-is-filed-on-evidence-we-couldnt-read).
    Also [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap): "won't convert" does
    **not** always mean "raises an error".
-4. **Classify — a single AI call for the whole email.** Sender, subject, date and body, plus
-   every attachment's filename and extracted text, go to AI by Zapier
-   (`standard/auto`, built-in credentials) which returns one structured result per attachment.
-   The prompt lives in [`classifier-prompt.md`](classifier-prompt.md). See
-   [Model tier](#model-tier) for why Standard.
+4. **Classify — a single Jev call for the whole email.** Sender, subject, date and body, plus
+   every attachment's filename and extracted text, go to **Jev**, TypeSafe's classification
+   model, as typed questions: one category choice and four yes/no payment signals per attachment.
+   It answers with probabilities, and code turns them into the fields routing needs — see
+   [Classifier](#classifier). The invoice number used to pair an invoice with its receipt is read
+   from the text by code, not by the model.
 5. **Route** — each attachment is filed, or skipped, per [Routing](#routing).
 6. **Upload** — Google Drive `file` upload into the destination folder.
 
@@ -38,8 +39,9 @@ flowchart TD
     T["📧 Gmail: New Email Matching Search<br/><i>one run per email</i>"] --> G{"Skip gates<br/>SENT/DRAFT · blocked sender<br/>blocked subject · no PDFs"}
     G -- blocked --> X["⏹ skip email"]
     G -- ok --> E["Files by Zapier<br/>text_from_file_new<br/><i>one per PDF</i>"]
-    E --> AI["🤖 AI by Zapier · get_completion<br/><b>ONE call, all attachments + email context</b><br/>→ category · payment status · superseded-by-receipt<br/>· invoice number · dates · amount"]
-    AI --> RD{"Text extracted?"}
+    E --> AI["🤖 Jev (TypeSafe) via API by Zapier<br/><b>ONE call, all attachments + email context</b><br/>→ category · paid · superseded-by-receipt<br/>· auto-paid · lapsed <i>(probabilities)</i>"]
+    AI --> N["Code: thresholds → payment fields<br/>invoice number read from the text"]
+    N --> RD{"Text extracted?"}
     RD -- "no — encrypted,<br/>scanned, malformed" --> S0["⏹ skip — never filed on<br/>filename evidence alone<br/><i>and ignored as sibling evidence</i>"]
     RD -- yes --> R{"Route per attachment"}
 
@@ -172,8 +174,8 @@ Encrypted, scanned, malformed, or converted to genuinely empty text — all of t
 underlying cause in `textExtractionError`.
 
 Such an attachment is still classified, so run history shows what the document probably was, and
-there is no extra cost in doing so: the AI call is one per **email**, so a readable sibling pays
-for it anyway.
+there is no extra cost in doing so: the classifier call is one per **email**, so a readable
+sibling pays for it anyway.
 
 The reason is that classifying a document you cannot read is a guess off its filename and the
 email around it. A wrong guess puts a file in a folder somebody then has to notice and undo — and
@@ -252,67 +254,83 @@ Verified against the real payload: `extract-text-0` now **completes** instead of
 > JSON, and the email body travels in the workflow *input*, which had already checkpointed fine
 > before the step ran. The framework arguably should scrub NULs, but the workflow put them there.
 
-## Model tier
+## Classifier
 
-`AI_MODEL` in `workflow.ts`. **The tier is the task cost**, so it is the main lever on what this
-workflow spends:
+The classifier is **Jev** (`jev-latest`, `jev-1.13.0` when this was verified), TypeSafe's
+"System One" model, called through Zapier's authenticated fetch with the `typesafe` connection
+(an *API by Zapier* connection holding the TypeSafe API key as a Bearer token). Jev does not
+write text: it answers typed questions with calibrated probabilities. That makes it a different
+shape of step from the AI by Zapier prompt it replaced on 2026-10-02:
 
-| `model_id` | Tasks per run | Notes |
+| | AI by Zapier `standard/auto` (before) | Jev (now) |
 | --- | --- | --- |
-| **`standard/auto`** ← in use | **1×** | Zapier's recommended tier for classification and extraction. No tool calls. |
-| `advanced/auto` | 3× | The Zapier default, chiefly so new steps can use tools. |
-| `premium/auto` | 5× | Deep reasoning / agent workflows. |
+| Cost per email | 1 Zapier task | TypeSafe tokens, ~$0.0001 (billed by TypeSafe, not Zapier) |
+| Latency, real emails | 7.7s median, 22.9s p90, 76s worst | 1.5s median, 2.3s p90, 2.5s worst |
+| Output | category, payment flags, vendor, amount, currency, dates, evidence, justification | category and payment flags, each with a probability |
 
-Those three sentinels are the **only** valid values — anything else fails with
-`Unknown tier sentinel "…". Expected one of: standard/auto, advanced/auto, premium/auto`. Cost is
-`(1 × rate) + (tool calls × rate)`; this step makes no tool calls, so it is exactly one unit at
-the tier rate. ([tier pricing](https://help.zapier.com/hc/en-us/articles/46425475442829-AI-by-Zapier-model-tier-pricing))
+**What was given up.** Vendor, amount, currency, invoice and due dates, payment evidence and the
+justification text are no longer in the run output. Nothing consumed them: files upload under
+their original names, and the folders' own workflows ([`drive-paid-receipts-to-table`](../drive-paid-receipts-to-table/),
+[`drive-invoice-to-xero`](../drive-invoice-to-xero/), [`drive-signed-agreement-to-notion`](../drive-signed-agreement-to-notion/))
+each run their own extraction on the filed PDF. In their place, each attachment's output carries
+`signals` — Jev's raw probabilities — so a surprising decision can be read straight off the run.
 
-Standard was verified to reach the **same routing verdict as Advanced on every case** in
-[Verified behaviour](#verified-behaviour) — including SimplePay's statement-history inference,
-stable across repeat runs. Named models (`anthropic/claude-sonnet-4-6`, `openai/gpt-4.1-mini`,
-`google/gemini-3.5-flash`, …) are selectable only against **your own provider account** via a
-custom `authentication_id`, which bills to that provider instead of Zapier tasks.
+**The questions, per attachment** (`jevQuestions` in `workflow.ts`, addressed as `attachments[i]`):
 
-**Re-run the verified cases before changing tier.** The prompt does most of the work here — the
-accuracy gains over the classic Zap came from cross-attachment context and the payment rules,
-not from model strength.
+| Question id | Type | Asks | Feeds |
+| --- | --- | --- | --- |
+| `category_i` | Choice over the 7 categories | which kind of document this is, from workFlowers' side | `category` |
+| `paid_i` | Noul | does the document itself show the payment completed | `paymentStatus` (≥ 0.5 → `Paid`; a `Receipt` is always `Paid`) |
+| `superseded_i` | Noul | is a different attachment the receipt for this transaction | `supersededByReceipt` (Invoice only) |
+| `autopaid_i` | Noul | is a sibling statement proving same-day auto-charges on ≥3 prior invoices | `autoPaidByRecurringCharge` (Invoice only) |
+| `lapsed_i` | Noul | any sign the auto-charge has lapsed (dunning, failed payment…) | vetoes `autoPaidByRecurringCharge` |
 
-## The prompt
+The category definitions (`CATEGORY_CRITERIA`) carry the rules the old prompt spelled out, plus
+one learned in testing: **money coming in to us is `Other`**. The first offline run filed a
+Notion remittance advice and a Citibank incoming-payment advice as receipts, a Slack credit note
+as an invoice and AppleCare+ terms as a signed agreement; saying so explicitly in the
+definitions fixed all four with no regressions.
 
-Per repo rule 6, the classifier prompt lives in [`classifier-prompt.md`](classifier-prompt.md),
-and `workflow.ts` embeds a verbatim copy in `CLASSIFIER_PROMPT`. Edit the markdown, then:
+The **invoice number** is found by a regex in `invoiceNumberFromText` (`Invoice number X`,
+`Invoice #X`, `Invoice No: X`, bare `INV-0083`), never by the model, because signal 1 is a
+verbatim join between an invoice and its receipt. Table-layout PDFs extract the label and value
+apart, so it takes the first nearby token with a digit that isn't a date. On the 48-email set it
+matched the old AI's number on 30 of 31 invoices and receipts, including **all 13 that arrived
+in pairs** — the only case routing uses it. The miss is NUS's goods-received note, labelled
+*Receipt Number*, which Jev classifies as `Other` anyway.
 
-```bash
-node scripts/check-prompts.mjs --fix
-```
+**Limits.** Jev accepts about 32k tokens of state, so the email's attachments share an 80,000
+character text budget (`MAX_TOTAL_TEXT_CHARS`) on top of the 20,000 per-PDF cap. Text only — it
+never sees the PDF itself, which was already true of the old step. A `429` or `5xx` from
+TypeSafe retries the step; any other non-200 fails the run with TypeSafe's own message.
+`jev-latest` moves when TypeSafe ships a new release; every run logs the model that answered.
 
-Plain `node scripts/check-prompts.mjs` verifies the two agree and exits non-zero on drift.
-
-Structured output (`OUTPUT_FIELDS` in `workflow.ts`, `isOutputArray: true`) returns one object
-per attachment: `Attachment Filename`, `Document Category`, `Payment Status`,
-`Superseded By Receipt`, `Auto-Paid By Recurring Charge`, `Payment Evidence`, `Invoice Number`,
-`Invoice Date`, `Due Date`, `Amount`, `Currency`, `Vendor`, `Justification`.
-
-Results are matched back to attachments **by filename first** (the model echoes it verbatim),
-falling back to positional order, with each row consumed at most once.
-
-### Prompt changes from the classic Zap
-
-- **The old prompt had a live bug.** Its instructions interpolated
-  `{{=gives['371950344']["text"]}}` — a step ID not present in the Zap (the text extractor was
-  `340923866`) — so "analyze this document ___" rendered empty. The document reached the model
-  only through the `File Extract` input field.
-- **The email is now context.** Sender, subject, date and body were previously discarded. A
-  subject like *"Your receipt from Anthropic, PBC"* is strong evidence on its own.
-- **All attachments in one call**, which is what enables cross-attachment reasoning.
-- **Payment fields added** — `Payment Status`, `Superseded By Receipt`, `Payment Evidence`,
-  `Invoice Number`, `Amount`, `Currency`, `Vendor`.
-- **Model raised** from `standard/auto` to `advanced/auto`.
+**Re-run the offline comparison before changing a threshold or a definition** — see
+[Verified behaviour](#verified-behaviour).
 
 ## Verified behaviour
 
-Run against real mail before publishing:
+**Jev, offline, on real mail (2026-10-02).** The 48 most recent emails this workflow
+classified (59 PDFs) were re-run from their saved run records: the same email context and
+extracted text, through the real `decide()`. Production's answers were replayed from the same
+records, so no AI by Zapier calls were made and nothing was uploaded.
+
+| | Same filing outcome as production | Wrong, on reading the document |
+| --- | --- | --- |
+| AI by Zapier `standard/auto` (production) | — | 1 |
+| Jev, final definitions | 58 / 59 | 0 |
+
+The one disagreement is NUS's SAP *Goods Receipt* `RC523374`: NUS acknowledging that it
+received *our* work, which production filed to Paid Receipts and Jev classifies as `Other`
+(0.88). The figure is optimistic in one respect — the category definitions were tightened on
+these same 48 emails — so the first weeks of live runs are the real holdout. Only one email
+(SimplePay) exercises the recurring auto-charge rule.
+
+A private `run-durable` of the published shape against two real payloads confirmed the
+`typesafe` connection works inside the durable runtime (Jev step ≈ 0.8s); the payloads'
+attachment links had expired, so those runs exercised the unreadable-attachment path.
+
+**Before the switch to Jev**, the AI by Zapier classifier was run against real mail:
 
 | Email | Attachment | Outcome |
 | --- | --- | --- |
@@ -324,36 +342,29 @@ Run against real mail before publishing:
 | SimplePay, July + March | `Invoice …pdf` + `Statement …pdf` | invoice **filed → Paid Receipts** (recurring auto-charge, 16 / 12 priors; no receipt exists — *skipped outright before 2026-08-10*), statement skipped |
 | Wise `Your monthly statement for Assets` | `Monthly_Statement.pdf` — password-protected | **email skipped** — blocked subject. With the subject unblocked, `extract-text-0` completes, `textExtracted: false`, `textExtractionError` names the conversion failure, and the attachment is **skipped as unreadable** rather than filed. Both paths re-run against the real 2026-08-07 payload. |
 
-The routing rules are also covered by offline assertions over the real `decide()` — now
-committed as [`decide.test.mjs`](decide.test.mjs), run with `npm test` (25 assertions; no
+The routing rules are also covered by offline assertions over the real `decide()` and the Jev
+answer mapping — [`decide.test.mjs`](decide.test.mjs), run with `npm test` (41 assertions; no
 network, no credentials). They cover every case above, the unreadable-attachment rule, the
-guarantee that an unreadable sibling cannot suppress a readable outstanding invoice, and the
-paid-invoice-is-the-receipt routing in both directions (files with no receipt, skips with one).
-
-Regression-checked after adding signal 3: Vanta still files (no statement, `Auto-Paid = No`) and
-Anthropic still skips via signal 1.
-
-> **Known nondeterminism, now harmless.** Aspire's `GISG-…-Paid.pdf` — an invoice document
-> stamped `Invoice Status : Paid` — classifies as `Invoice`+`Paid` on some runs and `Receipt`
-> on others. Since the paid-invoice-is-the-receipt rule (2026-08-10), **both classifications
-> land in Paid Receipts**, so the nondeterminism no longer changes the outcome at all.
+guarantee that an unreadable sibling cannot suppress a readable outstanding invoice, the
+paid-invoice-is-the-receipt routing in both directions, and how Jev's probabilities become the
+payment fields (including that a missing answer skips rather than guesses).
 
 ## Maintainer notes
 
-- **Connections.** Only Google Drive is bound in code (`gdrive`). The Gmail credential lives on
-  the *trigger* (`authentication_id` in the publish `--trigger` payload), and Files by Zapier
-  and AI by Zapier both run on built-in credentials with no connection at all.
+- **Connections.** Two are bound in code: `gdrive` (Google Drive) and `typesafe` (API by
+  Zapier, `02c36cbc-669d-8c82-9c72-7b7813e5cde0`, titled *Jev*, holding the TypeSafe API key).
+  The Gmail credential lives on the *trigger* (`authentication_id` in the publish `--trigger`
+  payload), and Files by Zapier runs on built-in credentials.
 - **Caps.** `MAX_ATTACHMENTS = 10` per email, `MAX_TEXT_CHARS = 20000` per PDF,
-  `MAX_BODY_CHARS = 2000`. Overflow attachments are **not** silently dropped — they are logged
+  `MAX_TOTAL_TEXT_CHARS = 80000` per email (Jev's input limit), `MAX_BODY_CHARS = 2000`. Overflow attachments are **not** silently dropped — they are logged
   and listed in the run output as `attachmentsSkippedOverCap`.
 - **No dedupe store.** Gmail's polling trigger dedupes on message ID, so an email is processed
   once. Re-running the same payload manually *will* upload duplicates to Drive.
 - **Never return unscrubbed upstream text from a `ctx.step`.** A single NUL in a checkpointed
   value fails the run with `StepExhaustedError` naming a step that worked fine — see
   [Unconvertible PDFs](#unconvertible-pdfs-and-the-checkpoint-trap).
-- **AI by Zapier can't read the attachments directly.** Gmail serves attachment URLs from S3 as
-  `application/octet-stream`; passing one as a file URL fails with
-  `'media type: application/octet-stream' functionality not supported`, and `extract_content`
-  rejects it as `Unsupported content type`. Hence the Files by Zapier text-extraction step.
+- **Why a text-extraction step.** Jev takes text only. (The AI by Zapier step it replaced could
+  not read the attachments directly either: Gmail serves attachment URLs from S3 as
+  `application/octet-stream`, which `get_completion` and `extract_content` both reject.)
 - **Retiring the classic Zap.** *"Gmail Attachments to Google Drive by Type"* already has every
   node after the trigger paused. Turn it off entirely once this workflow has run for a few days.

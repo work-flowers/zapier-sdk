@@ -22,7 +22,7 @@ src = src
     "const createZapierSdk = () => ({ runAction: async (_: unknown): Promise<any> => { throw new Error('no network in tests'); } });",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { decide, normalizeInvoiceNumber, stripUncheckpointableChars, CATEGORY_FOLDERS, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING };\n";
+src += "\nexport const __test = { decide, normalizeInvoiceNumber, stripUncheckpointableChars, CATEGORY_FOLDERS, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING, CATEGORY_CRITERIA, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText };\n";
 
 const tmpTs = join(dir, ".decide-under-test.ts");
 const outDir = join(dir, ".decide-under-test-out");
@@ -40,7 +40,8 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { decide, stripUncheckpointableChars, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING } =
+const { decide, stripUncheckpointableChars, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING,
+  CATEGORY_CRITERIA, CATEGORY_FOLDERS, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText } =
   mod.__test;
 
 // --- helpers -----------------------------------------------------------------
@@ -228,6 +229,75 @@ check("strip drops a lone high surrogate but keeps a valid pair",
 check("strip drops a lone low surrogate",
   stripUncheckpointableChars("x" + String.fromCharCode(56842) + "y"),
   "xy");
+
+
+// --- Jev answers -> Classification ---------------------------------------------
+// Answers shaped like a real /v1/systemone response, for attachment index 0.
+const answers = (cat, p, { paid = 0.02, superseded = 0.02, autopaid = 0.02, lapsed = 0.02 } = {}) => ({
+  category_0: { type: "choice", choice: cat, confidence: 0.9, probabilities: { [cat]: p } },
+  paid_0: { type: "noul", noul: paid },
+  superseded_0: { type: "noul", noul: superseded },
+  autopaid_0: { type: "noul", noul: autopaid },
+  lapsed_0: { type: "noul", noul: lapsed },
+});
+const classify = (ans, text = "") => toClassification("x.pdf", text, readJevSignals(ans, 0));
+
+check("every routed category is one Jev can answer",
+  Object.keys(CATEGORY_FOLDERS).every((k) => k in CATEGORY_CRITERIA),
+  true);
+
+check("five questions per attachment, addressed by index",
+  Object.keys(jevQuestions(2)),
+  ["category_0", "paid_0", "superseded_0", "autopaid_0", "lapsed_0", "category_1", "paid_1", "superseded_1", "autopaid_1", "lapsed_1"]);
+
+check("a missing answer yields no classification, so decide() skips rather than guesses",
+  [readJevSignals({ category_0: { choice: "Invoice" } }, 0), run([classify({})])[0].action],
+  [null, "skip"]);
+
+check("unpaid invoice: low paid probability -> Unpaid, files to Invoices",
+  brief(run([classify(answers("Invoice", 0.95), "Invoice #86736448-0002 due")])[0]),
+  { action: "file", folderId: FOLDER_INVOICES });
+
+check("invoice with paid markers -> Paid, files to Paid Receipts (Aspire)",
+  classify(answers("Invoice", 0.9, { paid: 0.96 })).paymentStatus,
+  "Paid");
+
+check("a receipt is always Paid, whatever the paid Noul says",
+  classify(answers("Receipt", 0.9, { paid: 0.1 })).paymentStatus,
+  "Paid");
+
+check("non-money categories are Not Applicable and carry no invoice number",
+  [classify(answers("Other", 0.8), "Invoice number ABC-1234").paymentStatus, classify(answers("Other", 0.8), "Invoice number ABC-1234").invoiceNumber],
+  ["Not Applicable", ""]);
+
+check("superseded and auto-paid flags only ever set on an Invoice",
+  [classify(answers("Receipt", 0.9, { superseded: 0.99, autopaid: 0.99 })).supersededByReceipt,
+   classify(answers("Receipt", 0.9, { superseded: 0.99, autopaid: 0.99 })).autoPaidByRecurringCharge,
+   classify(answers("Invoice", 0.9, { superseded: 0.99 })).supersededByReceipt],
+  [false, false, true]);
+
+check("auto-paid needs the pattern AND no sign of lapse",
+  [classify(answers("Invoice", 0.9, { autopaid: 0.9 })).autoPaidByRecurringCharge,
+   classify(answers("Invoice", 0.9, { autopaid: 0.9, lapsed: 0.8 })).autoPaidByRecurringCharge],
+  [true, false]);
+
+check("Anthropic pair: invoice number read from both texts joins them (signal 1)",
+  run([
+    classify(answers("Invoice", 0.9), "Invoice\r\nInvoice number YIGHXGH9-0008\r\nDate due"),
+    classify(answers("Receipt", 0.9), "Receipt\r\nInvoice number YIGHXGH9-0008\r\nReceipt number 2963"),
+  ]).map(brief),
+  [{ action: "skip", reason: "already paid — a receipt on this email settles invoice YIGHXGH9-0008" },
+   { action: "file", folderId: FOLDER_PAID_RECEIPTS }]);
+
+check("invoice number formats: labelled, hash, No:, bare INV-",
+  ["Invoice number YIGHXGH9-0008", "Invoice #1148057", "Invoice No: GISG-26080125", "Bill #INV-0079 $1,630", "no number here"].map(invoiceNumberFromText),
+  ["YIGHXGH9-0008", "1148057", "GISG-26080125", "INV-0079", ""]);
+
+check("table layouts: label and value apart, skipping words and dates (Lantern Labs, Courts)",
+  ["Invoice No:\r\nBilling Period:\r\nInvoice Date:\r\nDue Date:\r\nINV-26-0008\r\n03/09/26 - 02/09/26",
+   "INVOICE NO INVOICE DATE PAGE NO.\r\nMD10764681 21-Sep-2026 1 of 2",
+   "Invoice No:\r\n21-Sep-2026\r\nAB-77120"].map(invoiceNumberFromText),
+  ["INV-26-0008", "MD10764681", "AB-77120"]);
 
 // -------------------------------------------------------------------------------
 if (failures > 0) {

@@ -17,11 +17,11 @@
     "trigger_note": "Polling trigger, one run per EMAIL (not per attachment) — that is what lets the classifier see an invoice alongside the receipt that settles it. The query only narrows what Gmail polls; the authoritative filters are BLOCKED_SENDERS / BLOCKED_SUBJECTS / BLOCKED_LABELS in workflow.ts."
   },
   "connections": {
-    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f"
+    "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "typesafe": "02c36cbc-669d-8c82-9c72-7b7813e5cde0"
   },
   "connectionless_apps": {
-    "FilesByZapierCLIAPI": "text_from_file_new — built-in, no connection",
-    "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
+    "FilesByZapierCLIAPI": "text_from_file_new — built-in, no connection"
   },
   "zapier_durable_version": "0.10.1",
   "dependencies": {
@@ -37,9 +37,10 @@
   "created_at": "2026-07-27T03:38:46.329Z",
   "version_created_at": "2026-08-10T08:39:18.613Z",
   "ai_model": {
-    "model_id": "standard/auto",
-    "authentication_id": "0",
-    "note": "Tier drives task cost: standard 1x, advanced 3x, premium 5x tasks per run (plus the same multiplier per tool call; this step makes none). Those three sentinels are the only valid values — anything else errors with 'Unknown tier sentinel'. Standard reaches the same routing verdict as Advanced on every case in the README's verified table, including SimplePay's statement-history inference. Re-run those cases before changing tier."
+    "model_id": "jev-latest",
+    "provider": "TypeSafe (api.typesafe.ai/v1/systemone), via sdk.fetch on the typesafe connection (API by Zapier, Bearer)",
+    "verified_against": "jev-1.13.0",
+    "note": "Replaced AI by Zapier standard/auto on 2026-10-02. Jev answers typed questions with probabilities (no generated text), costs TypeSafe tokens (~$0.0001/email) instead of 1 Zapier task, and ran 1.5s median vs 7.7s. Offline on the 48 latest real emails (59 PDFs): same filing outcome as production on 58; the 59th was a production misfile. Category definitions were tuned on that same set, so live runs are the holdout. Re-run the offline comparison before changing thresholds or definitions. See README Classifier / Verified behaviour."
   },
   "description": "Gmail email with PDF attachments -> classify every attachment in ONE AI by Zapier call (email context + all extracted PDF text) -> file each into Invoices / Paid Receipts / Signed Agreements / Financial Reporting. Migration of the classic 'Gmail Attachments to Google Drive by Type' Zap. The Invoices folder holds only outstanding bills: an invoice is withheld when a receipt on the same email settles it (matched on invoice number), when the classifier matches a sibling receipt on vendor+amount+date, when a sibling account statement shows the vendor auto-clearing every prior invoice with a same-day card payment, or when the invoice itself carries paid markers. A paid invoice is treated as the receipt when no actual receipt exists: settled on its own evidence (paid markers, or the auto-charge statement) with no sibling receipt on the email, it files to Paid Receipts as the record of payment; with a real receipt attached, the receipt is the filed record and the invoice skips. The classic Zap's 'due date == invoice date' proxy is deliberately gone — due-on-receipt invoices are often genuinely unpaid.",
   "version_history": [
