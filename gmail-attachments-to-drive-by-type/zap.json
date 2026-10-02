@@ -1,7 +1,7 @@
 {
   "name": "gmail-attachments-to-drive-by-type",
   "workflow_id": "019fa1a7-56b8-7a92-bcef-e276ccf409d3",
-  "current_version_id": "019fead3-84ca-7e22-9c63-1f8a0fa14af5",
+  "current_version_id": "01a0fbd8-3388-72ba-b054-22e16dcc5543",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac3NgVbpd6LybyXHk36LAg",
   "enabled": true,
   "is_private": false,
@@ -35,7 +35,7 @@
     "Financial Reporting": "1t719k98AHrfMVgcrSNOx9REIvnsL8_Bo"
   },
   "created_at": "2026-07-27T03:38:46.329Z",
-  "version_created_at": "2026-08-10T08:39:18.613Z",
+  "version_created_at": "2026-10-02T09:00:45.722Z",
   "ai_model": {
     "model_id": "jev-latest",
     "provider": "TypeSafe (api.typesafe.ai/v1/systemone), via sdk.fetch on the typesafe connection (API by Zapier, Bearer)",
