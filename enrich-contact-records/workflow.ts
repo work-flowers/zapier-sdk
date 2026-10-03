@@ -251,9 +251,6 @@ interface ContactData {
   linkedinUrl: string;
   secondaryEmails: string[];
   primaryPhone: string;
-  /** Notion user ID of whoever triggered the webhook (e.g. by clicking a
-   *  button on the page). Null when the trigger was not a user action. */
-  triggeredById: string | null;
 }
 
 function extractContactData(raw: unknown): ContactData {
@@ -295,23 +292,6 @@ function extractContactData(raw: unknown): ContactData {
       ? ""
       : normalizeDomain(primaryEmail.slice(primaryEmail.lastIndexOf("@") + 1)));
 
-  // Extract the Notion user ID of whoever triggered the webhook (e.g. by
-  // clicking a button on the page). Notion DB automations put the acting
-  // user in source.user_id; page-level created_by/last_edited_by can be a
-  // bot (e.g. the automation that created the page), so they come last.
-  const triggeredById = firstString(
-    o?.source?.user_id,
-    data?.source?.user_id,
-    data?.triggered_by?.id,
-    data?.triggered_by,
-    o?.triggered_by?.id,
-    o?.triggered_by,
-    data?.last_edited_by?.id,
-    data?.created_by?.id,
-    data?.user_id,
-    data?.userId,
-  );
-
   // Auto-created contacts (e.g. from an event registration) often carry the
   // person's name only in the page title — the First/Last Name rich_text
   // properties arrive empty. Fall back to splitting the title so the
@@ -345,7 +325,6 @@ function extractContactData(raw: unknown): ContactData {
       .map((s: any) => s?.name)
       .filter(Boolean),
     primaryPhone: props["Primary Phone"]?.phone_number ?? "",
-    triggeredById,
   };
 }
 
@@ -884,9 +863,8 @@ async function updateContactRecord(
 // --- Add outcome comment to the triggering page ----------------------------
 //
 // After every run (success or skip), posts a brief comment on the Notion
-// page that triggered the webhook. If the webhook was triggered by a button
-// click and the payload included the user's Notion ID, the comment mentions
-// that user for better visibility.
+// page that triggered the webhook. It mentions nobody: the payload's user ids
+// are often bots, and a bot mention makes Notion reject the whole comment.
 
 interface WorkflowResult {
   pageId: string;
@@ -995,25 +973,13 @@ async function addOutcomeComment(
     summary = `Enrichment skipped — ${parts.join("; ")}.`;
   }
 
-  // Build the rich_text array. If we know who triggered the run, mention
-  // them at the start of the comment.
-  const richText: any[] = [];
-
-  if (contact.triggeredById) {
-    richText.push({
-      type: "mention",
-      mention: { type: "user", user: { id: contact.triggeredById } },
-    });
-    richText.push({
-      type: "text",
-      text: { content: " " + summary },
-    });
-  } else {
-    richText.push({
-      type: "text",
-      text: { content: summary },
-    });
-  }
+  // No @mention. It used to mention the payload's acting user, falling back to
+  // the page's last editor / creator — routinely Notion's system user or an
+  // integration bot when another integration's write fired the automation.
+  // Notion rejects the WHOLE comment for that (`400 Cannot mention bots`,
+  // `404 Could not find user`): 18 of 45 runs from 2026-09-22 to 10-02 left
+  // the contact with no outcome comment. Removed 2026-10-03.
+  const richText = [{ type: "text", text: { content: summary } }];
 
   // Post it. This is the LAST Notion call of every run, so when several runs
   // fire at once — the Contacts automation enriches new pages in batches of
@@ -1264,8 +1230,6 @@ const workflow = defineDurable(
     }
 
     // 3. Add a brief comment to the triggering page stating the outcome.
-    //    If the webhook was triggered by a button click and the payload
-    //    included a user ID, the comment mentions that user.
     const comment = await addOutcomeComment(ctx, contact, result);
 
     return { ...result, commentPosted: comment.posted, commentError: comment.error };

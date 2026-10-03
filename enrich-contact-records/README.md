@@ -104,8 +104,11 @@ gained and what was given up.
    catch_all; not written.` A Path U run names the uncorroborated address:
    `Email grace@leaps.sg NOT written — … Add it by hand if it is really theirs.`
 
-   If the webhook was triggered by a button click and the payload included the
-   user's Notion ID, the comment mentions that user.
+   The comment **mentions nobody**. It used to @mention the payload's acting
+   user, falling back to the page's last editor / creator — often Notion's
+   system user or an integration bot, which makes Notion reject the whole
+   comment (`400 Cannot mention bots`). That lost the comment on 18 of 45 runs
+   from 2026-09-22 to 2026-10-02; the mention was removed on 2026-10-03.
 6. **Return** — `{ pageId, enriched, source, emailPath }`, plus
    `unverifiedEmail` and `identity` on a Path U run, and `reasons` on a skip.
 
@@ -138,7 +141,7 @@ flowchart TD
     GP --> J
     G --> J
     U --> J
-    J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
+    J["Post outcome comment on the page<br/>(no @mention)"]
     J --> K(["Return pageId, enriched, source, emailPath"])
 ```
 
@@ -514,8 +517,8 @@ declared set when they differ, logging the change in the run summary.
   delay on error. This Durable logs and skips instead.
 - **No page icon step** — the sub-Zap's Path C icon/cover update was carried
   over and then removed on 2026-09-18, when no acceptable photo source remained.
-- **Outcome comment** — after every run, a brief comment on the triggering page,
-  mentioning the triggering user when known. Transient Notion failures are
+- **Outcome comment** — after every run, a brief comment on the triggering page
+  (no @mention since 2026-10-03). Transient Notion failures are
   retried, not swallowed.
 
 ## References
