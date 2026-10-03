@@ -7,9 +7,5 @@
   },
   "devDependencies": {
     "typescript": "latest"
-  },
-  "scripts": {
-    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit workflow.ts",
-    "test": "node mention.test.mjs"
   }
 }
