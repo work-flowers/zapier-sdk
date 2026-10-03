@@ -4,7 +4,7 @@
   "current_version_id": "01a10166-91fa-7e7f-b211-b60ad13007bd",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQY03_v_QxmT9mID3tPnSw",
   "enabled": true,
-  "is_private": true,
+  "is_private": false,
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.1.1",
     "action": "hook_v2",
@@ -28,5 +28,6 @@
     "provider": "TypeSafe (api.typesafe.ai/v1/systemone), via sdk.fetch on the typesafe connection (API by Zapier, Bearer)",
     "verified_against": "jev-1.13.0",
     "note": "Added 2026-10-03 as a second opinion on the name-mismatch decline only: merge when Jev's same-person probability >= 0.85 AND evidence score >= 2/3. LinkedIn conflicts stay a hard decline Jev never sees; rule merges make no Jev call. Replayed the 6 real Duplicate-of requests: both real false declines (Ustaz Syakir, New Contact/Alasdair Bell) now merge; constructed negatives score <= 0.35. One Zapier task per Jev call plus ~$0.0001 TypeSafe usage. See README 'Second opinion from Jev'."
-  }
+  },
+  "is_private_note": "Corrected 2026-10-03: get-workflow reports is_private false, so this Zap is account-visible. The previous `true` here (and CLAUDE.md listing it as a grandfathered private Zap) were wrong."
 }
