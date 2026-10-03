@@ -1,12 +1,12 @@
 {
   "name": "zapier-error-email-to-triage",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a101d0-37d9-7174-add7-b0528051e06e",
+  "current_version_id": "01a101d0-6909-778e-8048-2d3f951a7830",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQYbbQ6uXzAZPIFTEMWbMQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "zapier-error-email-to-triage",
     "description": "Zapier's Code Zap failure alert email (\"had an error\" / \"couldn't run\") -> confirm the workflow is in the work.flowers account (getWorkflow; Knoxx Zaps alert the same inbox) -> find the failed run in run history and its failing step (getDurableRun) -> upsert a ticket in the Zapier Error Triage Notion database with the same signature the notion-workers errorsDelta used, so pre-existing tickets keep counting. Repeats bump Occurrences and reopen a Resolved ticket. Replaces the worker's hourly errorsDelta walk.",
     "enable_on_publish": true
