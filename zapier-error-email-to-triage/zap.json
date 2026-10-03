@@ -1,0 +1,38 @@
+{
+  "name": "zapier-error-email-to-triage",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "zapier-error-email-to-triage",
+    "description": "Zapier's Code Zap failure alert email (\"had an error\" / \"couldn't run\") -> confirm the workflow is in the work.flowers account (getWorkflow; Knoxx Zaps alert the same inbox) -> find the failed run in run history and its failing step (getDurableRun) -> upsert a ticket in the Zapier Error Triage Notion database with the same signature the notion-workers errorsDelta used, so pre-existing tickets keep counting. Repeats bump Occurrences and reopen a Resolved ticket. Replaces the worker's hourly errorsDelta walk.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleMailV2CLIAPI@2.14.0",
+    "action": "search",
+    "authentication_id": "02a57b11-742e-8601-a7d4-99004bd654c7",
+    "params": {
+      "query": "from:notifications@mail.zapier.com subject:(\"had an error\" OR \"couldn't run\")"
+    },
+    "authentication_note": "Gmail dennis@work.flowers (the non-shared connection, same as gmail-attachments-to-drive-by-type). Zapier sends Code Zap failure alerts to the Zap owner, which is this inbox for every work.flowers durable.",
+    "trigger_note": "Polling 'New Email Matching Search', one run per alert email. The query only narrows what Gmail polls; the authoritative checks (exact sender, exact subject shape) are in extractAlert() in workflow.ts. Polling triggers on durables never re-fire for an id they already delivered (W6ZE93-VMEWP), which is harmless here: every alert is a new message."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "notion": {
+    "triage_data_source": "db78a092-515d-40e6-9416-aab114460f86",
+    "zaps_data_source": "261b21a7-7d9a-4d0e-bf8a-4aebcbbdee44",
+    "note": "All three were created by the notion-workers zapier-durables-docs worker. The triage DB was detached from the worker on 2026-10-03 and is now an ordinary data source; the Zaps and Runs DBs are still worker-managed (read-only here, used only to link tickets). All three must be shared with the Zapier Notion integration (share the parent page Next-Gen Zaps DB).",
+    "runs_data_source": "1714cb13-d1b1-4cab-9d2e-c56aadbfda47"
+  },
+  "zapier_api_note": "Run history (raw runs API) and getWorkflow/getDurableRun use the durable's ambient SDK credentials via @zapier/zapier-sdk/experimental -- no connection binding. Verified with run-durable 2026-10-03."
+}
