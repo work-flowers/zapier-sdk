@@ -82,4 +82,15 @@ Two alerts for the same new signature arriving within seconds of each other can 
 npm test        # offline: parses the two real alert emails in fixtures/, 8 checks
 ```
 
+Verified live with `run-durable` on 2026-10-03, against the real `had an error` fixture and the production Notion databases:
+
+| Case | Result |
+|---|---|
+| New signature | `created`: ZAP-58, `Untriaged`, `Occurrences 1`, `Zap` linked, First/Last Seen = the email's 2026-09-30 04:34Z |
+| Same email again | `updated`, `Occurrences 2` |
+| Ticket set to `Resolved`, same email again | `updated`, `reopened: true`, back to `Untriaged`, `Occurrences 3` |
+| Workflow id not in the Zaps table | `skipped: not-a-work.flowers-zap` |
+
+ZAP-58 was a test ticket and was moved to the Notion trash afterwards.
+
 `fixtures/` holds the real `had an error` (2026-09-30, `slack-thread-to-notion-discussion`) and `couldn't run` (2026-09-30, `gcal-event-updated-to-meeting-note`) emails, reshaped to the Gmail trigger's field names.
