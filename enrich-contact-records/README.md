@@ -32,14 +32,20 @@ gained and what was given up.
    employer). (Added 2026-07-28.) The domain is load-bearing: BetterContact
    matches on **first + last name + company domain**, so a contact without
    all three is skipped with an explicit reason rather than sent.
+
+   **The name sent is a rendering, never the raw CRM text** — BetterContact's
+   Zapier integration puts it in an HTTP header. See
+   [Names sent to BetterContact](#names-sent-to-bettercontact). (Added
+   2026-10-03.)
 3. **Enrich via BetterContact** — an **async job**, handled as
    submit → park → resume:
    - `ctx.createCallback` mints a single-use URL and the run passes it as the
      job's `webhook`; BetterContact POSTs the finished result there and the run
      resumes with the payload. No polling on the happy path. See
      [How the async job is handled](#how-the-async-job-is-handled).
-   - `enrich_contact` (write) is submitted with `first_name`, `last_name`,
-     `company_domain`, `linkedin_url` (sharpens the match), `uuid` = the Notion
+   - `enrich_contact` (write) is submitted with `first_name`, `last_name`
+     (the rendered match name), `company_domain`, `linkedin_url` (sharpens the
+     match; non-ASCII runs percent-encoded), `uuid` = the Notion
      page id (echoed back in `custom_fields`), `enrich_email_address: "True"`
      and `enrich_phone_number: "False"` — emails only; this workflow does not
      consume phone data.
@@ -110,7 +116,8 @@ flowchart TD
     A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> P{"Empty ping?<br/>(URL test, browser hit, curl)"}
     P -- yes --> PS(["Log and skip<br/>(no error raised)"])
     P -- no --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title;<br/>domain falls back to email host)"]
-    B --> V{"First name AND last name<br/>AND company domain?"}
+    B --> N["Render the match name<br/>(drop parenthesised aside,<br/>title initials; fold accents<br/>beyond Latin-1)"]
+    N --> V{"Sendable first AND last name<br/>AND company domain?"}
     V -- no --> D(["Log, comment the skip reason, return"])
     V -- yes --> CB["ctx.createCallback<br/>(single-use URL, 10-min deadline)"]
     CB --> SUB["BetterContact enrich_contact<br/>name + domain + LinkedIn URL,<br/>webhook = callback URL,<br/>emails only"]
@@ -134,6 +141,38 @@ flowchart TD
     J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
     J --> K(["Return pageId, enriched, source, emailPath"])
 ```
+
+## Names sent to BetterContact
+
+BetterContact's **public** Zapier integration (`App217413CLIAPI`, v1.0.3 — not
+ours to change) copies the contact's name into an HTTP header. The platform's
+HTTP client refuses any header value with a character above U+00FF, client side,
+before the request leaves. On 2026-10-01 the contact titled
+`Alice SY Peng (彭思瑀)` failed twice that way: the title split gave
+`last_name: "SY Peng (彭思瑀)"` and the submit came back
+`SY Peng (彭思瑀) is not a legal HTTP header value`. Latin-1 accents (José,
+Müller) were always fine; Łukasz, Nguyễn, Иван and 彭思瑀 were not.
+
+Percent-encoding the name would get past the client, but BetterContact would
+then match on the literal `%E5%BD%AD…` — nobody. So `matchName` renders it:
+
+| Rule | Example |
+|---|---|
+| Parenthesised asides dropped (incl. fullwidth `（）`) | `Peng (彭思瑀)` → `Peng` |
+| Title split only: initials between first and last word dropped | `Alice SY Peng` → Alice / Peng (the name an `alice.peng@` address is built from); `John F. Kennedy` → John / Kennedy |
+| Lowercase particles kept | `Jan van der Berg` → Jan / van der Berg |
+| `First Name` / `Last Name` properties trusted as typed | `Alice` / `SY Peng` stays |
+| Accents beyond Latin-1 folded; Latin-1 left alone | `Łukasz Żukowski` → Lukasz Zukowski; `José` stays |
+| Still unsendable (CJK, Cyrillic, …) | not sent — skip reason asks for a romanised First/Last Name |
+
+The LinkedIn URL is percent-encoded instead, since an encoded URL means the same
+thing. **The rendering is for the request only:** when it differs from the
+contact's own name, the write-back keeps the contact's own `Name` / `First Name`
+/ `Last Name` rather than BetterContact's echo, so `(彭思瑀)` is never erased.
+
+Covered offline by [`names.test.mjs`](names.test.mjs) (`npm test`; no Zapier
+calls), which also drives the workflow body against a fake BetterContact that
+rejects header-unsafe values with the platform's own message.
 
 ## How the async job is handled
 

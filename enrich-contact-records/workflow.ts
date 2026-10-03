@@ -131,12 +131,121 @@ function dedupeAddresses(addresses: string[]): string[] {
   );
 }
 
+// --- Names and URLs as sent to BetterContact -------------------------------
+//
+// BetterContact's public Zapier integration (App217413, v1.0.3 — not ours to
+// change) copies the contact's name into an HTTP header. The platform's HTTP
+// client rejects any header value holding a character above U+00FF, client
+// side, before the request leaves: "SY Peng (彭思瑀) is not a legal HTTP header
+// value" failed the run for "Alice SY Peng (彭思瑀)" twice on 2026-10-01.
+// Latin-1 accents (José, Müller) pass; Łukasz, Иван and 彭思瑀 do not.
+//
+// Percent-encoding the name would get it past the client, but BetterContact
+// would then match on the literal "%E5%BD%AD…", which matches nobody. So the
+// name is RENDERED instead: the parenthesised alternate-script name is dropped
+// (the Latin name beside it is the one a work address is built from), accents
+// outside Latin-1 are folded, and a name that still cannot be carried is not
+// sent at all — the run skips BetterContact with a reason naming the fix
+// (a romanised First/Last Name), rather than failing with a header error.
+//
+// The rendering is for the REQUEST only. The contact's own name is what gets
+// written back to Notion; see `updateContactRecord`.
+
+/** True when every character fits an HTTP header value as the platform's
+ *  client checks it: tab, printable ASCII, or Latin-1 (U+0080–U+00FF). */
+function isHeaderSafe(s: string): boolean {
+  return /^[\t\x20-\x7e\x80-\xff]*$/.test(s);
+}
+
+/** Letters with no canonical decomposition, so NFD alone cannot fold them. */
+const FOLD_EXTRA: Record<string, string> = {
+  "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Ħ": "H", "ħ": "h", "ı": "i",
+  "Œ": "OE", "œ": "oe", "Ŋ": "N", "ŋ": "n", "Ŧ": "T", "ŧ": "t",
+};
+
+/** Characters above U+00FF folded to Latin where a fold exists (Łukasz →
+ *  Lukasz, Nguyễn → Nguyen); Latin-1 characters are left exactly as they are,
+ *  since those already travel. Anything with no fold (CJK, Cyrillic) is kept,
+ *  for `isHeaderSafe` to catch. */
+function foldBeyondLatin1(s: string): string {
+  return Array.from(s)
+    .map((ch) => {
+      if (ch.charCodeAt(0) <= 0xff) return ch;
+      if (FOLD_EXTRA[ch]) return FOLD_EXTRA[ch];
+      const base = ch.normalize("NFD").replace(/[̀-ͯ]/g, "");
+      return base.normalize("NFC");
+    })
+    .join("");
+}
+
+/** Parenthesised asides dropped — "(彭思瑀)", "（彭思瑀）", "(Bob)" — and the
+ *  whitespace they leave collapsed. */
+function stripParenthetical(s: string): string {
+  return s
+    .replace(/[(（][^)）]*[)）]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** A token that is only initials: "SY", "J.", "J.R.". Real surnames carry
+ *  lowercase ("Ng", "Wu"), so these never match one. */
+const INITIALS = /^(?:[A-Z]{1,3}|(?:[A-Z]\.)+[A-Z]?)\.?$/;
+
+/**
+ * The first + last name BetterContact is asked to match on.
+ *
+ * - Parenthesised asides are dropped from both parts: an alternate-script name
+ *   ("Alice SY Peng (彭思瑀)") is not how the work address is spelled.
+ * - When the split came from the page TITLE (no First/Last Name set), initials
+ *   between the first and last word are dropped too — "Alice SY Peng" asks for
+ *   Alice Peng, the name an alice.peng@ address is built from, not "SY Peng".
+ *   Lowercase particles stay ("Jan van der Berg" keeps "van der Berg"). Names
+ *   typed into First/Last Name are trusted as given.
+ * - Accents beyond Latin-1 are folded. If a part still holds a character the
+ *   integration cannot carry, both come back empty and the request is skipped.
+ */
+function matchName(
+  firstName: string,
+  lastName: string,
+  fromTitle: boolean,
+): { firstName: string; lastName: string } {
+  let first = stripParenthetical(firstName);
+  let last = stripParenthetical(lastName);
+  if (fromTitle) {
+    // Re-split, since the aside may have held the only word after the first.
+    const words = `${first} ${last}`.trim().split(" ").filter(Boolean);
+    first = words[0] ?? "";
+    const rest = words.slice(1);
+    while (rest.length > 1 && INITIALS.test(rest[0] ?? "")) rest.shift();
+    last = rest.join(" ");
+  }
+  first = foldBeyondLatin1(first);
+  last = foldBeyondLatin1(last);
+  if (!isHeaderSafe(first) || !isHeaderSafe(last)) {
+    return { firstName: "", lastName: "" };
+  }
+  return { firstName: first, lastName: last };
+}
+
+/** A URL with every non-ASCII run percent-encoded. Unlike a name, a URL means
+ *  the same thing encoded (linkedin.com/in/彭思瑀 is linkedin.com/in/%E5%BD%AD…),
+ *  so it is encoded rather than dropped, in case the integration puts it in a
+ *  header too. */
+function asciiUrl(url: string): string {
+  return url.replace(/[^\x00-\x7f]+/g, (run) => encodeURIComponent(run));
+}
+
 // --- Contact data extracted from the Notion webhook payload ---------------
 
 interface ContactData {
   pageId: string;
+  /** The contact's own name, as the CRM holds it. Written back unchanged. */
   firstName: string;
   lastName: string;
+  /** The name as sent to BetterContact — see `matchName`. Empty when the
+   *  name cannot be rendered in characters the integration can carry. */
+  matchFirstName: string;
+  matchLastName: string;
   primaryEmail: string;
   domain: string;
   linkedinUrl: string;
@@ -211,19 +320,24 @@ function extractContactData(raw: unknown): ContactData {
   // is not a name.
   let firstName = plainText(props["First Name"]?.rich_text).trim();
   let lastName = plainText(props["Last Name"]?.rich_text).trim();
+  let fromTitle = false;
   if (!firstName && !lastName) {
     const title = plainText(props["Name"]?.title).trim();
     if (title && !title.includes("@")) {
       const parts = title.split(/\s+/);
       firstName = parts[0] ?? "";
       lastName = parts.slice(1).join(" ");
+      fromTitle = true;
     }
   }
+  const match = matchName(firstName, lastName, fromTitle);
 
   return {
     pageId,
     firstName,
     lastName,
+    matchFirstName: match.firstName,
+    matchLastName: match.lastName,
     primaryEmail,
     domain,
     linkedinUrl: props["Linkedin"]?.url ?? "",
@@ -567,7 +681,21 @@ async function updateContactRecord(
   unverifiedEmail?: string;
   identity?: string;
 }> {
-  const fullName = `${enriched.firstName || contact.firstName} ${enriched.lastName || contact.lastName}`.trim();
+  // When the request name was a lossy rendering of the contact's own (an
+  // alternate-script aside dropped, accents folded), BetterContact echoes the
+  // rendering back; writing that would erase "(彭思瑀)" from the CRM. Keep the
+  // contact's own name then, and take BetterContact's only when ours was sent
+  // as it stands.
+  const keepOwnName =
+    contact.matchFirstName !== contact.firstName ||
+    contact.matchLastName !== contact.lastName;
+  const firstName = keepOwnName
+    ? contact.firstName
+    : enriched.firstName || contact.firstName;
+  const lastName = keepOwnName
+    ? contact.lastName
+    : enriched.lastName || contact.lastName;
+  const fullName = `${firstName} ${lastName}`.trim();
 
   // --- Gate the enriched address on identity corroboration ---
   // See "Identity corroboration" above. An address that cannot be tied to this
@@ -607,10 +735,8 @@ async function updateContactRecord(
     "properties|||Linkedin|||url": enriched.linkedinUrl,
     "properties|||Job Title|||rich_text": enriched.jobTitle,
     "properties|||Primary Phone|||phone_number": "",
-    "properties|||First Name|||rich_text":
-      enriched.firstName || contact.firstName,
-    "properties|||Last Name|||rich_text":
-      enriched.lastName || contact.lastName,
+    "properties|||First Name|||rich_text": firstName,
+    "properties|||Last Name|||rich_text": lastName,
     "properties|||Bio|||rich_text": enriched.bio,
     "properties|||Country|||select": enriched.country,
     "properties|||City|||select": enriched.city,
@@ -979,8 +1105,10 @@ const workflow = defineDurable(
     // existing email is not an input at all (it finds addresses, it does not
     // take them). Nothing to send without name + domain, so skip with an honest
     // reason — more actionable than a false "no result".
+    // The name tested is the one actually sent (see `matchName`), so a name
+    // the integration cannot carry is a skip with a fix, not a header error.
     const viable = Boolean(
-      contact.firstName && contact.lastName && contact.domain,
+      contact.matchFirstName && contact.matchLastName && contact.domain,
     );
 
     if (!viable) {
@@ -988,7 +1116,9 @@ const workflow = defineDurable(
         ? isFreemail(contact.primaryEmail)
           ? "skipped — no company domain (a personal email names no employer)"
           : "skipped — no company domain, from the Company relation or the Primary Email"
-        : "skipped — needs both a first and a last name to pair with the company domain";
+        : contact.firstName && contact.lastName && !contact.matchFirstName
+          ? "skipped — the name has characters BetterContact's Zapier integration cannot send (non-Latin script); add a romanised First Name and Last Name"
+          : "skipped — needs both a first and a last name to pair with the company domain";
       reasons.push(`bettercontact ${why}`);
       console.log(`BetterContact ${why} for ${contact.pageId}`);
     } else {
@@ -1011,10 +1141,12 @@ const workflow = defineDurable(
             actionKey: "enrich_contact",
             connection: BETTERCONTACT_CONNECTION,
             inputs: {
-              first_name: contact.firstName,
-              last_name: contact.lastName,
+              // Never the raw CRM name: the integration puts it in an HTTP
+              // header. See "Names and URLs as sent to BetterContact".
+              first_name: contact.matchFirstName,
+              last_name: contact.matchLastName,
               company_domain: contact.domain,
-              linkedin_url: contact.linkedinUrl,
+              linkedin_url: asciiUrl(contact.linkedinUrl),
               // Echoed back in the result's custom_fields, so a payload read
               // outside the run (BetterContact's API usage page) names the page.
               uuid: contact.pageId,
