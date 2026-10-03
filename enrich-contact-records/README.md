@@ -98,8 +98,8 @@ gained and what was given up.
    catch_all; not written.` A Path U run names the uncorroborated address:
    `Email grace@leaps.sg NOT written — … Add it by hand if it is really theirs.`
 
-   If the webhook was triggered by a button click and the payload included the
-   user's Notion ID, the comment mentions that user.
+   The comment @mentions the **person** behind the run when there is one — see
+   [The outcome comment never mentions a bot](#the-outcome-comment-never-mentions-a-bot).
 6. **Return** — `{ pageId, enriched, source, emailPath }`, plus
    `unverifiedEmail` and `identity` on a Path U run, and `reasons` on a skip.
 
@@ -131,7 +131,7 @@ flowchart TD
     GP --> J
     G --> J
     U --> J
-    J["Post outcome comment on the page<br/>(@mentions the triggering user if known)"]
+    J["Post outcome comment on the page<br/>(@mentions the first candidate that is a<br/>Notion person; no mention otherwise)"]
     J --> K(["Return pageId, enriched, source, emailPath"])
 ```
 
@@ -277,6 +277,41 @@ again; the record updates are memoised steps, so only the comment re-posts. A
 `posted: false` and the run output carries `commentPosted: false` with
 `commentError`.
 
+## The outcome comment never mentions a bot
+
+**Fixed 2026-10-03.** Notion rejects the **whole** comment when its mention
+points at anything but a person — `400 Cannot mention bots` for a bot, `404
+Could not find user` for a user the integration can't see — so the run ends
+green with `commentPosted: false` and the contact has no outcome comment at all.
+Until this fix the comment mentioned the first id in the payload unchecked, and
+**18 of 45 runs from 2026-09-22 to 2026-10-02 lost their comment that way.**
+
+The cause is the fallback chain. A Contacts automation puts the acting user in
+`source.user_id` only when a person acted; when another integration's write
+fired it there is none, and the next candidate — the page's `last_edited_by`,
+then `created_by` — is routinely a bot. Ids seen in production:
+
+| Id | Who | `GET /v1/users/{id}` |
+|---|---|---|
+| `121d872b-…eef1e` | Dennis | `type: person` — mentioned |
+| `142d872b-…c71b63` | the Zapier integration | `type: bot` |
+| `36091b07-…91cc62` | `notion-worker-automations` | `type: bot` |
+| `3e491b07-…88d9a1` | (another integration) | `404` |
+| `00000000-0000-0000-0000-000000000003` | Notion system user | `404` |
+
+So the payload now yields an ordered, deduped **candidate list** (acting user,
+then last editor, then creator), and the `resolve-mention-user` step looks each
+one up with `GET /v1/users/{id}` and mentions the **first `type: "person"`**, or
+nobody. Notion's `00000000-0000-0000-0000-…` system ids are dropped without a
+lookup, and at most three lookups are made. A mention is decoration, so it can
+never cost the run: a transient lookup failure is retried by the step and, if it
+never clears, the comment posts without a mention. This needs the Notion
+connection's **Read user information** capability, which `notion_wf` has
+(verified 2026-10-03); without it every lookup 404s and comments simply carry no
+mention.
+
+The lookups are `sdk.fetch` calls, one or two per run.
+
 ## Identity corroboration
 
 **Added 2026-08-12.** An enriched email is the one field this workflow writes that
@@ -377,7 +412,8 @@ stale, which is harmless — lookups match on `Email` only.
 > shared with your integration "Zapier"`. See the root `CLAUDE.md`.
 
 The Notion connection must have the **Insert comments** capability enabled so
-the workflow can post outcome comments on the triggering page.
+the workflow can post outcome comments on the triggering page, and **Read user
+information** so it can tell a person from a bot before mentioning them.
 
 **BetterContact action surface** (`list-actions App217413CLIAPI`): exactly two
 actions, `write enrich_contact` and `search get_contact`, no triggers. The
@@ -416,6 +452,18 @@ zapier-sdk --experimental run-durable "$SOURCE_FILES" \
 
 A run against a real page **writes to that contact** and spends a BetterContact
 credit if an address is found. Use a page you own.
+
+### Offline tests
+
+```bash
+npm install --no-save && npm test
+```
+
+[`mention.test.mjs`](mention.test.mjs) runs the real `extractContactData`,
+`resolveMentionUserId` and `addOutcomeComment` against a stubbed `sdk.fetch`
+(no network, no credentials): candidate order and dedupe, person vs bot vs 404
+vs system user, the lookup cap, a lookup that never clears, and the exact
+comment body posted for the production shape that used to fail (24 assertions).
 
 ### Callback spike (2026-09-18)
 
@@ -476,7 +524,7 @@ declared set when they differ, logging the change in the run summary.
 - **No page icon step** — the sub-Zap's Path C icon/cover update was carried
   over and then removed on 2026-09-18, when no acceptable photo source remained.
 - **Outcome comment** — after every run, a brief comment on the triggering page,
-  mentioning the triggering user when known. Transient Notion failures are
+  mentioning the person behind the run when there is one (never a bot). Transient Notion failures are
   retried, not swallowed.
 
 ## References

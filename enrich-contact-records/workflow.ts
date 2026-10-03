@@ -142,9 +142,11 @@ interface ContactData {
   linkedinUrl: string;
   secondaryEmails: string[];
   primaryPhone: string;
-  /** Notion user ID of whoever triggered the webhook (e.g. by clicking a
-   *  button on the page). Null when the trigger was not a user action. */
-  triggeredById: string | null;
+  /** Notion user IDs that might be mentioned in the outcome comment, most
+   *  specific first (the acting user, then the page's last editor and
+   *  creator), blanks dropped and each kept once. Any of them may be a bot —
+   *  see `resolveMentionUserId`, which picks the first real person. */
+  mentionCandidateIds: string[];
 }
 
 function extractContactData(raw: unknown): ContactData {
@@ -186,11 +188,16 @@ function extractContactData(raw: unknown): ContactData {
       ? ""
       : normalizeDomain(primaryEmail.slice(primaryEmail.lastIndexOf("@") + 1)));
 
-  // Extract the Notion user ID of whoever triggered the webhook (e.g. by
-  // clicking a button on the page). Notion DB automations put the acting
-  // user in source.user_id; page-level created_by/last_edited_by can be a
-  // bot (e.g. the automation that created the page), so they come last.
-  const triggeredById = firstString(
+  // Who the outcome comment could mention. Notion DB automations put the
+  // acting user in source.user_id — but only when a person acted; an
+  // automation fired by another integration's write carries none. The
+  // page-level last_edited_by/created_by fallbacks are often bots: the Zapier
+  // integration that created the contact, Notion's own automation worker, or
+  // Notion's system user 00000000-0000-0000-0000-000000000003. Mentioning any
+  // of those makes Notion reject the WHOLE comment (`400 Cannot mention bots`,
+  // or `404 Could not find user`), so these are only candidates; the comment
+  // step resolves which, if any, is a person.
+  const mentionCandidateIds = [
     o?.source?.user_id,
     data?.source?.user_id,
     data?.triggered_by?.id,
@@ -201,7 +208,9 @@ function extractContactData(raw: unknown): ContactData {
     data?.created_by?.id,
     data?.user_id,
     data?.userId,
-  );
+  ]
+    .map((v) => firstString(v))
+    .filter((v, i, all): v is string => v !== null && all.indexOf(v) === i);
 
   // Auto-created contacts (e.g. from an event registration) often carry the
   // person's name only in the page title — the First/Last Name rich_text
@@ -231,7 +240,7 @@ function extractContactData(raw: unknown): ContactData {
       .map((s: any) => s?.name)
       .filter(Boolean),
     primaryPhone: props["Primary Phone"]?.phone_number ?? "",
-    triggeredById,
+    mentionCandidateIds,
   };
 }
 
@@ -758,9 +767,9 @@ async function updateContactRecord(
 // --- Add outcome comment to the triggering page ----------------------------
 //
 // After every run (success or skip), posts a brief comment on the Notion
-// page that triggered the webhook. If the webhook was triggered by a button
-// click and the payload included the user's Notion ID, the comment mentions
-// that user for better visibility.
+// page that triggered the webhook. When the payload names a real person (the
+// user who acted, else the page's last editor or creator), the comment
+// mentions them for better visibility; a bot is never mentioned.
 
 interface WorkflowResult {
   pageId: string;
@@ -826,6 +835,79 @@ function parseFailure(why: string): { source: string | null; brief: string } {
   return { source, brief: s || "unknown error" };
 }
 
+/** Notion's built-in system users (`00000000-0000-0000-0000-00000000000N`).
+ *  Never people, and `GET /v1/users` cannot even find them, so they are
+ *  dropped without spending a lookup. */
+function isNotionSystemUserId(id: string): boolean {
+  return /^00000000-0000-0000-0000-[0-9a-f]{12}$/i.test(id.trim());
+}
+
+/** The id to mention for one `GET /v1/users/{id}` answer, or null. Only a
+ *  `type: "person"` user can be mentioned in a comment: a bot is rejected with
+ *  `400 Cannot mention bots`, and a user the integration cannot see (404) with
+ *  `Could not find user` — either way Notion drops the whole comment. */
+function personIdFromUser(status: number, body: unknown): string | null {
+  if (status !== 200 || typeof body !== "object" || body === null) return null;
+  const user = body as { object?: unknown; type?: unknown; id?: unknown };
+  if (user.object !== "user" || user.type !== "person") return null;
+  return typeof user.id === "string" && user.id !== "" ? user.id : null;
+}
+
+/** At most this many `GET /v1/users` lookups per run. Candidates are deduped,
+ *  so two is the usual count; the cap only bounds a pathological payload. */
+const MAX_MENTION_LOOKUPS = 3;
+
+/**
+ * The first candidate that is a real Notion person, or null for no mention.
+ *
+ * Until 2026-10-03 the first candidate was mentioned unchecked. When a
+ * Contacts automation fired off another integration's write there is no
+ * acting user, so the fallback was the page's last editor — routinely Notion's
+ * system user or the Zapier bot — and Notion rejected the comment outright.
+ * 18 of 45 runs from 2026-09-22 to 10-02 ended with no outcome comment at all.
+ *
+ * A mention is decoration, so nothing here may cost the run: a transient
+ * lookup failure throws for the step's retry, and if that never clears the
+ * caller posts without a mention.
+ */
+async function resolveMentionUserId(
+  ctx: DurableCtx,
+  candidateIds: string[],
+): Promise<string | null> {
+  const ids = candidateIds
+    .filter((id) => !isNotionSystemUserId(id))
+    .slice(0, MAX_MENTION_LOOKUPS);
+  if (ids.length === 0) return null;
+  try {
+    return await ctx.step("resolve-mention-user", async () => {
+      for (const id of ids) {
+        const res = await sdk.fetch(
+          `${NOTION_API}/users/${encodeURIComponent(id)}`,
+          {
+            connection: NOTION_CONNECTION,
+            method: "GET",
+            headers: { "Notion-Version": NOTION_VERSION },
+          },
+        );
+        if (isTransientStatus(res.status)) {
+          throw new Error(`Notion user lookup ${id} failed transiently (${res.status})`);
+        }
+        const body: unknown = res.ok ? await res.json() : null;
+        const personId = personIdFromUser(res.status, body);
+        if (personId) return personId;
+        const kind = (body as { type?: unknown } | null)?.type;
+        console.log(
+          `Not mentioning ${id}: ${res.ok ? `type ${String(kind)}` : `HTTP ${res.status}`}`,
+        );
+      }
+      return null;
+    });
+  } catch (err) {
+    console.log(`Mention lookup gave up (${String(err)}); posting without a mention.`);
+    return null;
+  }
+}
+
 async function addOutcomeComment(
   ctx: DurableCtx,
   contact: ContactData,
@@ -869,14 +951,15 @@ async function addOutcomeComment(
     summary = `Enrichment skipped — ${parts.join("; ")}.`;
   }
 
-  // Build the rich_text array. If we know who triggered the run, mention
-  // them at the start of the comment.
+  // Build the rich_text array. If a real person is behind the run, mention
+  // them at the start of the comment; never a bot (see resolveMentionUserId).
   const richText: any[] = [];
+  const mentionId = await resolveMentionUserId(ctx, contact.mentionCandidateIds);
 
-  if (contact.triggeredById) {
+  if (mentionId) {
     richText.push({
       type: "mention",
-      mention: { type: "user", user: { id: contact.triggeredById } },
+      mention: { type: "user", user: { id: mentionId } },
     });
     richText.push({
       type: "text",
@@ -1131,9 +1214,8 @@ const workflow = defineDurable(
       };
     }
 
-    // 3. Add a brief comment to the triggering page stating the outcome.
-    //    If the webhook was triggered by a button click and the payload
-    //    included a user ID, the comment mentions that user.
+    // 3. Add a brief comment to the triggering page stating the outcome,
+    //    mentioning the person behind the run when there is one.
     const comment = await addOutcomeComment(ctx, contact, result);
 
     return { ...result, commentPosted: comment.posted, commentError: comment.error };
