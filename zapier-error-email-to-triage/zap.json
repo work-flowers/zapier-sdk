@@ -8,7 +8,7 @@
   "deploy": {
     "state": "pending-create",
     "workflow_name": "zapier-error-email-to-triage",
-    "description": "Zapier's Code Zap failure alert email (\"had an error\" / \"couldn't run\") -> upsert a ticket in the Zapier Error Triage Notion database, one per workflow + error type + normalised message. Repeats bump Occurrences and reopen a Resolved ticket. Knoxx-account Zaps alert the same inbox and are skipped (not in the work.flowers Zaps table). Replaces the zapier-durables-docs worker's hourly errorsDelta walk.",
+    "description": "Zapier's Code Zap failure alert email (\"had an error\" / \"couldn't run\") -> confirm the workflow is in the work.flowers account (getWorkflow; Knoxx Zaps alert the same inbox) -> find the failed run in run history and its failing step (getDurableRun) -> upsert a ticket in the Zapier Error Triage Notion database with the same signature the notion-workers errorsDelta used, so pre-existing tickets keep counting. Repeats bump Occurrences and reopen a Resolved ticket. Replaces the worker's hourly errorsDelta walk.",
     "enable_on_publish": true
   },
   "trigger": {
@@ -31,6 +31,8 @@
   "notion": {
     "triage_data_source": "db78a092-515d-40e6-9416-aab114460f86",
     "zaps_data_source": "261b21a7-7d9a-4d0e-bf8a-4aebcbbdee44",
-    "note": "Both were created by the notion-workers zapier-durables-docs worker. The triage DB was detached from the worker on 2026-10-03 and is now an ordinary data source; the Zaps DB is still worker-managed (read-only here). Both must be shared with the Zapier Notion integration."
-  }
+    "note": "All three were created by the notion-workers zapier-durables-docs worker. The triage DB was detached from the worker on 2026-10-03 and is now an ordinary data source; the Zaps and Runs DBs are still worker-managed (read-only here, used only to link tickets). All three must be shared with the Zapier Notion integration (share the parent page Next-Gen Zaps DB).",
+    "runs_data_source": "1714cb13-d1b1-4cab-9d2e-c56aadbfda47"
+  },
+  "zapier_api_note": "Run history (raw runs API) and getWorkflow/getDurableRun use the durable's ambient SDK credentials via @zapier/zapier-sdk/experimental -- no connection binding. Verified with run-durable 2026-10-03."
 }

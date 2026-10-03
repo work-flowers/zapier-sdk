@@ -480,6 +480,11 @@
       "type": "notion_ds",
       "id": "261b21a7-7d9a-4d0e-bf8a-4aebcbbdee44",
       "name": "Zapier Zaps"
+    },
+    "ds:zapier-zap-runs": {
+      "type": "notion_ds",
+      "id": "1714cb13-d1b1-4cab-9d2e-c56aadbfda47",
+      "name": "Zapier Zap Runs"
     }
   },
   "edges": [
@@ -1862,6 +1867,11 @@
       "from": "zapier-error-email-to-triage",
       "to": "ds:zapier-error-triage",
       "kind": "write"
+    },
+    {
+      "from": "ds:zapier-zap-runs",
+      "to": "zapier-error-email-to-triage",
+      "kind": "read"
     }
   ],
   "excluded_zaps": {
@@ -1905,7 +1915,7 @@
     "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record.",
     "agent-chat-session-to-notion": "embeddable-agent-chat session.ended webhook → fetch the transcript via the Notion Agents Unofficial custom integration → AI summary (standard/auto) → record in the Agent Chat Sessions Notion database with the transcript as the page body.",
     "notion-button-to-skills-sync": "Notion Skills DB \"Sync now\" button → dispatches the synced-skills GitHub Actions sync (sync.yml on main) instead of waiting for the hourly schedule.",
-    "zapier-error-email-to-triage": "Zapier failure alert email for a work.flowers Code Zap → upsert a ticket in Zapier Error Triage (one per Zap + error); repeats bump Occurrences and reopen Resolved tickets."
+    "zapier-error-email-to-triage": "Zapier failure alert email for a work.flowers Code Zap → look up the failed run and its failing step → upsert a ticket in Zapier Error Triage (one per Zap + error); repeats bump Occurrences and reopen Resolved tickets."
   },
   "ignored_ids": {
     "$comment": "Ids the regex sweep finds that are real but are not shared assets: test artifacts, fixed per-zap configuration, foreign-system record ids, one Table row id, and the Notion DATABASE id of a data source already registered as an asset (kept in a zap.json for provenance, because the classic Zap addressed the database rather than the data source).",

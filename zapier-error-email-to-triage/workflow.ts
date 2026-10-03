@@ -1,8 +1,20 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/zapier-error-email-to-triage
 import { defineDurable } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
+import {
+  createZapierSdk as createExperimentalSdk,
+  createZapierApi,
+  ZAPIER_BASE_URL,
+} from "@zapier/zapier-sdk/experimental";
 
 const sdk = createZapierSdk();
+// Code Workflows surface (getWorkflow, getDurableRun) and its raw API client,
+// both on the durable's own ambient credentials. Verified 2026-10-03 with
+// run-durable: inside the sandbox these read the work.flowers account's
+// workflows and run history with no extra connection. `any` because the
+// experimental method shapes shift release to release.
+const workflows = createExperimentalSdk() as any;
+const zapierApi = createZapierApi({ baseUrl: ZAPIER_BASE_URL } as any) as any;
 
 // --- Bindings --------------------------------------------------------------
 // The Gmail credential lives on the TRIGGER (zap.json trigger.authentication_id);
@@ -17,8 +29,28 @@ const NOTION_VERSION = "2026-03-11";
 const TRIAGE_DS = "db78a092-515d-40e6-9416-aab114460f86";
 
 /** "Zapier Zaps", still synced daily by the worker's `zapsSync`. One row per
- *  durable in the work.flowers Zapier account, keyed on `Workflow ID`. */
+ *  durable in the work.flowers Zapier account, keyed on `Workflow ID`. Used
+ *  only to link the ticket — a Zap deployed since the last sync has no row yet,
+ *  and still gets its ticket. */
 const ZAPS_DS = "261b21a7-7d9a-4d0e-bf8a-4aebcbbdee44";
+
+/** "Zapier Zap Runs", synced daily by the worker's `runsDelta`, keyed on
+ *  `Run ID`. The failed run usually has no row yet when the alert arrives; it
+ *  is linked when a later recurrence of the same signature finds it. */
+const RUNS_DS = "1714cb13-d1b1-4cab-9d2e-c56aadbfda47";
+
+/** The `Zap Runs` relation is a sample, newest first; `Occurrences` is the
+ *  count. Same cap the worker used. */
+const MAX_RUNS_PER_TICKET = 25;
+
+/** Which failed run an alert email is about. Observed 2026-09: the email lands
+ *  ~2s after the run's `updated_at`. The window is generous on the early side
+ *  (a run that retried for minutes) and allows a little clock skew late. */
+const RUN_MATCH_BEFORE_MS = 30 * 60 * 1000;
+const RUN_MATCH_AFTER_MS = 2 * 60 * 1000;
+/** Run history pages are newest-first, 100 a page. A busy Zap does ~100 runs a
+ *  day, so this reaches a few days back — far past any alert we act on. */
+const MAX_RUN_PAGES = 10;
 
 const ALERT_SENDER = "notifications@mail.zapier.com";
 
@@ -26,6 +58,9 @@ const ALERT_SENDER = "notifications@mail.zapier.com";
  *  reopens it; `Won't fix` is a deliberate verdict and stays closed. */
 const STATUS_NEW = "Untriaged";
 const STATUS_REOPENABLE = new Set(["Resolved"]);
+
+/** Title message length, as the worker had it. */
+const TITLE_MESSAGE_MAX = 70;
 
 /** How much of the normalised message the signature keeps. Same as the
  *  worker's errorsDelta used, so the key length stays familiar. */
@@ -202,14 +237,93 @@ function extractAlert(raw: unknown): { alert: Alert } | { skip: string } {
   };
 }
 
-function signatureFor(alert: Alert): string {
-  const normalised = normaliseMessage(alert.message).slice(0, SIGNATURE_MESSAGE_MAX) || "-";
-  return [alert.workflowId, ERROR_TYPE_LABEL[alert.kind], normalised].join(" · ");
+/**
+ * What a ticket is keyed and titled on. Built from the failed RUN when it can be
+ * found — then it matches the worker's errorsDelta tickets exactly, so a fault
+ * ticketed before 2026-10-03 recurs onto its existing ticket — and from the
+ * email alone when it cannot.
+ */
+interface Failure {
+  errorType: string;
+  message: string;
+  failingStep: string | null;
+  runId: string | null;
+  durableRunId: string | null;
+  at: string | null; // run created_at, when known
 }
 
-function ticketTitle(alert: Alert): string {
-  const msg = normaliseMessage(alert.message);
-  return `${alert.zapName} · ${msg.length > 100 ? `${msg.slice(0, 100)}…` : msg}`;
+function failureFromAlert(alert: Alert): Failure {
+  return {
+    errorType: ERROR_TYPE_LABEL[alert.kind],
+    message: alert.message,
+    failingStep: null,
+    runId: null,
+    durableRunId: null,
+    at: null,
+  };
+}
+
+/** The worker's `errorType` / `errorMessage`: `details.name` is the useful one
+ *  (`StepExhaustedError`, `DeterminismViolation`); the outer code
+ *  (`execution_failed`, `upstream_rejected`) is the fallback. */
+function failureFromRun(run: any): Failure {
+  const e = run?.error ?? {};
+  return {
+    errorType: firstString(e?.details?.name, e?.code) ?? "unknown",
+    message: firstString(e?.details?.message, e?.message) ?? "",
+    failingStep: null,
+    runId: firstString(run?.id),
+    durableRunId: firstString(run?.durable_run_id),
+    at: firstString(run?.created_at),
+  };
+}
+
+function signatureOf(workflowId: string, f: Failure): string {
+  const normalised = normaliseMessage(f.message).slice(0, SIGNATURE_MESSAGE_MAX) || "-";
+  return [workflowId, f.errorType, normalised].join(" · ");
+}
+
+/** The worker's title: the failing step when the journal named one, else the
+ *  message — `<zap> · Error` alone was unusable in a list. */
+function titleOf(zapName: string, f: Failure): string {
+  if (f.failingStep) return `${zapName} · ${f.errorType} in ${f.failingStep}`;
+  const normalised = normaliseMessage(f.message);
+  if (!normalised) return `${zapName} · ${f.errorType}`;
+  const summary =
+    normalised.length > TITLE_MESSAGE_MAX ? `${normalised.slice(0, TITLE_MESSAGE_MAX).trimEnd()}…` : normalised;
+  return `${zapName} · ${f.errorType}: ${summary}`;
+}
+
+/**
+ * The failed run this alert is about: status `failed`, not an editor draft
+ * run, finished within the match window around the email, closest wins.
+ * `runs` are raw API rows; `seenAtMs` is the email's timestamp.
+ */
+function pickRun(runs: any[], seenAtMs: number): any | null {
+  let best: any = null;
+  let bestGap = Infinity;
+  for (const run of runs) {
+    if (run?.status !== "failed" || run?.kind === "draft") continue;
+    const t = Date.parse(run.updated_at ?? run.created_at ?? "");
+    if (Number.isNaN(t)) continue;
+    if (t < seenAtMs - RUN_MATCH_BEFORE_MS || t > seenAtMs + RUN_MATCH_AFTER_MS) continue;
+    const gap = Math.abs(seenAtMs - t);
+    if (gap < bestGap) {
+      best = run;
+      bestGap = gap;
+    }
+  }
+  return best;
+}
+
+/** The last operation that did not complete — the worker's `failureDetail`.
+ *  Earlier non-completed ones can retry and recover. */
+function failingOperation(ops: any[]): { step: string | null; cause: string | null } {
+  const failed = ops.filter((op) => op?.status && op.status !== "completed");
+  const last = failed[failed.length - 1];
+  if (!last) return { step: null, cause: null };
+  const parts = [last.error?.name, last.error?.message].filter(Boolean);
+  return { step: firstString(last.name), cause: parts.length ? parts.join(": ") : null };
 }
 
 function richText(text: string): Array<Record<string, unknown>> {
@@ -271,6 +385,48 @@ function relationIds(page: any, name: string): string[] {
   return Array.isArray(rel) ? rel.map((r: any) => String(r.id)) : [];
 }
 
+// --- Zapier I/O (each must be called inside a ctx.step) ---------------------
+
+/** True for a workflow in this account, false for one Zapier cannot find —
+ *  which is what a Knoxx-account Zap's id gets (verified 2026-10-03). Anything
+ *  else throws, so a transient failure retries instead of skipping a real Zap. */
+async function workflowInAccount(workflowId: string): Promise<boolean> {
+  try {
+    await workflows.getWorkflow({ workflow: workflowId });
+    return true;
+  } catch (err) {
+    if (/not found/i.test(String((err as Error)?.message ?? err))) return false;
+    throw err;
+  }
+}
+
+/**
+ * Walk the workflow's run history newest-first until it is older than the
+ * match window, then pick the run. Through the raw API client rather than
+ * `listWorkflowRuns`: the SDK's response schema rejects a whole page that
+ * contains an editor draft run (no `trigger_id`), the same reason the worker
+ * switched (notion-workers zapier-durables-docs CLAUDE.md).
+ */
+async function findFailedRun(workflowId: string, seenAtMs: number): Promise<any | null> {
+  const floor = seenAtMs - RUN_MATCH_BEFORE_MS;
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_RUN_PAGES; page++) {
+    const searchParams: Record<string, string> = { limit: "100" };
+    if (cursor) searchParams.cursor = cursor;
+    const res = await zapierApi.get(
+      `/code-substrate-workflows/api/v0/workflows/${encodeURIComponent(workflowId)}/runs`,
+      { searchParams, authRequired: true },
+    );
+    const runs: any[] = Array.isArray(res?.results) ? res.results : [];
+    const hit = pickRun(runs, seenAtMs);
+    if (hit) return hit;
+    const oldest = runs.length ? Date.parse(runs[runs.length - 1]?.created_at ?? "") : NaN;
+    cursor = res?.meta?.next_cursor ?? undefined;
+    if (!cursor || Number.isNaN(oldest) || oldest < floor) return null;
+  }
+  return null;
+}
+
 // --- Workflow --------------------------------------------------------------
 const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawInput) => {
   const payload = normalizeInput(rawInput);
@@ -285,19 +441,13 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
     return { skipped: extracted.skip };
   }
   const alert = extracted.alert;
-  const signature = signatureFor(alert);
 
-  // Resolve the Zap row, which doubles as the account filter: Knoxx Zaps alert
-  // the same inbox but are not in the work.flowers Zaps table.
-  const zap = await ctx.step("find-zap", async () => {
-    const page = await queryOne(ZAPS_DS, {
-      property: "Workflow ID",
-      rich_text: { equals: alert.workflowId },
-    });
-    return page ? { id: String(page.id) } : null;
-  });
-  if (!zap) {
-    console.log(`skipping: workflow ${alert.workflowId} (${alert.zapName}) is not in the work.flowers Zaps table`);
+  // Knoxx-account Zaps alert the same inbox. Asking Zapier directly, rather
+  // than the daily-synced Zaps table, means a brand-new work.flowers Zap is
+  // never mistaken for a foreign one.
+  const inAccount = await ctx.step("check-account", async () => workflowInAccount(alert.workflowId));
+  if (!inAccount) {
+    console.log(`skipping: workflow ${alert.workflowId} (${alert.zapName}) is not in the work.flowers account`);
     return { skipped: "not-a-work.flowers-zap", workflowId: alert.workflowId, zapName: alert.zapName };
   }
 
@@ -312,6 +462,50 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
     return new Date(ms).toISOString();
   });
 
+  // Run detail is enrichment: if it cannot be found the ticket is still made,
+  // from the email alone.
+  const run = await ctx.step("find-run", async () => {
+    try {
+      return await findFailedRun(alert.workflowId, Date.parse(seenAt));
+    } catch (err) {
+      console.log(`run lookup failed, falling back to the email: ${String((err as Error)?.message ?? err).slice(0, 300)}`);
+      return null;
+    }
+  });
+
+  const failure: Failure = run ? failureFromRun(run) : failureFromAlert(alert);
+  if (!run) console.log(`no matching failed run found for ${alert.workflowId} near ${seenAt}; using the email`);
+
+  if (failure.durableRunId) {
+    const durableRunId = failure.durableRunId;
+    const detail = await ctx.step("run-journal", async () => {
+      try {
+        const res = await workflows.getDurableRun({ run: durableRunId });
+        const ops: any[] = res?.data?.execution?.operations ?? [];
+        return failingOperation(ops);
+      } catch (err) {
+        console.log(`getDurableRun failed for ${durableRunId}: ${String((err as Error)?.message ?? err).slice(0, 300)}`);
+        return { step: null, cause: null };
+      }
+    });
+    failure.failingStep = detail.step;
+    // The root cause is what someone acts on, and the run's own error often
+    // names none ("Step … exhausted all retry attempts"). Logged for run
+    // history; the ticket body belongs to whoever triages (see README).
+    if (detail.cause) console.log(`root cause: ${detail.cause.slice(0, 500)}`);
+  }
+
+  const signature = signatureOf(alert.workflowId, failure);
+  const occurredAt = failure.at ?? seenAt;
+
+  const links = await ctx.step("find-links", async () => {
+    const zapPage = await queryOne(ZAPS_DS, { property: "Workflow ID", rich_text: { equals: alert.workflowId } });
+    const runPage = failure.runId
+      ? await queryOne(RUNS_DS, { property: "Run ID", rich_text: { equals: failure.runId } })
+      : null;
+    return { zapId: zapPage ? String(zapPage.id) : null, runRowId: runPage ? String(runPage.id) : null };
+  });
+
   const existing = await ctx.step("find-ticket", async () => {
     const page = await queryOne(TRIAGE_DS, {
       property: "Signature",
@@ -323,6 +517,7 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
       occurrences: numberProp(page, "Occurrences"),
       status: statusProp(page, "Status"),
       zapLinked: relationIds(page, "Zap").length > 0,
+      runIds: relationIds(page, "Zap Runs"),
     };
   });
 
@@ -331,11 +526,16 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
     await ctx.step("update-ticket", async () => {
       const properties: Record<string, unknown> = {
         Occurrences: { number: existing.occurrences + 1 },
-        "Last Seen": { date: { start: seenAt } },
-        "Error Message": { rich_text: richText(alert.message) },
+        "Last Seen": { date: { start: occurredAt } },
+        "Error Message": { rich_text: richText(failure.message) },
       };
+      if (failure.failingStep) properties["Failing Step"] = { rich_text: richText(failure.failingStep) };
       if (reopen) properties.Status = { status: { name: STATUS_NEW } };
-      if (!existing.zapLinked) properties.Zap = { relation: [{ id: zap.id }] };
+      if (!existing.zapLinked && links.zapId) properties.Zap = { relation: [{ id: links.zapId }] };
+      if (links.runRowId && !existing.runIds.includes(links.runRowId)) {
+        const ids = [links.runRowId, ...existing.runIds].slice(0, MAX_RUNS_PER_TICKET);
+        properties["Zap Runs"] = { relation: ids.map((id) => ({ id })) };
+      }
       await notion(`/pages/${existing.id}`, "PATCH", { properties });
       return null;
     });
@@ -345,25 +545,29 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
       signature,
       occurrences: existing.occurrences + 1,
       reopened: reopen,
+      runFound: Boolean(run),
     };
   }
 
   const created = await ctx.step("create-ticket", async () => {
-    const page = await createPageWithTemplate({
-      Ticket: { title: richText(ticketTitle(alert)) },
+    const properties: Record<string, unknown> = {
+      Ticket: { title: richText(titleOf(alert.zapName, failure)) },
       Signature: { rich_text: richText(signature) },
-      Zap: { relation: [{ id: zap.id }] },
-      "Error Type": { rich_text: richText(ERROR_TYPE_LABEL[alert.kind]) },
-      "Error Message": { rich_text: richText(alert.message) },
+      "Error Type": { rich_text: richText(failure.errorType) },
+      "Error Message": { rich_text: richText(failure.message) },
       Occurrences: { number: 1 },
-      "First Seen": { date: { start: seenAt } },
-      "Last Seen": { date: { start: seenAt } },
+      "First Seen": { date: { start: occurredAt } },
+      "Last Seen": { date: { start: occurredAt } },
       Status: { status: { name: STATUS_NEW } },
-    });
+    };
+    if (failure.failingStep) properties["Failing Step"] = { rich_text: richText(failure.failingStep) };
+    if (links.zapId) properties.Zap = { relation: [{ id: links.zapId }] };
+    if (links.runRowId) properties["Zap Runs"] = { relation: [{ id: links.runRowId }] };
+    const page = await createPageWithTemplate(properties);
     return { id: String(page?.id ?? ""), url: firstString(page?.url) };
   });
 
-  return { action: "created", ticketId: created.id, url: created.url, signature };
+  return { action: "created", ticketId: created.id, url: created.url, signature, runFound: Boolean(run) };
 });
 
 export default workflow;
