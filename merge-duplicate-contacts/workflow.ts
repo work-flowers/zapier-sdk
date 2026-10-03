@@ -12,6 +12,17 @@ const NOTION_VERSION = "2026-03-11";
 
 const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 
+// Jev (TypeSafe's typed-judgement model), called through Zapier's authenticated
+// fetch: the API key lives in an "API by Zapier" connection (Bearer auth), so it
+// never appears in source. Consulted ONLY when the deterministic rules decline
+// because the names don't match — see `jevVerdict`. Each call is a Zapier task,
+// plus a fraction of a cent of TypeSafe usage.
+const JEV_CONNECTION = "typesafe";
+const JEV_URL = "https://api.typesafe.ai/v1/systemone";
+// `jev-latest` moves when TypeSafe ships a release. The thresholds below were
+// checked against jev-1.13.0; the answering model is logged on every call.
+const JEV_MODEL = "jev-latest";
+
 // --- Why this workflow exists ----------------------------------------------
 //
 // It replaces the "Contact Merger" Notion Custom Agent, which merged Contacts
@@ -473,6 +484,9 @@ async function planMerge(
 interface Verdict {
   merge: boolean;
   reason: string;
+  /** True only for the "names don't match, no LinkedIn either way" decline —
+   *  the one case Jev may overturn. A LinkedIn conflict is never eligible. */
+  jevEligible?: boolean;
 }
 
 /**
@@ -510,7 +524,133 @@ function corroborate(source: PageState, target: PageState): Verdict {
     reason:
       `names are not equivalent ("${sName || "?"}" vs "${tName || "?"}") and no shared ` +
       `LinkedIn profile — a shared email address alone is not evidence of one person`,
+    jevEligible: true,
   };
+}
+
+// --- Second opinion from Jev ---------------------------------------------------
+//
+// The name rule declines real duplicates whose names differ in ways token
+// sorting can't see. Both such declines in the first two months were the same
+// person: "Ustaz Syakir" vs "Syakir Samsaimon" (Ustaz is a Malay honorific, and
+// each page's Note named the other), and "New Contact" vs "Alasdair Bell" (a
+// placeholder name on a record with the identical personal-domain address).
+// A person had already set `Duplicate of` both times.
+//
+// So when — and only when — the rules decline on names, Jev is asked whether
+// the two records are one person and how strong the linking evidence is. Both
+// must clear their bar to merge. Everything else stands as it was: a LinkedIn
+// conflict is still a hard decline that Jev never sees, and a Jev failure falls
+// back to the rules' decline.
+
+/** Contact properties shown to Jev, by name. Only identity-bearing fields. */
+const SUMMARY_FIELDS = [
+  "Name",
+  "First Name",
+  "Last Name",
+  "Primary Email",
+  "Secondary Email",
+  "Linkedin",
+  "Job Title",
+  "Company",
+  "City",
+  "Country",
+  "Note",
+  "Bio",
+];
+const SUMMARY_TEXT_CAP = 600;
+
+/** Plain text of one Notion property value, for the types a Contact uses. */
+function plainValue(prop: any): string | string[] | null {
+  if (!prop) return null;
+  const text = (rich: any[]) =>
+    (rich ?? []).map((t: any) => firstString(t?.plain_text) ?? "").join("").trim();
+  switch (prop.type) {
+    case "title":
+      return plainTitle(prop).trim() || null;
+    case "rich_text":
+      return text(prop.rich_text).slice(0, SUMMARY_TEXT_CAP) || null;
+    case "email":
+      return firstString(prop.email);
+    case "url":
+      return firstString(prop.url);
+    case "phone_number":
+      return firstString(prop.phone_number);
+    case "select":
+      return firstString(prop.select?.name);
+    case "multi_select": {
+      const names = (prop.multi_select ?? []).map((o: any) => firstString(o?.name)).filter(Boolean);
+      return names.length ? (names as string[]) : null;
+    }
+    case "rollup": {
+      const items = (prop.rollup?.array ?? [])
+        .map((v: any) => {
+          const inner = plainValue(v);
+          return Array.isArray(inner) ? inner.join(", ") : inner;
+        })
+        .filter(Boolean);
+      return items.length ? (items as string[]) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** The identity-bearing fields of a Contact, empty ones left out. */
+function contactSummary(page: PageState): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const field of SUMMARY_FIELDS) {
+    const value = plainValue(page.properties[field]);
+    if (value !== null && value !== "") out[field] = value;
+  }
+  return out;
+}
+
+const JEV_QUESTIONS = {
+  same_person: {
+    type: "noul",
+    instructions: "Do `record_a` and `record_b` describe the same real person?",
+    criteria: {
+      true: "The evidence ties both records to one individual: compatible names allowing for honorifics, nicknames, word order or a placeholder name, plus a strong shared identifier such as the same personal email address or a note linking them.",
+      false:
+        "They are different people, or nothing beyond a shared company, a shared common name, or a shared generic/role address connects them.",
+    },
+  },
+  evidence: {
+    type: "score",
+    instructions: "How strong is the identifying evidence that links `record_a` and `record_b` to one person?",
+    criteria: [
+      "Nothing links them beyond coincidence",
+      "Only weak signals such as a common name or the same employer",
+      "One strong identifier, such as an identical personal email address or an explicit note",
+      "Several independent strong identifiers agree",
+    ],
+  },
+};
+
+/** Both bars must clear. Checked against jev-1.13.0: the two real declines
+ *  scored 0.96 / 2.4 and 0.88 / 2.0; a one-shared-address pair, two colleagues
+ *  and two different Grace Tangs scored at most 0.35 / 1.0. */
+const JEV_SAME_PERSON_MIN = 0.85;
+const JEV_EVIDENCE_MIN = 2.0;
+
+/** The merge decision from a Jev response body; a malformed one declines. */
+function jevVerdict(body: any): Verdict {
+  const p = body?.answers?.same_person?.noul;
+  const e = body?.answers?.evidence?.score;
+  if (typeof p !== "number" || typeof e !== "number") {
+    return { merge: false, reason: "Jev returned no usable answer" };
+  }
+  const scores = `Jev ${body?.model ?? "?"}: same person ${p.toFixed(2)}, evidence ${e.toFixed(1)}/3`;
+  if (p >= JEV_SAME_PERSON_MIN && e >= JEV_EVIDENCE_MIN) {
+    return { merge: true, reason: `names differ, but the records are corroborated as one person (${scores})` };
+  }
+  return { merge: false, reason: `names differ and Jev did not corroborate one person (${scores})` };
+}
+
+/** Jev statuses worth a step retry: rate limits and server-side failures. */
+function isRetryableJevStatus(status: number): boolean {
+  return status === 429 || status >= 500;
 }
 
 // --- Workflow --------------------------------------------------------------
@@ -598,7 +738,39 @@ const workflow = defineDurable(
       };
     }
 
-    const verdict = corroborate(source, target);
+    let verdict = corroborate(source, target);
+    if (!verdict.merge && verdict.jevEligible) {
+      const rulesReason = verdict.reason;
+      const jev = await ctx.step("jev-same-person", async () => {
+        const res = await sdk.fetch(JEV_URL, {
+          connection: JEV_CONNECTION,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: JEV_MODEL,
+            state: { record_a: contactSummary(source), record_b: contactSummary(target) },
+            questions: JEV_QUESTIONS,
+          }),
+        });
+        const body = await res.text();
+        // Throw only where a retry can help; any other failure is returned and
+        // falls back to the rules' decline below.
+        if (isRetryableJevStatus(res.status)) {
+          throw new Error(`Jev ${res.status}: ${body.slice(0, 500)}`);
+        }
+        return { status: res.status, body };
+      });
+      if (jev.status === 200) {
+        const second = jevVerdict(JSON.parse(jev.body));
+        console.log(second.reason);
+        verdict = second.merge
+          ? second
+          : { merge: false, reason: `${rulesReason}; ${second.reason}` };
+      } else {
+        console.log(`Jev rejected the request (${jev.status}): ${jev.body.slice(0, 300)}`);
+        verdict = { merge: false, reason: `${rulesReason} (Jev unavailable: ${jev.status})` };
+      }
+    }
     if (!verdict.merge) {
       const commented = await ctx.step("comment-declined", async () =>
         commentOnce(

@@ -59,7 +59,9 @@ flowchart TD
     G -- yes --> H["Comment: mutual,<br/>no survivor"] --> Y(["Nothing copied"])
     G -- no --> I{"Corroborated?"}
     I -- "different LinkedIn URLs" --> J["Comment: two<br/>different people"] --> Y
-    I -- "no name match" --> J
+    I -- "no name match,<br/>no LinkedIn conflict" --> Q{"Jev: same person ≥ 0.85<br/>and evidence ≥ 2/3?"}
+    Q -- no --> J
+    Q -- yes --> K
     I -- "same LinkedIn<br/>or equivalent names" --> K["Re-read both,<br/>build patch"]
     K --> L["PATCH target:<br/>fill empties, OR checkboxes,<br/>UNION multi-values"]
     L --> M["Comment on source:<br/>what was copied,<br/>ready to archive"]
@@ -75,6 +77,7 @@ A set `Duplicate of` is the *request*, not the evidence.
 | Both have a LinkedIn URL, and they **differ** | **Hard decline.** Two real people — this beats a name match |
 | Same LinkedIn profile slug | Merge |
 | Equivalent names | Merge |
+| Names differ, no LinkedIn conflict, and **Jev** corroborates one person | Merge (see [Second opinion from Jev](#second-opinion-from-jev)) |
 | Anything else | Decline, with a comment |
 
 - **Name keys sort their tokens**, so "Sim Lionel" and "Lionel Sim" compare equal —
@@ -86,6 +89,44 @@ A set `Duplicate of` is the *request*, not the evidence.
   Lionel shared one address, no name match, and different LinkedIn profiles.
 - Differing employers or email domains are **not** a disqualifier on their own —
   people change jobs.
+
+## Second opinion from Jev
+
+**Added 2026-10-03.** The name rule declined both real duplicates it was asked to merge whose names differed in a way token sorting can't see:
+
+- **"Ustaz Syakir" → "Syakir Samsaimon"** (2026-08-03). *Ustaz* is a Malay honorific, and each page's `Note` names the other.
+- **"New Contact" → "Alasdair Bell"** (2026-09-11). A placeholder name on a record with the identical personal-domain address `ab@alasdairbell.com`.
+
+A person had set `Duplicate of` both times. So when — and only when — the rules decline **because the names don't match** (no LinkedIn on either side, or only on one), the workflow asks **Jev**, TypeSafe's typed-judgement model, two questions about the pair, and merges only if both clear their bar:
+
+| Question | Type | Bar |
+| --- | --- | --- |
+| Do the two records describe the same real person? | yes/no probability | ≥ 0.85 |
+| How strong is the identifying evidence linking them? | score, 0 (coincidence) to 3 (several independent strong identifiers) | ≥ 2.0 (at least one strong identifier) |
+
+Jev sees only identity-bearing fields (`contactSummary`): Name, First/Last Name, Primary and Secondary Email, LinkedIn, Job Title, Company, City, Country, and `Note`/`Bio` capped at 600 characters. It is called through `sdk.fetch` with the `typesafe` connection (an *API by Zapier* connection holding the TypeSafe key), in its own `jev-same-person` step.
+
+What does **not** change: a LinkedIn conflict is still a hard decline that Jev never sees; equivalent names or a shared LinkedIn profile still merge on the rules alone, with no Jev call; nothing is ever deleted. Failure falls back to the rules: a `429`/`5xx` retries the step, any other error or a malformed answer declines with the rules' reason. Declines carry Jev's scores in the comment, and merges name them in the reason, so every decision is auditable.
+
+**Cost:** one extra call, only on the name-mismatch path — so a Zapier task plus a fraction of a cent of TypeSafe usage, a handful of times a month at most.
+
+### Verified offline (2026-10-03, `jev-1.13.0`)
+
+The six real `Duplicate of` requests in run history, replayed from live Notion reads through the real `corroborate` / `contactSummary` / `jevVerdict` code (read-only), plus four constructed negatives:
+
+| Pair | Truth | Before | Now |
+| --- | --- | --- | --- |
+| Ustaz Syakir → Syakir Samsaimon | same | declined | **merge** (0.97, 2.5) |
+| New Contact → Alasdair Bell | same | declined | **merge** (0.89, 2.0) |
+| ZZ fixtures, different LinkedIn | different | declined | declined (rules, unchanged) |
+| ZZ fixtures, equivalent names; Brett Ritchie, Marcus Cheu (same LinkedIn) | same | merged | merged (rules, unchanged)¹ |
+| One shared address, different names (Sachin/Lionel shape) | different | declined | declined (0.07, 1.0) |
+| Two colleagues on one work domain | different | declined | declined (0.02, 1.0) |
+| Two Grace Tangs, different employers | different | declined | declined (0.35, 1.0) |
+
+¹ Their source pages have since been deleted, so a replay reads them as empty; the live workflow stops on a deleted page before corroboration. Jev scored those empty-vs-real pairs at ≤ 0.15, the safe direction.
+
+The thresholds were chosen on these few cases. Re-run them (and any new real declines) before moving `JEV_SAME_PERSON_MIN` or `JEV_EVIDENCE_MIN`. `npm test` runs 17 offline assertions over the corroboration rules, the summary and the decision, including the real scores above.
 
 ## Copy rules
 
@@ -164,7 +205,7 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"typesafe":{"connectionId":"02c36cbc-669d-8c82-9c72-7b7813e5cde0"}}' \
   --input '{"data":{"id":"<source-contact-page-id>"}}' \
   --private
 ```
@@ -193,7 +234,7 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connection_id":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
+  --connections '{"notion_wf":{"connection_id":"02b73654-15c8-85c3-b16a-07304d2beb17"},"typesafe":{"connection_id":"02c36cbc-669d-8c82-9c72-7b7813e5cde0"}}' \
   --trigger '{"selected_api":"WebHookCLIAPI@1.1.1","action":"hook_v2","params":{}}' \
   --json
 ```
