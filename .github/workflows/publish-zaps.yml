@@ -32,7 +32,8 @@ on:
     types: [closed]
     branches: [main]
 
-# Serialize publishes so two quick merges can't race on pushing zap.json to main.
+# Serialize publishes so two publish jobs can't race on pushing zap.json to main.
+# A merge that lands mid-publish is handled by the rebase-and-retry sync-back.
 concurrency:
   group: publish-zaps
   cancel-in-progress: false
@@ -143,4 +144,24 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -- '**/zap.json'
           git commit -m "Sync current_version_id after publishing (PR #${PR_NUMBER}) [skip ci]"
-          git push origin HEAD:main
+
+          # The concurrency group serializes publish jobs, but not merges: any PR
+          # (Zap-affecting or not) that lands on main while this job publishes
+          # makes the push non-fast-forward. That race cost three hand syncs in
+          # Sep 2026 (PRs #178, #188, #191/#192). Rebase this zap.json-only
+          # commit onto the new main and retry; a real conflict (the other PR
+          # edited the same zap.json lines) aborts and fails loudly instead.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto the latest main."
+            if ! git pull --rebase origin main; then
+              git rebase --abort || true
+              echo "::error::Sync-back rebase conflicted with a newer commit on main. The publish succeeded; sync zap.json by hand."
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "::error::Sync-back push still rejected after 5 attempts. The publish succeeded; sync zap.json by hand."
+          exit 1
