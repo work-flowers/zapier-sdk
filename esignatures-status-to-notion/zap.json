@@ -10,7 +10,7 @@
       "enabled": true,
       "is_private": false,
       "trigger": {
-        "selected_api": "EsignaturesioCLIAPI@1.3.17",
+        "selected_api": "EsignaturesioCLIAPI@1.4.2",
         "action": "contract_sent_to_signer",
         "authentication_id": "026935e5-48e9-8cea-9bfc-c46d042addf7",
         "params": {},
@@ -33,7 +33,7 @@
       "enabled": true,
       "is_private": false,
       "trigger": {
-        "selected_api": "EsignaturesioCLIAPI@1.3.17",
+        "selected_api": "EsignaturesioCLIAPI@1.4.2",
         "action": "contract_signed",
         "authentication_id": "026935e5-48e9-8cea-9bfc-c46d042addf7",
         "params": {},

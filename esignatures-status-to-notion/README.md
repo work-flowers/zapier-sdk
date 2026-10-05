@@ -155,6 +155,23 @@ subscription itself.
 
 To stop the parallel run in the meantime: `zapier-sdk --experimental disable-workflow <id>`.
 
+## Outage: 2026-09-28 to 2026-10-05
+
+Neither deployment received a real event after the 2026-09-28 republish. The first real NDA send
+on 2026-10-05 reached the signer, but the sent workflow never ran. The
+trigger still reported `active`. Toggling both workflows off and on then failed outright: Zapier
+disabled both with `trigger_claim_failed` / `Trigger initialization failed.`
+
+The likely cause is the trigger pin: `zap.json` pinned `EsignaturesioCLIAPI@1.3.17` while the
+connection had moved on to `1.4.2`. Both triggers still exist in `1.4.2` with zero input fields, so
+the pin was bumped and both deployments republished. The affected record was fixed by replaying the
+sent workflow by hand with `{"contract":{"id":…}}`.
+
+**If a send or signature doesn't move a record, run `get-workflow` and check `disabled_reason` and
+the trigger `status`.** A trigger reporting `active` did not mean events were arriving here. To fix a
+record, replay with `trigger-workflow <id> --input '{"contract":{"id":"<contract id>"}}'`. A signed
+replay also needs the PDF URL from the event, and it expires 72 hours after signing.
+
 ## Maintainer notes
 
 - **The status option names differ between the data sources** — SOWs uses `Sent for signature`
