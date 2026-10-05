@@ -40,6 +40,10 @@ const TICKET_PROP = "Ticket ID"; // unique_id property behind TKT-###
 // never a silent cap). Guards the first-link run against a monster thread.
 const BACKFILL_CAP = 50;
 
+// Slack expires an unanswered approval after 30 days; the callback outlives it
+// by a day so the expiry (if Zapier reports one) still arrives first.
+const APPROVAL_CALLBACK_SECONDS = 31 * 24 * 60 * 60;
+
 const InputSchema = z.unknown();
 type Input = Record<string, unknown>;
 
@@ -54,6 +58,25 @@ function normalizeInput(rawInput: unknown): unknown {
     }
   }
   return rawInput;
+}
+
+/**
+ * The approver's decision ("Approved", …) from a Request Approval action run —
+ * either a getActionRun result or the body Zapier POSTs to the callbackUrl
+ * (documented as the same shape; tolerate a `data` envelope either way).
+ */
+export function approvalDecision(run: unknown): string | undefined {
+  let r: unknown = run;
+  for (let i = 0; i < 2 && r && typeof r === "object" && "data" in r; i++) {
+    r = (r as { data?: unknown }).data;
+  }
+  if (Array.isArray(r)) r = { results: r };
+  if (!r || typeof r !== "object") return undefined;
+  const results = (r as { results?: unknown }).results;
+  const first = Array.isArray(results) ? results[0] : undefined;
+  const status =
+    first && typeof first === "object" ? (first as { status?: unknown }).status : undefined;
+  return typeof status === "string" && status.length > 0 ? status : undefined;
 }
 
 function firstString(v: unknown): string {
@@ -620,19 +643,28 @@ async function linkThread(
     }
   }
 
-  // Approval gate: a mention alone no longer links a thread. The Request
-  // Approval action BLOCKS the durable until someone clicks (verified by spike
-  // 2026-09-29) and expires after 30 days, so an ignored request simply never
-  // resumes. There is deliberately no pending row and no Decline button: an
-  // unanswered or ignored request means "do nothing", and mentioning a page
-  // again (same thread or another) re-prompts. Anyone in the thread may approve.
+  // Approval gate: a mention alone no longer links a thread. Slack's Request
+  // Approval action holds until someone clicks (expires after 30 days), so it
+  // must NOT go through sdk.runAction: that polls for at most 180s, then throws
+  // ZAPIER_TIMEOUT_ERROR, and every step retry posted a NEW prompt into the
+  // thread (2026-10-05, #deal-alfalah: four prompts, and the click landed on a
+  // timed-out attempt so nothing linked). Instead the prompt is started once
+  // with createActionRun, whose callbackUrl is a durable callback: Zapier POSTs
+  // the finished run there and the run parks at no cost until then. There is
+  // deliberately no pending row and no Decline button: an ignored request means
+  // "do nothing", and mentioning a page again re-prompts. Anyone may approve.
   const title = await ctx.step("get-page-title", async () => pageTitle(pageId!));
-  const approval = await ctx.step("request-approval", async () =>
-    sdk.runAction({
-      appKey: SLACK_APP_KEY,
+  const [approvalDone, approvalCallbackUrl] = await ctx.createCallback({
+    name: "approval-result",
+    timeoutSeconds: APPROVAL_CALLBACK_SECONDS,
+  });
+  const approvalRunId = await ctx.step("start-approval", async () => {
+    const started = await sdk.createActionRun({
+      app: SLACK_APP_KEY,
       actionType: "write",
-      actionKey: "request_approval",
+      action: "request_approval",
       connection: SLACK_CONNECTION,
+      callbackUrl: approvalCallbackUrl,
       inputs: {
         request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
         send_as: "bot",
@@ -642,13 +674,29 @@ async function linkThread(
         username: "Notion Sync",
         icon: ":notion:",
       },
-    }),
-  );
-  const decision = (approval as { data?: Array<{ status?: unknown }> }).data?.[0]
-    ?.status;
+    });
+    return started.data.id;
+  });
+  const approvalOutcome = await approvalDone;
+  if (approvalOutcome.status === "expired") {
+    console.log(`approval ${approvalRunId} for ${msg.channelId}/${msg.threadTs} never answered — not linking`);
+    return { handled: "approval-expired" };
+  }
+  // Read the decision from the action run itself; fall back to the callback
+  // body once the run has aged out of Zapier's 7-day result retention.
+  const decision = await ctx.step("read-approval", async () => {
+    try {
+      const run = await sdk.getActionRun({ run: approvalRunId });
+      const fromRun = approvalDecision(run);
+      if (fromRun) return fromRun;
+    } catch (err) {
+      console.log(`getActionRun ${approvalRunId} failed (${String(err)}) — using the callback body`);
+    }
+    return approvalDecision(approvalOutcome.value) ?? "unknown";
+  });
   if (decision !== "Approved") {
-    console.log(`approval for ${msg.channelId}/${msg.threadTs} returned ${String(decision)} — not linking`);
-    return { handled: "not-approved", decision: String(decision) };
+    console.log(`approval for ${msg.channelId}/${msg.threadTs} returned ${decision} — not linking`);
+    return { handled: "not-approved", decision };
   }
 
   // The run may have been parked for days; another approval (or mention) can

@@ -27,9 +27,10 @@ flowchart TD
     Q -- not found --> N[post warning reply in Slack thread]
     Q -- found --> X{URL-provided page:\naccessible to notion_wf?}
     X -- no --> S5[skip - not a linkable page, no reply]
-    X -- yes --> AP[post Request Approval in thread\nrun parks until click]
+    X -- yes --> AP[start Request Approval once via createActionRun\ncallbackUrl = durable callback, run parks]
     AP -- "no click, expires after 30 days" --> S6[nothing happens]
-    AP -- Approve --> RC{thread linked meanwhile?}
+    AP -- "callback: run finished" --> RD[read decision: getActionRun,\nelse callback body]
+    RD -- Approved --> RC{thread linked meanwhile?}
     RC -- yes --> S7[skip]
     RC -- no --> P[create page-level discussion\nwith Slack permalink header]
     P --> M[write thread_map row state=active]
@@ -40,9 +41,10 @@ flowchart TD
 
 ## Behaviour notes
 
-- **Opt-in is a mention, then one approval click.** The ticket ID can arrive mid-thread; the backfill covers everything before it. The approval is Slack's `request_approval` action, posted as a thread reply (`approval_type: channel`, `thread_ts`) with **no Decline button and no approver restriction**. Verified by spike 2026-09-29: the action **blocks the durable** until someone clicks and returns `status: "Approved"` with the `responder`; Zapier expires unanswered requests after **30 days**, at which point nothing happens.
+- **Opt-in is a mention, then one approval click.** The ticket ID can arrive mid-thread; the backfill covers everything before it. The approval is Slack's `request_approval` action, posted as a thread reply (`approval_type: channel`, `thread_ts`) with **no Decline button and no approver restriction**. It holds until someone clicks and returns `status: "Approved"` with the `responder`; Zapier expires unanswered requests after **30 days**, at which point nothing happens.
+- **The approval is started with `createActionRun`, never `runAction`.** `runAction` polls for at most 180s and then throws `ZAPIER_TIMEOUT_ERROR`; inside a `ctx.step` that throw was retried, and **every retry posted another prompt** (2026-10-05, `#deal-alfalah`: four prompts ~4 min apart, and the one approval landed on an attempt that had already timed out, so nothing linked). The 2026-09-29 spike only "blocked" because it was clicked inside those 180s. Now the `start-approval` step posts the prompt once, passing a `ctx.createCallback` URL (31-day deadline) as `callbackUrl`. Zapier POSTs the finished run there, and the parked run wakes and reads the decision with `getActionRun`, falling back to the callback body once the run is past Zapier's 7-day result retention.
 - **No pending row, by design.** An ignored request leaves no state, so mentioning a page again (same thread or another) re-prompts. After approval the run re-checks `thread_map` so a slow second approval never opens a duplicate discussion.
-- **Republishing this Zap may orphan waiting approvals.** Zapier's docs say pending runs on a previous version won't run (documented for classic Zaps; untested on durables). Anyone whose request was pending after a republish just re-mentions the page.
+- **Republishing this Zap may orphan waiting approvals.** Zapier's docs say pending runs on a previous version won't run (documented for classic Zaps; untested on durables). Approvals parked on the old `runAction` version (before the callback fix) cannot complete either way: they time out and exhaust their retries. Anyone whose request was pending after a republish just re-mentions the page.
 - **Echo suppression** is two-layer: the companion Zap posts to Slack `as_bot`, so `user.is_bot` drops it here (the trigger's `listen_for_bots: no` is set too but has proven inconsistent — the code re-checks); `message_map` dedupe covers replays.
 - **A `TKT-###` that doesn't resolve** posts a `:warning:` reply into the thread — visible to the person who typed it, never a silent drop or a red run for a typo.
 - **A pasted Notion URL that can't host a discussion** is checked with a `GET /v1/pages/{id}` against `notion_wf` before any discussion is opened, and the thread is just left unlinked — no reply, since (unlike a mistyped `TKT-###`) none of these is a mistake the poster needs to be told about. A **404** means the page is outside the work.flowers workspace. A **400 validation_error ("Provided ID … is a database, not a page")** means the URL points at a database (full-page database links parse identically — hit live 2026-09-28 in `#general` when the NDA-workflow announcement linked the NDAs database, ticket 54); the 400 is deterministic, so retrying cannot succeed, and `pageAccessible` returns false for both cases. The access check also avoids posting into channels the sync bot isn't permitted to post in (e.g. Slack Connect channels the app isn't approved for) — a real failure mode hit in `#proj-notion-setup-sessions-ops` when an earlier version of this guard tried to reply.
