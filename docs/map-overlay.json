@@ -345,7 +345,7 @@
     "folder:setup-session-screenshots": {
       "type": "drive_folder",
       "id": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM",
-      "name": "Notion Setup Sessions screenshots"
+      "name": "Notion Setup Sessions screenshots & CSVs"
     },
     "table:drive-files": {
       "type": "table",

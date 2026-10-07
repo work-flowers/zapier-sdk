@@ -74,7 +74,7 @@
   },
   "determinism_note": "No calendar arithmetic is needed — the AI already returns the reporting month's last day — so unlike drive-invoice-to-xero there's no daysFromCivil/isoDateFromEpochMs pair. toIsoDate + daysInMonth exist purely to validate the AI's date string is a real calendar date via integer math before it reaches Xero. `Date` is not referenced anywhere in workflow.ts.",
   "rename_gotcha": "update_file_name's `file` input takes the plain Drive file ID (file.id), NOT the AI step's hydrate token (file.fileRef) used for image content. Passing the hydrate token 404s — caught live during pre-publish testing (run 019fd188), fixed before the version that actually published. drive-invoice-to-xero's rename step already used file.id; this migration initially missed that and copied file.fileRef by mistake.",
-  "description": "Monthly 'Notion Setup Sessions' activity screenshot added to the Drive folder -> AI by Zapier (advanced/auto) extracts one line item per consultant/session-type combination -> map session type to Xero item code -> resolve the invoice period (majority value across rows) -> create a DRAFT Xero sales invoice billing Notion Labs, Inc. -> rename the screenshot to '<invoice period> Notion Setup Sessions'. Migration of the classic Zap 'Generate Setup Session Invoice'. Unlike drive-invoice-to-xero (which raises bills against varying vendor names extracted from documents), this Zap bills one fixed, constant customer, so it carries none of that Zap's vendor-contact-resolution complexity.",
+  "description": "Monthly 'Notion Setup Sessions' activity report added to the Drive folder, as a screenshot or the Notion CSV export -> a CSV is parsed in code (no AI task); a screenshot goes to AI by Zapier (advanced/auto) -> one line item per consultant/session-type combination -> map session type to Xero item code -> resolve the invoice period (majority value across rows) -> create a DRAFT Xero sales invoice billing Notion Labs, Inc. -> rename the file to '<invoice period> Notion Setup Sessions' (plus '.csv' for a CSV). Migration of the classic Zap 'Generate Setup Session Invoice'. Unlike drive-invoice-to-xero (which raises bills against varying vendor names extracted from documents), this Zap bills one fixed, constant customer, so it carries none of that Zap's vendor-contact-resolution complexity.",
   "testing_note": "Tested end-to-end via run-durable against the real, already-processed 2026-06-30 screenshot before publishing (repo rule: never test only the skip path). First attempt hit the rename bug above; the invoice it created (a773938c-5112-4bd4-9ad8-281265a5b504) was deleted from Xero via update_sales_invoice invoice_status=deleted (confirmed via a raw GET afterward). Second attempt, with the fix, completed cleanly (invoiceId 0cda0de5-d87d-45ec-a654-70a19da84311, 10 line items, invoicePeriod 2026-06-30, periodUnanimous true, renamedTo matching the file's existing name) and was likewise deleted from Xero as a test artifact before publishing — production runs start clean.",
   "replaces_classic_zap": {
     "title": "Generate Setup Session Invoice",
@@ -84,5 +84,21 @@
     "model_change": "Classic Zap pinned OpenAI gpt-5.4-mini explicitly (provider_id/model_id on AI by Zapier). This migration uses the repo's tier-sentinel convention instead (advanced/auto), chosen after A/B testing per the ai_model note above rather than carried over unexamined."
   },
   "created_at": "2026-08-05T10:55:50.928Z",
-  "version_created_at": "2026-08-05T10:56:10.712Z"
+  "version_created_at": "2026-08-05T10:56:10.712Z",
+  "csv_input": {
+    "added": "2026-10-06",
+    "download": "sdk.fetch GET https://www.googleapis.com/drive/v3/files/{id}?alt=media&supportsAllDrives=true on the gdrive connection (Relay); verified the Drive API answers through this connection with the CLI before shipping.",
+    "columns_to_session_type": {
+      "Calls Completed": "Calls Completed",
+      "No Shows": "No-Shows",
+      "Late Cancellations": "Late Cancellations",
+      "Workspace Conversions": "Workspace Conversions",
+      "Seats Added": "Seats Added"
+    },
+    "throws_on_nonzero": [
+      "AE Assist Calls Completed",
+      "Custom Adjustment Amount"
+    ],
+    "note": "No Xero item code exists for the two throws_on_nonzero columns, so a non-zero value fails the run rather than silently under-billing. Total Payout is logged as a cross-check against Xero's item prices, never billed from."
+  }
 }
