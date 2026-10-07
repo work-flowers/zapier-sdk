@@ -133,6 +133,15 @@ function sameAddress(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
+/** A value safe to write to a Notion `select`: Notion rejects any option
+ *  containing a comma ("Invalid select option, commas not allowed"), and that
+ *  rejection fails the whole contact update, so commas are dropped
+ *  ("Washington, D.C." → "Washington D.C."). Known country forms are mapped to
+ *  existing options first — see `countryName`. */
+function selectOption(value: string): string {
+  return value.replace(/\s*,\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
 /** The list with blanks dropped and each address kept once, first occurrence
  *  winning and case ignored (see `sameAddress`). */
 function dedupeAddresses(addresses: string[]): string[] {
@@ -408,6 +417,42 @@ function harvestEmployerDomain(row: any): string {
   return normalizeDomain(firstString(current?.company?.website));
 }
 
+/** ISO 3166 names HarvestAPI's `location.parsed.country` uses, mapped to the
+ *  common names the Contacts `Country` select already holds ("South Korea",
+ *  "Vietnam", "Taiwan"). The comma forms are not just cosmetic: Notion rejects
+ *  a select option containing a comma, and "Korea, Republic of" failed the
+ *  whole contact update on 2026-10-07. */
+const COUNTRY_ALIASES: Record<string, string> = {
+  "korea, republic of": "South Korea",
+  "republic of korea": "South Korea",
+  "korea, democratic people's republic of": "North Korea",
+  "taiwan, province of china": "Taiwan",
+  "viet nam": "Vietnam",
+  "russian federation": "Russia",
+  "türkiye": "Turkey",
+  "iran, islamic republic of": "Iran",
+  "syrian arab republic": "Syria",
+  "lao people's democratic republic": "Laos",
+  "tanzania, united republic of": "Tanzania",
+  "venezuela, bolivarian republic of": "Venezuela",
+  "bolivia, plurinational state of": "Bolivia",
+  "moldova, republic of": "Moldova",
+  "micronesia, federated states of": "Micronesia",
+  "palestine, state of": "Palestine",
+  "congo, the democratic republic of the": "Democratic Republic of the Congo",
+  "congo, democratic republic of the": "Democratic Republic of the Congo",
+  "macedonia, the former yugoslav republic of": "North Macedonia",
+  "virgin islands, british": "British Virgin Islands",
+  "virgin islands, u.s.": "U.S. Virgin Islands",
+  "united kingdom of great britain and northern ireland": "United Kingdom",
+  "united states of america": "United States",
+};
+
+function countryName(raw: string | null): string {
+  const v = (raw ?? "").trim();
+  return COUNTRY_ALIASES[v.toLowerCase()] ?? v;
+}
+
 /** True when the row is a real profile (an unknown URL returns no row). */
 function harvestRowUsable(row: any): boolean {
   if (!row || typeof row !== "object") return false;
@@ -425,7 +470,7 @@ function extractEnrichedFromHarvest(row: any): EnrichedData {
     source: "harvestapi",
     emailSource: newEmail ? "harvestapi" : null,
     linkedinUrl: firstString(row?.linkedinUrl) ?? "",
-    country: firstString(parsed.country) ?? "",
+    country: countryName(firstString(parsed.country)),
     city: firstString(parsed.city) ?? "",
     newEmail,
     bio: (firstString(row?.about) ?? "").slice(0, BIO_MAX_CHARS),
@@ -840,8 +885,8 @@ async function updateContactRecord(
     "properties|||First Name|||rich_text": firstName,
     "properties|||Last Name|||rich_text": lastName,
     "properties|||Bio|||rich_text": enriched.bio,
-    "properties|||Country|||select": enriched.country,
-    "properties|||City|||select": enriched.city,
+    "properties|||Country|||select": selectOption(enriched.country),
+    "properties|||City|||select": selectOption(enriched.city),
     "properties|||Twitter|||url": "",
     use_zapier_datetime_fields: true,
   };

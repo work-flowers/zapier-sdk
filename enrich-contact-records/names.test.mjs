@@ -260,5 +260,20 @@ const commentOf = (log) => JSON.parse(log.find((e) => e.fetch)?.body ?? "{}").ri
   check("a contact with no name takes LinkedIn's", updateOf(log)["properties|||Name|||title"], "Alice Peng");
 }
 
+{
+  // 2026-10-07 live failure: Notion rejects a select option with a comma.
+  const { log } = await run(withLi(), {
+    harvest: harvestRow({ location: { parsed: { city: "Seoul", country: "Korea, Republic of" } } }),
+  });
+  check("ISO country name mapped to the existing option", updateOf(log)["properties|||Country|||select"], "South Korea");
+  const { log: log2 } = await run(withLi(), {
+    harvest: harvestRow({ location: { parsed: { city: "Washington, D.C.", country: "Bonaire, Sint Eustatius and Saba" } } }),
+  });
+  check("no select value ever carries a comma", [
+    updateOf(log2)["properties|||City|||select"],
+    updateOf(log2)["properties|||Country|||select"],
+  ], ["Washington D.C.", "Bonaire Sint Eustatius and Saba"]);
+}
+
 console.log(`\n${count - failures}/${count} passed`);
 if (failures) process.exit(1);
