@@ -1,20 +1,22 @@
 # expense-claim-to-xero-bill
 
-When someone submits a reimbursement claim to the Notion **🧾 Expense Claims DB**, this Zap raises a **draft** bill in Xero to pay them back. Then it links the bill from the claim.
+When a reimbursement claim in the Notion **🧾 Expense Claims DB** is set to **Approved**, this Zap raises a **draft** bill in Xero to pay the claimant back. Then it links the bill from the claim.
 
 | | |
 | --- | --- |
-| Trigger | Notion polling **New Data Source Item** on Expense Claims (`4c0a9038-54fc-4643-a63b-df4e52139219`) |
+| Trigger | Catch hook (`WebHookCLIAPI` `hook_v2`). A Notion database automation on Expense Claims (`4c0a9038-54fc-4643-a63b-df4e52139219`) POSTs the page when **Status is set to Approved**. The URL to paste in is `trigger.webhook_url` in [`zap.json`](zap.json), filled in after the first publish |
 | Writes | Xero draft bill (`new_bill`). Notion `Xero bill` URL property on the claim |
-| Connections | `notion_wf` (work.flowers Notion; also bound on the trigger), `xero_wf` (Xero work.flowers) |
+| Connections | `notion_wf` (work.flowers Notion), `xero_wf` (Xero work.flowers). The catch hook itself needs none |
 | Cost | 3 Xero tasks per claim (find contact, find existing bill, create bill). The Notion reads and write go through `sdk.fetch` |
 
 ## Flow
 
 ```mermaid
 flowchart TD
-  T[New claim in Expense Claims] --> R[Re-read the claim page]
-  R --> G{Trashed, Rejected,<br/>or Xero bill already set?}
+  T[Notion automation:<br/>Status set to Approved] --> P{Empty ping?}
+  P -- yes --> S0[Skip]
+  P -- no --> R[Re-read the claim page]
+  R --> G{Trashed, not Approved,<br/>or Xero bill already set?}
   G -- yes --> S[Skip]
   G -- no --> V{Amount, currency, category,<br/>date and claim ID present?}
   V -- no --> E1[Fail: list what's missing]
@@ -54,13 +56,13 @@ flowchart TD
 
 ## Failure modes and replays
 
-Each claim fires the trigger **exactly once**: new-item polling never re-delivers a page id. So when a run fails on a claim you can fix, fixing the claim does not re-run it. After the fix, replay it by hand:
+Editing a claim doesn't re-run it; only a change of Status does. After fixing a claim whose run failed, **set its Status away from Approved and back again**. That fires the automation once more. Or replay it by hand:
 
 ```bash
 npx zapier-sdk --stability experimental trigger-workflow <workflow_id> --input '{"page_id":"<claim page id>"}'
 ```
 
-A replay is safe at any point:
+A re-run is safe at any point, including a double approval:
 
 - If the claim already has a `Xero bill` link, the run is skipped.
 - If Xero already holds a live bill numbered `EXP-n` (say, a run created the bill and then died before the write-back), that bill is linked rather than duplicated. Deleted and voided bills don't count.
@@ -73,17 +75,24 @@ Every case below **fails the run on purpose**. That is the repo's default unreco
 | No active Xero contact has the claimant's email | Add the email to the claimant's Xero contact and replay. The Zap never creates contacts |
 | Several Xero contacts share that email | Archive or re-address the duplicates and replay |
 | Xero isn't subscribed to the claim's currency | Add the currency in Xero, or re-enter the claim in a currency Xero holds |
-| Page isn't in Expense Claims | A replay pointed at the wrong page |
+| Page isn't in Expense Claims | A replay, or another database's automation, pointed at the wrong page |
+| Payload has content but no page id | Check the Notion automation's webhook action. It must send the page |
 
-A **Rejected** claim, or a trashed one, is skipped without an error.
+Skipped without an error, with a log line:
+- an empty test ping (Notion's "test" button, a browser hit, a curl to check the URL)
+- a claim whose Status isn't Approved by the time the run reads it
+- a trashed claim
+- a claim already linked to a bill
 
-## Before it can run
+## Setup
 
-- **The Expense Claims DB must be shared with the Zapier Notion integration** (the `work.flowers | Dennis` connection, `02b73654-…`). Until it is, the trigger can't list the data source and every API read returns 404.
+- **Shared with the Zapier Notion integration:** done and verified on 2026-10-07. If this sharing is ever removed, every read of a claim returns 404.
+- **Notion automation:** on Expense Claims, add *When Status is set to Approved → Send webhook*, using the catch URL from `zap.json` once the PR has merged and the publisher has written it back. Notion doesn't expose automations to any API, so this step is manual and can't be checked by machine.
+- **Concurrency:** two approvals of one claim fired within seconds of each other could both pass the duplicate checks before either bill exists (see the repo's concurrency rule). A human flipping a status is unlikely to do this, and the second bill would carry the same `EXP-n` number, so it's easy to spot and void.
 
 ## Testing
 
-`npm test` runs offline assertions over the real helpers: payload shapes including the six empty-ping variants, claim parsing, absence-preserving amount handling, the Category map, tax mode, and contact and bill matching. It makes no Zapier calls.
+`npm test` runs offline assertions over the real helpers: payload shapes, including Notion's automation body and the six empty-ping variants, claim parsing, absence-preserving amount handling, the Category map, tax mode, and contact and bill matching. It makes no Zapier calls.
 
 Type-check (no tool on the publish path does this for you):
 

@@ -8,18 +8,16 @@
   "deploy": {
     "state": "pending-create",
     "workflow_name": "expense-claim-to-xero-bill",
-    "description": "New claim in the Notion Expense Claims data source -> resolve the claimant (Created by) to their Xero contact by email -> raise a DRAFT Xero bill EXP-<Claim ID> against that contact, account by Category, receipt attached -> write the bill link back to the claim's 'Xero bill' property.",
+    "description": "Notion Expense Claims automation webhook (Status -> Approved) -> resolve the claimant (Created by) to their Xero contact by email -> raise a DRAFT Xero bill EXP-<Claim ID> against that contact, account by Category, receipt attached -> write the bill link back to the claim's 'Xero bill' property.",
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "NotionCLIAPI@2.40.1",
-    "action": "new_data_source_item",
-    "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "params": {
-      "datasource": "4c0a9038-54fc-4643-a63b-df4e52139219"
-    },
-    "authentication_note": "work.flowers | Dennis — the same NotionCLIAPI connection as the notion_wf alias. The Expense Claims DB must be shared with the Zapier integration or the trigger and every API read 404.",
-    "trigger_note": "Notion POLLING 'New Data Source Item', one run per new claim. New-item polling is unaffected by the durable dedupe bug (W6ZE93-VMEWP) because every claim is a new page id — but it also means a claim fires exactly once: a run that fails on a fixable claim is replayed by hand with trigger-workflow --input '{\"page_id\":\"<id>\"}'. No external URL to wire up."
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. A Notion database automation on Expense Claims ('When Status is set to Approved' -> Send webhook) POSTs the page here; `webhook_url` is the URL to paste into that automation. The workflow re-reads the page and bills only a claim whose Status is Approved, so a stray POST or a test ping does nothing. Re-setting Status to Approved re-fires it, which is the normal way to retry a claim after fixing it. Catch hooks drop a repeat POST whose top-level `id` was already seen (W6ZE93-VMEWP); Notion's automation payload has no top-level `id` (the page is under `data`), so repeat approvals of one claim are delivered."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
@@ -32,7 +30,8 @@
   "notion": {
     "expense_claims_data_source": "4c0a9038-54fc-4643-a63b-df4e52139219",
     "api_version": "2026-03-11",
-    "note": "Write-back + guard property: 'Xero bill' (url), added 2026-10-07 with this Zap. Category options 'Training & courses', 'Events & sponsorship' and 'Memberships & publications' were added the same day. No page is created here, so repo rule 5 (default template) does not apply."
+    "note": "Write-back + guard property: 'Xero bill' (url), added 2026-10-07 with this Zap. Category options 'Training & courses', 'Events & sponsorship' and 'Memberships & publications' were added the same day. The data source is shared with the Zapier Notion integration (verified 2026-10-07). No page is created here, so repo rule 5 (default template) does not apply.",
+    "automation": "Configured by hand in Notion, not machine-verifiable: Expense Claims -> 'When Status is set to Approved' -> Send webhook to trigger.webhook_url."
   },
   "xero": {
     "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",

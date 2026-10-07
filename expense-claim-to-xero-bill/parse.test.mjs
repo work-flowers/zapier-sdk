@@ -77,8 +77,15 @@ test("empty pings skip; content never does", () => {
   }
 });
 
-test("page id extraction: trigger page, replay shapes, double-encoded input", () => {
+test("page id extraction: Notion automation webhook, replay shapes, double-encoded input", () => {
   const want = "1b2c3d4e-5f60-7182-93a4-b5c6d7e8f901";
+  const automation = {
+    source: { type: "automation", automation_id: "a1", action_id: "b2", event_id: "c3", attempt: 1 },
+    data: page(),
+  };
+  assert.equal(t.isEmptyPing(automation), false);
+  assert.equal(t.extractPageId(automation), want);
+  assert.equal(t.extractPageId(t.normalizeInput(JSON.stringify(automation))), want);
   assert.equal(t.extractPageId(page()), want);
   assert.equal(t.extractPageId({ page_id: want }), want);
   assert.equal(t.extractPageId({ data: { id: "1b2c3d4e5f60718293a4b5c6d7e8f901" } }), want);
@@ -174,6 +181,12 @@ test("line description carries merchant, purpose and claim number", () => {
     }),
   );
   assert.equal(t.lineDescription(bare), "Office supplies\nExpense claim EXP-7");
+});
+
+test("status is read so only Approved claims are billed", () => {
+  assert.equal(t.readClaim(page()).status, "Submitted");
+  assert.equal(t.readClaim(page({ properties: { Status: { status: { name: "Approved" } } } })).status, "Approved");
+  assert.equal(t.readClaim(page({ properties: { Status: { status: null } } })).status, "");
 });
 
 test("an existing Xero bill link or a trashed page is visible to the guards", () => {

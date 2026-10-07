@@ -5,10 +5,10 @@ import { createZapierSdk } from "@zapier/zapier-sdk";
 const sdk = createZapierSdk();
 
 // --- Bindings ----------------------------------------------------------------
-// The Notion connection is needed twice: on the TRIGGER (which polls the
-// Expense Claims data source) and as the `notion_wf` alias here, because the
-// code re-reads the claim, looks up the claimant's email and writes the bill
-// link back.
+// The trigger is a catch hook, so it needs no connection. A Notion database
+// automation on Expense Claims POSTs the page when Status becomes Approved.
+// `notion_wf` is used here to re-read the claim, look up the claimant's email
+// and write the bill link back.
 const NOTION_CONNECTION = "notion_wf"; // work.flowers workspace connection
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
@@ -63,6 +63,10 @@ export const CATEGORY_ACCOUNTS: Record<string, string> = {
  * before approval, so a receipt that isn't a valid tax invoice is fixed there.
  */
 const HOME_CURRENCY = "SGD";
+
+/** The only Status that raises a bill. The Notion automation fires on it; a
+ *  stray or hand-replayed POST for a claim in any other state is skipped. */
+const APPROVED_STATUS = "Approved";
 
 /** Bills are created for review, never posted automatically. */
 const BILL_STATUS = "draft";
@@ -120,8 +124,8 @@ function dashUuid(id: string): string {
 }
 
 /**
- * The polling trigger delivers the new page; a hand replay through
- * `trigger-workflow` can pass `{"page_id": "..."}`. A payload with content but
+ * Notion's automation webhook delivers `{ source, data: <page> }`; a hand
+ * replay through `trigger-workflow` can pass `{"page_id": "..."}`. A payload with content but
  * no recognisable id is a real event we failed to understand, so it throws.
  */
 function extractPageId(raw: unknown): string {
@@ -288,8 +292,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
   }
   const pageId = extractPageId(payload);
 
-  // 1. Re-read the claim rather than trusting the trigger's copy: a hand replay
-  //    passes only an id, and the write-back guard must see the current value.
+  // 1. Re-read the claim rather than trusting the webhook's copy: a hand replay
+  //    passes only an id, and the guards must see the current values.
   const page = await ctx.step("read-claim", async () => {
     const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
       connection: NOTION_CONNECTION,
@@ -311,16 +315,16 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
     console.log(`skipped: claim ${pageId} already links a Xero bill (${claim.existingBillUrl})`);
     return { skipped: "already-billed", pageId, billUrl: claim.existingBillUrl };
   }
-  if (claim.status === "Rejected") {
-    console.log(`skipped: claim ${pageId} is Rejected`);
-    return { skipped: "claim-rejected", pageId };
+  if (claim.status !== APPROVED_STATUS) {
+    console.log(`skipped: claim ${pageId} is "${claim.status}", not ${APPROVED_STATUS}`);
+    return { skipped: "claim-not-approved", pageId, status: claim.status };
   }
 
   const missing = missingFields(claim);
   if (missing.length > 0) {
     throw new Error(
       `Expense claim ${claim.pageUrl || pageId} can't become a bill: ${missing.join("; ")}. ` +
-        `Fix the claim in Notion, then replay with trigger-workflow --input '{"page_id":"${pageId}"}'.`,
+        `Fix the claim in Notion, then set Status away from and back to Approved, or replay with trigger-workflow --input '{"page_id":"${pageId}"}'.`,
     );
   }
   const number = billNumber(claim);
@@ -365,8 +369,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
   if (contacts.length === 0) {
     throw new Error(
       `Claim ${number}: no active Xero contact has the email ${email}. ` +
-        `Add it to the claimant's contact in Xero, then replay with ` +
-        `trigger-workflow --input '{"page_id":"${pageId}"}'.`,
+        `Add it to the claimant's contact in Xero, then ` +
+        `set Status away from and back to Approved, or replay with trigger-workflow --input '{"page_id":"${pageId}"}'.`,
     );
   }
   if (contacts.length > 1) {
@@ -457,7 +461,7 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
       // The bill exists; a replay finds it by number and links it.
       throw new Error(
         `Claim ${number}: Xero created the bill but returned no InvoiceID to link. ` +
-          `Replay with trigger-workflow --input '{"page_id":"${pageId}"}' to link it by number.`,
+          `To link it by number, set Status away from and back to Approved, or replay with trigger-workflow --input '{"page_id":"${pageId}"}'.`,
       );
     }
     outcome = "draft-bill-created";
