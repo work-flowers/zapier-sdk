@@ -197,6 +197,16 @@ URL. It is deliberately **not** wired in: Path C stays removed (see
 re-introduction has to get right). The current employer's website is read only
 to corroborate an address; it is not fed to BetterContact as a domain.
 
+**Select values never carry a comma.** Notion rejects a `select` option
+containing one, and the rejection fails the whole contact update. HarvestAPI's
+`location.parsed.country` uses ISO names, so the first live HarvestAPI run
+(2026-10-07, `Korea, Republic of`) failed all five attempts of
+`update-contact-record`. ISO forms are now mapped to the common names the
+`Country` select already holds (`COUNTRY_ALIASES`: `Korea, Republic of` →
+`South Korea`, `Viet Nam` → `Vietnam`, …), and `selectOption` drops any
+remaining comma from Country and City before writing. A country that lands as
+a new option is worth adding to `COUNTRY_ALIASES` if it duplicates an existing one.
+
 **Verified live 2026-10-07:** `find_profile` on a public profile returned the
 row in ~17 s with `emails[0]` = `{ deliverable: true, status: "valid", … }`; a
 non-existent URL returned `data: []`; a throwaway `run-durable` bound the
