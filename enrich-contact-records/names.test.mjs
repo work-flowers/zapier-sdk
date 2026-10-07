@@ -290,8 +290,11 @@ const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shr
   const create = log.find((e) => /\/file_uploads$/.test(e.fetch ?? ""));
   check("the photo is imported into Notion, not linked", JSON.parse(create?.body ?? "{}").mode, "external_url");
   check("…from HarvestAPI's URL", JSON.parse(create?.body ?? "{}").external_url, PHOTO);
-  check("…and set as the icon only", iconPatchOf(log), { icon: { type: "file_upload", file_upload: { id: "up-1" } } });
-  check("…reported in output and comment", [out.iconUpdated, /profile icon/.test(commentOf(log))], [true, true]);
+  check("…and set as both icon and cover, from the one upload", iconPatchOf(log), {
+    icon: { type: "file_upload", file_upload: { id: "up-1" } },
+    cover: { type: "file_upload", file_upload: { id: "up-1" } },
+  });
+  check("…reported in output and comment", [out.iconUpdated, /profile icon and cover/.test(commentOf(log))], [true, true]);
 }
 {
   const { out, log } = await run(withLi(), {
