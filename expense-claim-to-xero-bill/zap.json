@@ -1,7 +1,7 @@
 {
   "name": "expense-claim-to-xero-bill",
   "workflow_id": "01a116a3-c22f-75b3-b5d8-b59a927e753b",
-  "current_version_id": "01a116a3-fc26-7aab-b973-0fcd1d358d24",
+  "current_version_id": "01a116cd-fa5d-7b15-b104-e3c67f8b6a4d",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbTAJSQ0PeEufWnhLrLbFg",
   "enabled": true,
   "is_private": false,
