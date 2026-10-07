@@ -1,8 +1,10 @@
 # Drive Screenshot → Xero Sales Invoice
 
 Durable workflow (trigger **`read`** — "New File in Folder" — `GoogleDriveCLIAPI@1.22.0`) that turns
-a monthly "Notion Setup Sessions" activity screenshot into a **draft sales invoice** billing Notion
-Labs, Inc. Migrated from the classic Zap *"Generate Setup Session Invoice"*.
+a monthly "Notion Setup Sessions" activity report — **a screenshot or the Notion CSV export** — into
+a **draft sales invoice** billing Notion Labs, Inc. Migrated from the classic Zap *"Generate Setup
+Session Invoice"*. (The directory name predates CSV support; it is kept because renaming a deployed
+Zap's directory buys nothing.)
 
 > **Invoices are always created as `draft`.** Nothing here approves, sends, or emails anything.
 > Every invoice is meant to be reviewed in Xero before it goes anywhere near Notion.
@@ -11,13 +13,16 @@ Labs, Inc. Migrated from the classic Zap *"Generate Setup Session Invoice"*.
 
 1. **Trigger** — Google Drive *New File in Folder* on **Notion Setup Session Invoices**, one run per
    file.
-2. **Image gate** (plain code, no task cost) — anything that isn't an image, or is in the trash, is
-   skipped. Carried over from the classic Zap's "Image Only" filter.
-3. **Extract the line items — AI by Zapier.** The screenshot goes to `get_completion`
-   (`advanced/auto`, built-in credentials) as an image input, returning one row per
-   consultant/session-type combination: consultant name, session type, quantity, and the invoice
-   period (the reporting month's last day). Prompt:
-   [`drive-screenshot-to-xero-sales-invoice-prompt.md`](drive-screenshot-to-xero-sales-invoice-prompt.md).
+2. **File gate** (plain code, no task cost) — a CSV (`text/csv` or a `.csv` name) takes the CSV
+   path, an image takes the screenshot path, and anything else, or anything in the trash, is
+   skipped. Widened from the classic Zap's "Image Only" filter.
+3. **Get the line items** — one row per consultant/session-type combination, with quantity and the
+   invoice period (the reporting period's last day):
+   - **CSV → parsed in code, no AI task.** The file is downloaded through the Drive API (`sdk.fetch`
+     on the `gdrive` connection) and parsed deterministically. See [CSV input](#csv-input).
+   - **Screenshot → AI by Zapier.** The image goes to `get_completion` (`advanced/auto`, built-in
+     credentials). Prompt:
+     [`drive-screenshot-to-xero-sales-invoice-prompt.md`](drive-screenshot-to-xero-sales-invoice-prompt.md).
 4. **Map session type → Xero item code** — a fixed lookup table, in code, ported from the classic
    Zap's Formatter "Lookup Table" step. See [Item codes](#item-codes).
 5. **Resolve the invoice period** — every row on one screenshot reports the same month, so the
@@ -25,13 +30,19 @@ Labs, Inc. Migrated from the classic Zap *"Generate Setup Session Invoice"*.
    Formatter "Line-item to Text" step.
 6. **Create the draft sales invoice** — Xero `new_sales_invoice`, billing **Notion Labs, Inc.**, one
    line per consultant/session-type row.
-7. **Rename** — the screenshot becomes `<invoice period> Notion Setup Sessions`.
+7. **Rename** — the screenshot becomes `<invoice period> Notion Setup Sessions`; a CSV becomes
+   `<invoice period> Notion Setup Sessions.csv`.
 
 ```mermaid
 flowchart TD
-    T["📄 Google Drive: New File in Folder<br/><i>Notion Setup Session Invoices · one run per file</i>"] --> G{"image?<br/>not trashed?"}
-    G -- no --> X["⏹ skip"]
-    G -- yes --> AI["🤖 AI by Zapier · get_completion<br/><b>advanced/auto · image input</b><br/>→ consultant · session type<br/>· quantity · invoice period<br/><i>(one row per consultant × type)</i>"]
+    T["📄 Google Drive: New File in Folder<br/><i>Notion Setup Session Invoices · one run per file</i>"] --> G{"file type?<br/>not trashed?"}
+    G -- "other / trashed" --> X["⏹ skip"]
+    G -- CSV --> DL["⬇️ download via Drive API<br/><i>sdk.fetch · gdrive</i>"]
+    DL --> CSV["parse CSV in code<br/>one row per consultant →<br/>one line per non-zero column<br/><i>no AI task</i>"]
+    CSV --> CP{"all columns present?<br/>no unmapped amounts?<br/>one period?"}
+    CP -- no --> ERR
+    CP -- yes --> M
+    G -- image --> AI["🤖 AI by Zapier · get_completion<br/><b>advanced/auto · image input</b><br/>→ consultant · session type<br/>· quantity · invoice period<br/><i>(one row per consultant × type)</i>"]
     AI --> P{"usable line items?"}
     P -- no --> ERR["🛑 throw — extraction failed,<br/>not a routine skip"]
     P -- yes --> M["map Session Type → item code<br/><i>fixed lookup, in code</i>"]
@@ -39,6 +50,38 @@ flowchart TD
     D --> INV["🧾 Xero · new_sales_invoice (draft)<br/>bill: Notion Labs, Inc.<br/>one line per row"]
     INV --> R["Google Drive<br/>rename → '&lt;invoice period&gt; Notion Setup Sessions'"]
 ```
+
+## CSV input
+
+The CSV is Notion's export of the monthly payouts view (file name like
+`Sep 1 - 30 2026 <hash>.csv`), **one row per consultant** with one column per session type:
+
+| CSV column | Session Type | Item code |
+| --- | --- | --- |
+| `Calls Completed` | Calls Completed | `NOTION-CALL` |
+| `No Shows` | No-Shows | `NOTION-NOSHOW` |
+| `Late Cancellations` | Late Cancellations | `NOTION-CANCEL` |
+| `Workspace Conversions` | Workspace Conversions | `NOTION-UPGRADE` |
+| `Seats Added` | Seats Added | `NOTION-SEATS` |
+
+- **Consultant name** is the `Name` column with its trailing reporting-month suffix removed:
+  `Ernest Choo (WF) (Sep 2026)` → `Ernest Choo (WF)`, matching how names have always appeared on
+  these invoices.
+- **Invoice period** is the end date of `TIMEFRAME` (`Sep 1 - 30 2026` → `2026-09-30`), falling back
+  to the file name when a cell is blank.
+- **Each non-zero column becomes one line.** Empty or zero columns are skipped, as on the screenshot
+  path.
+- **Parsing is deterministic, so a surprise throws instead of being guessed at.** The run fails
+  if an expected column is missing (the export changed shape), if rows report different periods,
+  or if **`AE Assist Calls Completed` or `Custom Adjustment Amount` is non-zero**. Neither has a
+  Xero item code yet, and dropping them would under-bill silently. When one fires, invoice that
+  month by hand, or add the item code to `SESSION_TYPE_BY_CSV_COLUMN` in `workflow.ts`.
+- **`Total Payout` is a cross-check, not an input.** Its sum is logged and returned as
+  `csvTotalPayout`. The invoice is priced by Xero's item prices ($30 call / conversion / seat,
+  $10 no-show / late cancellation), and for September 2026 those gave US$830, the same as the CSV.
+  A mismatch on review means the item prices and Notion's payout rates have drifted apart.
+- **Upload one or the other, not both.** A CSV and a screenshot for the same month are two files,
+  so they produce two runs and two draft invoices.
 
 ## Item codes
 

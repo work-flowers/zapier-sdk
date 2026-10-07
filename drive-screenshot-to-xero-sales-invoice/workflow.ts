@@ -82,6 +82,36 @@ const ITEM_CODE_BY_SESSION_TYPE: Record<string, string> = {
 
 const SESSION_TYPES = Object.keys(ITEM_CODE_BY_SESSION_TYPE);
 
+/**
+ * CSV export column -> Session Type (the ITEM_CODE_BY_SESSION_TYPE key). The
+ * CSV is Notion's own export of the monthly payouts view, one row per
+ * consultant with one column per session type. Every column here must be
+ * present — a missing one means the export's shape changed, and silently
+ * treating it as zero would under-bill. The CSV has no Referral Bonuses
+ * column; that type only ever comes off a screenshot.
+ */
+const SESSION_TYPE_BY_CSV_COLUMN: Record<string, string> = {
+  "Calls Completed": "Calls Completed",
+  "No Shows": "No-Shows",
+  "Late Cancellations": "Late Cancellations",
+  "Workspace Conversions": "Workspace Conversions",
+  "Seats Added": "Seats Added",
+};
+
+/**
+ * CSV columns that carry billable activity this Zap has no Xero item code
+ * for. A non-zero value throws rather than being dropped: an invoice missing
+ * a line is under-billed revenue with no error anywhere. Add an item code
+ * (and a SESSION_TYPE_BY_CSV_COLUMN entry) before letting these through.
+ */
+const UNMAPPED_CSV_COLUMNS = ["AE Assist Calls Completed", "Custom Adjustment Amount"];
+
+const CSV_NAME_COLUMN = "Name";
+const CSV_TIMEFRAME_COLUMN = "TIMEFRAME";
+const CSV_TOTAL_COLUMN = "Total Payout";
+
+const DRIVE_API = "https://www.googleapis.com/drive/v3";
+
 // The Google Drive "New File in Folder" trigger delivers a file object.
 // Accept anything and extract defensively.
 const InputSchema = z.unknown();
@@ -241,6 +271,147 @@ function resolveInvoicePeriod(periodsSeen: string[]): { period: string | null; u
   return { period, unanimous: counts.size === 1 };
 }
 
+/** Is this Drive file the CSV export rather than a screenshot? */
+function isCsvFile(file: { title: string; mimeType: string }): boolean {
+  return file.mimeType.includes("csv") || /\.csv$/i.test(file.title);
+}
+
+/**
+ * RFC 4180 CSV: quoted fields may hold commas, newlines and doubled quotes
+ * (Notion quotes multi-person cells like "Ernest Choo, Dennis"). Strips a
+ * leading BOM, which Notion exports carry.
+ */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  const s = text.replace(/^﻿/, "");
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (s[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && s[i + 1] === "\n") i++;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => r.some((f) => f.trim() !== ""));
+}
+
+const MONTH_BY_ABBREV: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/**
+ * The END date of a Notion timeframe like "Sep 1 - 30 2026" (or a span
+ * crossing a month, "Aug 31 - Sep 30 2026"), as YYYY-MM-DD. That end date is
+ * the invoice period, same as the screenshot path's "last day of the month".
+ */
+export function timeframeEndDate(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  const m =
+    /([A-Za-z]{3})[a-z]*\.?\s+\d{1,2}\s*[-–]\s*(?:([A-Za-z]{3})[a-z]*\.?\s+)?(\d{1,2}),?\s+(\d{4})/.exec(s);
+  if (!m) return null;
+  const [, startMonth, endMonth, endDay, year] = m;
+  const month = MONTH_BY_ABBREV[(endMonth ?? startMonth).toLowerCase()];
+  if (!month) return null;
+  return toIsoDate(`${year}-${String(month).padStart(2, "0")}-${endDay.padStart(2, "0")}`);
+}
+
+/**
+ * "Ernest Choo (WF) (Sep 2026)" -> "Ernest Choo (WF)". Only the trailing
+ * reporting-month suffix goes; "(WF)" is part of the name as it has always
+ * appeared on these invoices.
+ */
+function stripPeriodSuffix(name: string): string {
+  return name.replace(/\s*\([A-Za-z]{3,9}\.? \d{4}\)\s*$/, "").trim();
+}
+
+/**
+ * Parse the CSV export into the same SessionLine shape the screenshot path
+ * produces. Deterministic, so unlike the AI path any surprise THROWS: a
+ * missing column, a non-zero value in a column with no item code, or rows
+ * reporting different periods. `fallbackPeriodSource` is the file name
+ * (Notion names the export after the timeframe), used only when a row's
+ * TIMEFRAME cell is blank.
+ */
+export function parseSetupSessionCsv(
+  text: string,
+  fallbackPeriodSource: string,
+): { lines: SessionLine[]; periodsSeen: string[]; totalPayout: number } {
+  const [header, ...rows] = parseCsv(text);
+  if (!header) throw new Error("CSV is empty");
+  const col = new Map(header.map((h, i) => [h.trim(), i]));
+  const required = [
+    CSV_NAME_COLUMN,
+    CSV_TIMEFRAME_COLUMN,
+    ...Object.keys(SESSION_TYPE_BY_CSV_COLUMN),
+    ...UNMAPPED_CSV_COLUMNS,
+  ];
+  const missing = required.filter((h) => !col.has(h));
+  if (missing.length > 0) {
+    throw new Error(`CSV is missing expected column(s): ${missing.join(", ")} — has the Notion export changed?`);
+  }
+  const cell = (r: string[], h: string) => (r[col.get(h)!] ?? "").trim();
+  const fallbackPeriod = timeframeEndDate(fallbackPeriodSource);
+
+  const lines: SessionLine[] = [];
+  const periodsSeen: string[] = [];
+  let totalPayout = 0;
+  for (const r of rows) {
+    const consultantName = stripPeriodSuffix(cell(r, CSV_NAME_COLUMN));
+    if (!consultantName) continue;
+
+    const period = timeframeEndDate(cell(r, CSV_TIMEFRAME_COLUMN)) ?? fallbackPeriod;
+    if (!period) throw new Error(`CSV row "${consultantName}": unreadable TIMEFRAME "${cell(r, CSV_TIMEFRAME_COLUMN)}"`);
+    periodsSeen.push(period);
+
+    for (const h of UNMAPPED_CSV_COLUMNS) {
+      const n = toNumber(cell(r, h));
+      if (n) {
+        throw new Error(
+          `CSV row "${consultantName}" has ${h} = ${cell(r, h)}, which has no Xero item code — invoice this month by hand, or add the item code`,
+        );
+      }
+    }
+
+    for (const [h, sessionType] of Object.entries(SESSION_TYPE_BY_CSV_COLUMN)) {
+      const raw = cell(r, h);
+      const quantity = toNumber(raw);
+      if (raw !== "" && quantity === null) throw new Error(`CSV row "${consultantName}": ${h} is not a number ("${raw}")`);
+      if (quantity && quantity > 0) lines.push({ consultantName, sessionType, quantity });
+    }
+
+    if (col.has(CSV_TOTAL_COLUMN)) totalPayout += toNumber(cell(r, CSV_TOTAL_COLUMN)) ?? 0;
+  }
+  return { lines, periodsSeen, totalPayout };
+}
+
 // --- Prompt --------------------------------------------------------------------
 // Verbatim copy of drive-screenshot-to-xero-sales-invoice-prompt.md (repo rule 6).
 // Edit the markdown, then run `node scripts/check-prompts.mjs --fix`.
@@ -262,62 +433,102 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       return { skipped: true, reason: "no file in payload" };
     }
 
-    // The classic Zap's "Image Only" filter. Plain code, no task cost.
-    if (!file.mimeType.includes("image")) {
-      console.log(`skipping ${file.title}: not an image (${file.mimeType || "unknown"})`);
-      return { skipped: true, reason: `not an image (${file.mimeType || "unknown"})`, file: file.title };
-    }
     if (file.trashed) {
       console.log(`skipping ${file.title}: file is in the trash`);
       return { skipped: true, reason: "file is in the trash", file: file.title };
     }
 
-    const completion = await ctx.step("extract-line-items", async () =>
-      sdk.runAction({
-        appKey: AI_APP_KEY,
-        actionType: "write",
-        actionKey: "get_completion",
-        inputs: {
-          authentication_id: AI_AUTHENTICATION,
-          model_id: AI_MODEL,
-          isOutputArray: true,
-          instructions: SETUP_SESSION_INVOICE_PROMPT,
-          inputFields: { Screenshot: file.fileRef },
-          inputFieldConfig_Screenshot_isImageUrl: true,
-          outputSchema: {
-            "Consultant Name": "The name of the consultant associated with each session entry",
-            "Session Type":
-              "The category of the session which can be Calls Completed, No-Shows, Late Cancellations, Workspace Conversions, Referral Bonuses, or Seats Added",
-            "Session Quantity": "The total number of sessions for each type linked to the consultant",
-            "Invoice Period": "The last day of the month for which the sessions are being reported",
+    // Two accepted inputs: the Notion CSV export (parsed in code, no AI task)
+    // or a screenshot (AI extraction). Anything else is skipped — the classic
+    // Zap's "Image Only" filter, widened to CSVs. Plain code, no task cost.
+    const source = isCsvFile(file) ? "csv" : file.mimeType.includes("image") ? "screenshot" : null;
+    if (!source) {
+      console.log(`skipping ${file.title}: not an image or CSV (${file.mimeType || "unknown"})`);
+      return { skipped: true, reason: `not an image or CSV (${file.mimeType || "unknown"})`, file: file.title };
+    }
+
+    let lines: SessionLine[];
+    let invoicePeriod: string;
+    let unanimous: boolean;
+    let csvTotalPayout: number | null = null;
+
+    if (source === "csv") {
+      const csvText = await ctx.step("download-csv", async () => {
+        const res = await sdk.fetch(
+          `${DRIVE_API}/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
+          { connection: DRIVE_CONNECTION },
+        );
+        if (!res.ok) throw new Error(`Drive download of ${file.title} failed (${res.status}): ${await res.text()}`);
+        return res.text();
+      });
+
+      const parsed = parseSetupSessionCsv(csvText, file.title);
+      if (parsed.lines.length === 0) {
+        throw new Error(`CSV ${file.title} has no rows with a non-zero session count — check the export`);
+      }
+      const resolved = resolveInvoicePeriod(parsed.periodsSeen);
+      // Unlike the AI path, a disagreement here isn't a misread — the export
+      // really spans two periods, and one invoice date can't cover both.
+      if (!resolved.period || !resolved.unanimous) {
+        throw new Error(
+          `CSV ${file.title} reports more than one period (${[...new Set(parsed.periodsSeen)].join(", ")}) — export one month at a time`,
+        );
+      }
+      lines = parsed.lines;
+      invoicePeriod = resolved.period;
+      unanimous = true;
+      csvTotalPayout = parsed.totalPayout;
+    } else {
+      const completion = await ctx.step("extract-line-items", async () =>
+        sdk.runAction({
+          appKey: AI_APP_KEY,
+          actionType: "write",
+          actionKey: "get_completion",
+          inputs: {
+            authentication_id: AI_AUTHENTICATION,
+            model_id: AI_MODEL,
+            isOutputArray: true,
+            instructions: SETUP_SESSION_INVOICE_PROMPT,
+            inputFields: { Screenshot: file.fileRef },
+            inputFieldConfig_Screenshot_isImageUrl: true,
+            outputSchema: {
+              "Consultant Name": "The name of the consultant associated with each session entry",
+              "Session Type":
+                "The category of the session which can be Calls Completed, No-Shows, Late Cancellations, Workspace Conversions, Referral Bonuses, or Seats Added",
+              "Session Quantity": "The total number of sessions for each type linked to the consultant",
+              "Invoice Period": "The last day of the month for which the sessions are being reported",
+            },
+            "required_Consultant Name": true,
+            "type_Consultant Name": "text",
+            "required_Session Type": true,
+            "type_Session Type": "category_single",
+            "options_Session Type": SESSION_TYPES,
+            "required_Session Quantity": true,
+            "type_Session Quantity": "number",
+            "required_Invoice Period": true,
+            "type_Invoice Period": "date",
           },
-          "required_Consultant Name": true,
-          "type_Consultant Name": "text",
-          "required_Session Type": true,
-          "type_Session Type": "category_single",
-          "options_Session Type": SESSION_TYPES,
-          "required_Session Quantity": true,
-          "type_Session Quantity": "number",
-          "required_Invoice Period": true,
-          "type_Invoice Period": "date",
-        },
-      }),
-    );
-
-    const rawItems = firstResult(completion)?.result?.items ?? [];
-    const { lines, periodsSeen } = parseSessionLines(rawItems);
-    if (lines.length === 0) {
-      throw new Error(`AI extraction returned no usable line items for ${file.title} — check the screenshot`);
-    }
-
-    const { period: invoicePeriod, unanimous } = resolveInvoicePeriod(periodsSeen);
-    if (!invoicePeriod) {
-      throw new Error(`AI extraction returned no valid Invoice Period for ${file.title}`);
-    }
-    if (!unanimous) {
-      console.log(
-        `WARNING: ${file.title} — Invoice Period disagreed across line items (${[...new Set(periodsSeen)].join(", ")}); using the majority value ${invoicePeriod}`,
+        }),
       );
+
+      const rawItems = firstResult(completion)?.result?.items ?? [];
+      const parsed = parseSessionLines(rawItems);
+      if (parsed.lines.length === 0) {
+        throw new Error(`AI extraction returned no usable line items for ${file.title} — check the screenshot`);
+      }
+
+      const resolved = resolveInvoicePeriod(parsed.periodsSeen);
+      if (!resolved.period) {
+        throw new Error(`AI extraction returned no valid Invoice Period for ${file.title}`);
+      }
+      if (!resolved.unanimous) {
+        console.log(
+          `WARNING: ${file.title} — Invoice Period disagreed across line items (${[...new Set(parsed.periodsSeen)].join(", ")}); using the majority value ${resolved.period}`,
+        );
+      }
+      lines = parsed.lines;
+      invoicePeriod = resolved.period;
+      unanimous = resolved.unanimous;
     }
 
     const xeroLineItems = lines.map((l) => ({
@@ -351,7 +562,8 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     );
 
     const created = firstResult(invoice);
-    const newName = `${invoicePeriod} Notion Setup Sessions`;
+    // The CSV keeps its extension so it isn't mistaken for the screenshot.
+    const newName = `${invoicePeriod} Notion Setup Sessions${source === "csv" ? ".csv" : ""}`;
     await ctx.step("rename-screenshot", async () =>
       sdk.runAction({
         appKey: DRIVE_APP_KEY,
@@ -366,14 +578,17 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     );
 
     console.log(
-      `created draft sales invoice for ${CONTACT_NAME}: ${xeroLineItems.length} line(s), period ${invoicePeriod}, renamed to "${newName}"`,
+      `created draft sales invoice for ${CONTACT_NAME} from ${source}: ${xeroLineItems.length} line(s), period ${invoicePeriod}, renamed to "${newName}"` +
+        (csvTotalPayout !== null ? `; CSV Total Payout US$${csvTotalPayout} — should equal the invoice total` : ""),
     );
     return {
+      source,
       invoiceId: firstString(created?.InvoiceID, created?.invoice_id, created?.id),
       invoicePeriod,
       lineItemCount: xeroLineItems.length,
       periodUnanimous: unanimous,
       renamedTo: newName,
+      ...(csvTotalPayout !== null ? { csvTotalPayout } : {}),
     };
   },
 );
