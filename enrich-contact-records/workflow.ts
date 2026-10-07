@@ -8,7 +8,18 @@ const sdk = createZapierSdk();
 // Connection aliases are resolved at run/publish time via --connections.
 const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
-// Enrichment: BetterContact. `enrich_contact` submits an ASYNC waterfall job
+// Primary enrichment, used when the contact has a LinkedIn URL: HarvestAPI.
+// `find_profile` (a search) looks the profile up by its URL and answers
+// SYNCHRONOUSLY (~17s, verified live 2026-10-07) with the profile — name,
+// headline, about, current title + company, parsed location — and, with
+// `findEmail`, an SMTP-checked `emails[]`. An unknown URL answers with an empty
+// `data` array, not an error. The booleans are the strings "true" / "false".
+const HARVESTAPI_APP_KEY = "App242893CLIAPI";
+const HARVESTAPI_CONNECTION = "harvestapi";
+/** Notion caps a rich_text segment at 2000 characters; a LinkedIn "about"
+ *  can run longer. */
+const BIO_MAX_CHARS = 2000;
+// Fallback enrichment: BetterContact. `enrich_contact` submits an ASYNC waterfall job
 // and answers with a request id at once; the result lands later, either POSTed
 // to the `webhook` URL sent with the job (this durable's own callback URL — see
 // the workflow body) or read back with `get_contact` by request id. Only
@@ -330,15 +341,22 @@ function extractContactData(raw: unknown): ContactData {
 
 // --- Enrichment result extraction ------------------------------------------
 
-/** The single enrichment source. Kept as a union so the outcome comment and
- *  corroboration keep their per-source shape if another source is added. */
-type EnrichmentSource = "bettercontact";
+/** HarvestAPI first when the contact has a LinkedIn URL, BetterContact as the
+ *  fallback. Corroboration keeps its per-source shape. */
+type EnrichmentSource = "harvestapi" | "bettercontact";
 
 const SOURCE_LABELS: Record<EnrichmentSource, string> = {
+  harvestapi: "HarvestAPI",
   bettercontact: "BetterContact",
 };
 
 interface EnrichedData {
+  /** The source the profile fields came from. */
+  source: EnrichmentSource;
+  /** The source `newEmail` came from — differs from `source` when HarvestAPI
+   *  found the profile but no deliverable address and BetterContact supplied
+   *  one. Corroboration is judged against this source. Null with no email. */
+  emailSource: EnrichmentSource | null;
   linkedinUrl: string;
   country: string;
   city: string;
@@ -355,6 +373,90 @@ interface EnrichedData {
   /** The employer domain on the matched record, normalised. Corroborating
    *  evidence when it equals the company domain the CRM already holds. */
   employerDomain: string;
+}
+
+// --- HarvestAPI result extraction ------------------------------------------
+//
+// One row of `find_profile`'s `data[]`, shape captured from a live run on
+// 2026-10-07: `firstName`, `lastName`, `linkedinUrl`, `about`,
+// `currentJobTitle`, `location.parsed.{city,country}`, `experience[]` (each
+// with `company.website`), and `emails[]` of
+// `{ email, deliverable, catchAllDomain, status, qualityScore }`. The row also
+// carries `photo`, which is deliberately not used — see the README's photo
+// notes before wiring it in.
+
+/** The first address HarvestAPI verified, or "". Only `deliverable: true` with
+ *  `status: "valid"` counts, the counterpart of BetterContact's
+ *  WRITABLE_EMAIL_STATUSES; anything else is reported, never written. */
+function harvestEmail(row: any): string {
+  const emails: any[] = Array.isArray(row?.emails) ? row.emails : [];
+  const ok = emails.find(
+    (e) =>
+      e?.deliverable === true &&
+      String(e?.status ?? "").toLowerCase() === "valid" &&
+      firstString(e?.email),
+  );
+  return firstString(ok?.email) ?? "";
+}
+
+/** The current position's employer website, normalised — the open-ended
+ *  ("Present") entry first, else the most recent one. */
+function harvestEmployerDomain(row: any): string {
+  const exp: any[] = Array.isArray(row?.experience) ? row.experience : [];
+  const current =
+    exp.find((e) => /present/i.test(String(e?.endDate?.text ?? ""))) ?? exp[0];
+  return normalizeDomain(firstString(current?.company?.website));
+}
+
+/** True when the row is a real profile (an unknown URL returns no row). */
+function harvestRowUsable(row: any): boolean {
+  if (!row || typeof row !== "object") return false;
+  return Boolean(firstString(row.linkedinUrl, row.publicIdentifier));
+}
+
+function extractEnrichedFromHarvest(row: any): EnrichedData {
+  const newEmail = harvestEmail(row);
+  const parsed = row?.location?.parsed ?? {};
+  const rawEmails: string[] = [
+    ...(Array.isArray(row?.emails) ? row.emails.map((e: any) => e?.email) : []),
+    row?.email,
+  ].filter((e): e is string => typeof e === "string");
+  return {
+    source: "harvestapi",
+    emailSource: newEmail ? "harvestapi" : null,
+    linkedinUrl: firstString(row?.linkedinUrl) ?? "",
+    country: firstString(parsed.country) ?? "",
+    city: firstString(parsed.city) ?? "",
+    newEmail,
+    bio: (firstString(row?.about) ?? "").slice(0, BIO_MAX_CHARS),
+    jobTitle: firstString(row?.currentJobTitle) ?? "",
+    firstName: firstString(row?.firstName) ?? "",
+    lastName: firstString(row?.lastName) ?? "",
+    allEmails: dedupeAddresses(rawEmails),
+    employerDomain: harvestEmployerDomain(row),
+  };
+}
+
+/** HarvestAPI's profile with BetterContact's address filled in, for a profile
+ *  that came back without a deliverable email. Profile fields stay
+ *  HarvestAPI's (read straight off LinkedIn) where it has them. */
+function mergeBetterContactEmail(
+  harvest: EnrichedData,
+  bc: EnrichedData,
+): EnrichedData {
+  return {
+    ...harvest,
+    emailSource: bc.newEmail ? "bettercontact" : null,
+    newEmail: bc.newEmail,
+    country: harvest.country || bc.country,
+    city: harvest.city || bc.city,
+    jobTitle: harvest.jobTitle || bc.jobTitle,
+    linkedinUrl: harvest.linkedinUrl || bc.linkedinUrl,
+    allEmails: dedupeAddresses([...harvest.allEmails, ...bc.allEmails]),
+    // The employer domain corroborates BetterContact's address, so it is the
+    // record that address came from that speaks for it.
+    employerDomain: bc.employerDomain || harvest.employerDomain,
+  };
 }
 
 // --- BetterContact result extraction ---------------------------------------
@@ -391,11 +493,14 @@ function betterContactRowUsable(row: any): boolean {
 
 function extractEnrichedFromBetterContact(row: any): EnrichedData {
   const rawEmail = firstString(row?.contact_email_address) ?? "";
+  const newEmail = betterContactEmail(row);
   return {
+    source: "bettercontact",
+    emailSource: newEmail ? "bettercontact" : null,
     linkedinUrl: firstString(row?.contact_linkedin_profile_url) ?? "",
     country: firstString(row?.contact_location_country, row?.contact_country) ?? "",
     city: firstString(row?.contact_city, row?.contact_location_city) ?? "",
-    newEmail: betterContactEmail(row),
+    newEmail,
     // BetterContact returns no biography; "" is a no-change write.
     bio: "",
     jobTitle: firstString(row?.contact_job_title) ?? "",
@@ -544,15 +649,24 @@ function normalizeDomain(value: string | null | undefined): string {
 //   * the returned LinkedIn URL and the contact's reduce to the same slug;
 //   * the enriched address's host, or the record's employer domain, equals the
 //     company domain the CRM already holds;
-//   * the source only resolves on the contact's OWN company domain + name, so
-//     any record it returns is a person at the employer already recorded. This
-//     is BetterContact's case: the request is gated on first + last name +
-//     company domain, and its result echoes `company_domain`, so in practice the
-//     domain rule fires first and this one is the backstop.
+//   * the source only resolves on an identifier the CRM already holds, so the
+//     record it returns IS this contact. Two sources qualify:
+//       - HarvestAPI looks the profile up by the contact's own LinkedIn URL —
+//         an exact key, not a match. The LinkedIn rule above normally fires
+//         first; this is the backstop for a profile whose slug LinkedIn has
+//         since renamed (the old URL redirects to the new one).
+//       - BetterContact is gated on first + last name + the contact's own
+//         company domain, so any record it returns is a person at the employer
+//         already recorded. Its result echoes `company_domain`, so in practice
+//         the domain rule fires first.
 //
-// The per-source shape is kept (Apollo's fuzzy name-only match was the original
-// offender, and needed evidence in the returned record) so a future fuzzy source
-// does not inherit the gated-lookup exemption by accident.
+// The exemption is judged against the source the EMAIL came from
+// (`emailSource`), not the source of the profile: when HarvestAPI finds the
+// profile and BetterContact the address, it is BetterContact's lookup that has
+// to vouch for the address. The per-source shape is kept (Apollo's fuzzy
+// name-only match was the original offender, and needed evidence in the
+// returned record) so a future fuzzy source does not inherit the gated-lookup
+// exemption by accident.
 //
 // An uncorroborated address is not written anywhere — not Primary, not
 // Secondary, not the Table — and is named in the outcome comment for a human to
@@ -569,7 +683,6 @@ interface IdentityCorroboration {
 function corroborateEnrichedIdentity(
   contact: ContactData,
   enriched: EnrichedData,
-  source: EnrichmentSource,
 ): IdentityCorroboration {
   const ownAddresses = dedupeAddresses([
     contact.primaryEmail,
@@ -599,7 +712,12 @@ function corroborateEnrichedIdentity(
     }
   }
 
-  if (source === "bettercontact") {
+  if (enriched.emailSource === "harvestapi") {
+    // Looked up by the contact's own LinkedIn URL: the profile is theirs.
+    return { verified: true, how: "resolved from the contact's own LinkedIn URL" };
+  }
+
+  if (enriched.emailSource === "bettercontact") {
     // The request is gated on the contact's own first + last name + company
     // domain, so the record is a person at the employer the CRM already holds.
     return { verified: true, how: "resolved from the contact's own company domain and name" };
@@ -654,7 +772,6 @@ async function updateContactRecord(
   ctx: DurableCtx,
   contact: ContactData,
   enriched: EnrichedData,
-  source: EnrichmentSource,
 ): Promise<{
   emailPath: string;
   unverifiedEmail?: string;
@@ -665,9 +782,15 @@ async function updateContactRecord(
   // rendering back; writing that would erase "(彭思瑀)" from the CRM. Keep the
   // contact's own name then, and take BetterContact's only when ours was sent
   // as it stands.
+  //
+  // A HarvestAPI profile name is LinkedIn's display name, which people decorate
+  // ("Jane Doe, MBA", "Jane Doe 🚀"), so it never replaces a name the contact
+  // already has — it only fills one in (a contact titled with a bare email).
   const keepOwnName =
     contact.matchFirstName !== contact.firstName ||
-    contact.matchLastName !== contact.lastName;
+    contact.matchLastName !== contact.lastName ||
+    (enriched.source === "harvestapi" &&
+      Boolean(contact.firstName || contact.lastName));
   const firstName = keepOwnName
     ? contact.firstName
     : enriched.firstName || contact.firstName;
@@ -682,7 +805,7 @@ async function updateContactRecord(
   // function then behaves exactly as it does for a source that returned no
   // email at all, so nothing reaches Primary, Secondary or the Table.
   const identity = enriched.newEmail
-    ? corroborateEnrichedIdentity(contact, enriched, source)
+    ? corroborateEnrichedIdentity(contact, enriched)
     : { verified: true, how: "no email returned" };
   const unverifiedEmail =
     enriched.newEmail && !identity.verified ? enriched.newEmail : "";
@@ -869,8 +992,11 @@ async function updateContactRecord(
 interface WorkflowResult {
   pageId: string;
   enriched: boolean;
-  /** Which enrichment source produced the data, when enriched. */
+  /** Which enrichment source produced the profile, when enriched. */
   source?: EnrichmentSource;
+  /** Which source produced the written email, when one was written and it
+   *  differs from `source` (HarvestAPI profile + BetterContact address). */
+  emailSource?: EnrichmentSource;
   reason?: string;
   /** Failure notes, one entry per source that failed (in order). Kept as a
    *  list so the outcome comment can show each on its own — joining them first
@@ -900,12 +1026,12 @@ function isTransientStatus(status: number): boolean {
 }
 
 /** A single source's failure reason parsed into a source label
- *  ("BetterContact", or null) and a short human-readable phrase. Unwraps the
+ *  ("HarvestAPI", "BetterContact", or null) and a short human-readable phrase. Unwraps the
  *  JSON error body and strips any HTML that upstream errors arrive in. */
 function parseFailure(why: string): { source: string | null; brief: string } {
   let s = why.replace(/\s+/g, " ").trim();
   let source: string | null = null;
-  const src = s.match(/^(bettercontact)\s+/i);
+  const src = s.match(/^(harvestapi|bettercontact)\s+/i);
   if (src) {
     source = SOURCE_LABELS[src[1].toLowerCase() as EnrichmentSource];
     s = s.slice(src[0].length);
@@ -942,7 +1068,10 @@ async function addOutcomeComment(
     if (result.emailPath === "same-or-no-prior") changes.push("primary email");
     if (result.emailPath === "new-email") changes.push("secondary email");
     changes.push("contact details");
-    const via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
+    let via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
+    if (result.emailSource && result.emailSource !== result.source) {
+      via += ` (email via ${SOURCE_LABELS[result.emailSource]})`;
+    }
     summary = `Contact enriched via ${via} and updated: ${changes.join(", ")}.`;
     // An address the source returned but that could not be tied to this contact
     // (Path U). Worth naming prominently: it is either a real address this
@@ -1031,6 +1160,167 @@ async function addOutcomeComment(
   });
 }
 
+// --- BetterContact (fallback source) -----------------------------------------
+//
+// Enrich via BetterContact. The request is an ASYNC job:
+// `enrich_contact` answers with a request id straight away and the
+// waterfall runs on BetterContact's side. Rather than poll, the run
+// hands BetterContact its own callback URL (`ctx.createCallback`) as the
+// job's `webhook` and parks; BetterContact POSTs the finished result to
+// it and the run resumes with the payload. Polling `get_contact` is the
+// fallback for a webhook that never arrives. Every BetterContact call
+// catches its own errors and returns a value, so a failing vendor does
+// NOT spin the durable's step-retry loop — it becomes a reason in the
+// outcome comment.
+//
+// Lives outside the workflow body so the body reads as the source order; its
+// step ids, callback name and helper prefix are string literals, as they were
+// in the body. Pushes a reason for every outcome that is not a usable row.
+
+async function enrichViaBetterContact(
+  ctx: DurableCtx,
+  contact: ContactData,
+  reasons: string[],
+): Promise<EnrichedData | null> {
+  let enriched: EnrichedData | null = null;
+
+  // BetterContact matches on first + last name plus the employer domain; a
+  // LinkedIn URL sharpens the match but is not accepted on its own, and an
+  // existing email is not an input at all (it finds addresses, it does not
+  // take them). Nothing to send without name + domain, so skip with an honest
+  // reason — more actionable than a false "no result".
+  // The name tested is the one actually sent (see `matchName`), so a name
+  // the integration cannot carry is a skip with a fix, not a header error.
+  const viable = Boolean(
+    contact.matchFirstName && contact.matchLastName && contact.domain,
+  );
+
+  if (!viable) {
+    const why = !contact.domain
+      ? isFreemail(contact.primaryEmail)
+        ? "skipped — no company domain (a personal email names no employer)"
+        : "skipped — no company domain, from the Company relation or the Primary Email"
+      : contact.firstName && contact.lastName && !contact.matchFirstName
+        ? "skipped — the name has characters BetterContact's Zapier integration cannot send (non-Latin script); add a romanised First Name and Last Name"
+        : "skipped — needs both a first and a last name to pair with the company domain";
+    reasons.push(`bettercontact ${why}`);
+    console.log(`BetterContact ${why} for ${contact.pageId}`);
+  } else {
+    // The callback is created BEFORE the submit step so its URL can ride
+    // along in the request. It is awaited only once the submit succeeded: a
+    // callback that is registered but never awaited does not park the run
+    // (dormancy engages only on an awaited wait), so a failed submit still
+    // returns promptly. The URL is unguessable and single-use, which is the
+    // whole of its security — BetterContact's webhook carries no signature.
+    const [resultPromise, callbackUrl] = await ctx.createCallback({
+      name: "bettercontact-result",
+      timeoutSeconds: CALLBACK_TIMEOUT_SECONDS,
+    });
+
+    const submit = await ctx.step("bettercontact-submit", async () => {
+      try {
+        const res = await sdk.runAction({
+          appKey: BETTERCONTACT_APP_KEY,
+          actionType: "write",
+          actionKey: "enrich_contact",
+          connection: BETTERCONTACT_CONNECTION,
+          inputs: {
+            // Never the raw CRM name: the integration puts it in an HTTP
+            // header. See "Names and URLs as sent to BetterContact".
+            first_name: contact.matchFirstName,
+            last_name: contact.matchLastName,
+            company_domain: contact.domain,
+            linkedin_url: asciiUrl(contact.linkedinUrl),
+            // Echoed back in the result's custom_fields, so a payload read
+            // outside the run (BetterContact's API usage page) names the page.
+            uuid: contact.pageId,
+            webhook: callbackUrl,
+            // The action's booleans are the strings "True" / "False". Emails
+            // only: this workflow does not consume phone data.
+            enrich_email_address: "True",
+            enrich_phone_number: "False",
+          },
+        });
+        // Response row: { id, success, message } — verified 2026-09-18.
+        const row = firstResult(res) ?? {};
+        const requestId = firstString(row.id, row.request_id);
+        if (!requestId) {
+          return {
+            requestId: null as string | null,
+            error: `no request id in response: ${JSON.stringify(row).slice(0, 200)}`,
+          };
+        }
+        return { requestId, error: null as string | null };
+      } catch (err) {
+        return {
+          requestId: null as string | null,
+          error: String((err as Error)?.message ?? err),
+        };
+      }
+    });
+
+    if (!submit.requestId) {
+      reasons.push(`bettercontact error: ${submit.error}`);
+      console.log(
+        `BetterContact submit failed for ${contact.pageId}: ${submit.error}`,
+      );
+    } else {
+      console.log(
+        `BetterContact request ${submit.requestId} submitted for ${contact.pageId}; waiting for the webhook`,
+      );
+
+      // Park until BetterContact POSTs the result, or the deadline passes.
+      // The server decides the outcome once: a late POST after expiry cannot
+      // flip it, so the polling fallback can never double-handle a result.
+      const delivered = await resultPromise;
+      let outcome: BetterContactOutcome;
+      if (delivered.status === "delivered") {
+        outcome = readBetterContactResult(delivered.value);
+        console.log(
+          `BetterContact webhook delivered for ${submit.requestId} (status ${outcome.status})`,
+        );
+      } else {
+        console.log(
+          `BetterContact webhook for ${submit.requestId} not delivered within ${CALLBACK_TIMEOUT_SECONDS}s; polling`,
+        );
+        outcome = await pollBetterContactResult(
+          ctx,
+          "bettercontact",
+          submit.requestId,
+        );
+      }
+
+      if (outcome.status === "terminated" && betterContactRowUsable(outcome.row)) {
+        enriched = extractEnrichedFromBetterContact(outcome.row);
+        console.log(`BetterContact enriched ${contact.pageId}`);
+      } else if (outcome.status === "terminated") {
+        // Finished with nothing we write. Name an address that came back
+        // with an unverified status so a person can decide about it.
+        const found = firstString(outcome.row?.contact_email_address);
+        const status = firstString(outcome.row?.contact_email_address_status);
+        reasons.push(
+          found
+            ? `bettercontact found ${found} but its status is ${status ?? "unknown"}; not written`
+            : "bettercontact returned no result",
+        );
+      } else if (outcome.status === "on_hold") {
+        reasons.push(
+          `bettercontact on hold — the account is out of credits (request ${submit.requestId} resumes on its own once topped up)`,
+        );
+      } else {
+        reasons.push(
+          `bettercontact error: ${
+            outcome.error ??
+            `request ${submit.requestId} still ${outcome.status} after the webhook timeout and ${POLL_ATTEMPTS} polls`
+          }`,
+        );
+      }
+    }
+  }
+
+  return enriched;
+}
+
 // --- Workflow --------------------------------------------------------------
 
 const workflow = defineDurable(
@@ -1052,158 +1342,89 @@ const workflow = defineDurable(
       `Enriching contact ${contact.pageId}: ${contact.firstName} ${contact.lastName}`.trim(),
     );
 
-    // 1. Enrich the contact via BetterContact. The request is an ASYNC job:
-    //    `enrich_contact` answers with a request id straight away and the
-    //    waterfall runs on BetterContact's side. Rather than poll, the run
-    //    hands BetterContact its own callback URL (`ctx.createCallback`) as the
-    //    job's `webhook` and parks; BetterContact POSTs the finished result to
-    //    it and the run resumes with the payload. Polling `get_contact` is the
-    //    fallback for a webhook that never arrives. Every BetterContact call
-    //    catches its own errors and returns a value, so a failing vendor does
-    //    NOT spin the durable's step-retry loop — it becomes a reason in the
-    //    outcome comment.
-    let enrichedData: EnrichedData | null = null;
-    let source: EnrichmentSource | null = null;
+    // 1. HarvestAPI, when the contact has a LinkedIn URL. It is a direct
+    //    lookup by that URL — no name or domain needed — and answers in one
+    //    synchronous call with the profile and, when it can find one, an
+    //    SMTP-checked address. Its errors are caught inside the step and become
+    //    a reason, exactly like BetterContact's, so a failing vendor falls
+    //    through to the fallback instead of spinning the step-retry loop.
+    // 2. BetterContact, when HarvestAPI did not produce a deliverable address:
+    //    no LinkedIn URL, no profile found, an error, or a profile with no
+    //    address. In the last case HarvestAPI's profile is kept and only the
+    //    address is taken from BetterContact.
     const reasons: string[] = [];
+    let harvest: EnrichedData | null = null;
 
-    // BetterContact matches on first + last name plus the employer domain; a
-    // LinkedIn URL sharpens the match but is not accepted on its own, and an
-    // existing email is not an input at all (it finds addresses, it does not
-    // take them). Nothing to send without name + domain, so skip with an honest
-    // reason — more actionable than a false "no result".
-    // The name tested is the one actually sent (see `matchName`), so a name
-    // the integration cannot carry is a skip with a fix, not a header error.
-    const viable = Boolean(
-      contact.matchFirstName && contact.matchLastName && contact.domain,
-    );
-
-    if (!viable) {
-      const why = !contact.domain
-        ? isFreemail(contact.primaryEmail)
-          ? "skipped — no company domain (a personal email names no employer)"
-          : "skipped — no company domain, from the Company relation or the Primary Email"
-        : contact.firstName && contact.lastName && !contact.matchFirstName
-          ? "skipped — the name has characters BetterContact's Zapier integration cannot send (non-Latin script); add a romanised First Name and Last Name"
-          : "skipped — needs both a first and a last name to pair with the company domain";
-      reasons.push(`bettercontact ${why}`);
-      console.log(`BetterContact ${why} for ${contact.pageId}`);
+    if (!contact.linkedinUrl) {
+      console.log(`No LinkedIn URL on ${contact.pageId}; HarvestAPI not tried`);
     } else {
-      // The callback is created BEFORE the submit step so its URL can ride
-      // along in the request. It is awaited only once the submit succeeded: a
-      // callback that is registered but never awaited does not park the run
-      // (dormancy engages only on an awaited wait), so a failed submit still
-      // returns promptly. The URL is unguessable and single-use, which is the
-      // whole of its security — BetterContact's webhook carries no signature.
-      const [resultPromise, callbackUrl] = await ctx.createCallback({
-        name: "bettercontact-result",
-        timeoutSeconds: CALLBACK_TIMEOUT_SECONDS,
-      });
-
-      const submit = await ctx.step("bettercontact-submit", async () => {
+      const found = await ctx.step("harvestapi-find-profile", async () => {
         try {
           const res = await sdk.runAction({
-            appKey: BETTERCONTACT_APP_KEY,
-            actionType: "write",
-            actionKey: "enrich_contact",
-            connection: BETTERCONTACT_CONNECTION,
+            appKey: HARVESTAPI_APP_KEY,
+            actionType: "search",
+            actionKey: "find_profile",
+            connection: HARVESTAPI_CONNECTION,
             inputs: {
-              // Never the raw CRM name: the integration puts it in an HTTP
-              // header. See "Names and URLs as sent to BetterContact".
-              first_name: contact.matchFirstName,
-              last_name: contact.matchLastName,
-              company_domain: contact.domain,
-              linkedin_url: asciiUrl(contact.linkedinUrl),
-              // Echoed back in the result's custom_fields, so a payload read
-              // outside the run (BetterContact's API usage page) names the page.
-              uuid: contact.pageId,
-              webhook: callbackUrl,
-              // The action's booleans are the strings "True" / "False". Emails
-              // only: this workflow does not consume phone data.
-              enrich_email_address: "True",
-              enrich_phone_number: "False",
+              url: asciiUrl(contact.linkedinUrl),
+              findEmail: "true",
+              skipSmtp: "false",
             },
           });
-          // Response row: { id, success, message } — verified 2026-09-18.
-          const row = firstResult(res) ?? {};
-          const requestId = firstString(row.id, row.request_id);
-          if (!requestId) {
-            return {
-              requestId: null as string | null,
-              error: `no request id in response: ${JSON.stringify(row).slice(0, 200)}`,
-            };
+          const row = firstResult(res);
+          if (!harvestRowUsable(row)) {
+            return { enriched: null as EnrichedData | null, unwritable: "", error: null as string | null };
           }
-          return { requestId, error: null as string | null };
+          const enriched = extractEnrichedFromHarvest(row);
+          // An address HarvestAPI returned but did not verify, for the comment.
+          const unwritable = enriched.newEmail
+            ? ""
+            : (firstString(row?.email, row?.emails?.[0]?.email) ?? "");
+          return { enriched, unwritable, error: null as string | null };
         } catch (err) {
           return {
-            requestId: null as string | null,
+            enriched: null as EnrichedData | null,
+            unwritable: "",
             error: String((err as Error)?.message ?? err),
           };
         }
       });
 
-      if (!submit.requestId) {
-        reasons.push(`bettercontact error: ${submit.error}`);
-        console.log(
-          `BetterContact submit failed for ${contact.pageId}: ${submit.error}`,
-        );
+      if (found.error) {
+        reasons.push(`harvestapi error: ${found.error}`);
+        console.log(`HarvestAPI failed for ${contact.pageId}: ${found.error}`);
+      } else if (!found.enriched) {
+        reasons.push("harvestapi returned no result");
+        console.log(`HarvestAPI found no profile for ${contact.pageId}`);
       } else {
+        harvest = found.enriched;
+        if (!harvest.newEmail) {
+          reasons.push(
+            found.unwritable
+              ? `harvestapi found ${found.unwritable} but could not verify it; not written`
+              : "harvestapi found the profile but no email",
+          );
+        }
         console.log(
-          `BetterContact request ${submit.requestId} submitted for ${contact.pageId}; waiting for the webhook`,
+          `HarvestAPI found ${contact.pageId}'s profile` +
+            (harvest.newEmail ? " with a verified email" : " without a verified email"),
         );
+      }
+    }
 
-        // Park until BetterContact POSTs the result, or the deadline passes.
-        // The server decides the outcome once: a late POST after expiry cannot
-        // flip it, so the polling fallback can never double-handle a result.
-        const delivered = await resultPromise;
-        let outcome: BetterContactOutcome;
-        if (delivered.status === "delivered") {
-          outcome = readBetterContactResult(delivered.value);
-          console.log(
-            `BetterContact webhook delivered for ${submit.requestId} (status ${outcome.status})`,
-          );
-        } else {
-          console.log(
-            `BetterContact webhook for ${submit.requestId} not delivered within ${CALLBACK_TIMEOUT_SECONDS}s; polling`,
-          );
-          outcome = await pollBetterContactResult(
-            ctx,
-            "bettercontact",
-            submit.requestId,
-          );
-        }
-
-        if (outcome.status === "terminated" && betterContactRowUsable(outcome.row)) {
-          enrichedData = extractEnrichedFromBetterContact(outcome.row);
-          source = "bettercontact";
-          console.log(`BetterContact enriched ${contact.pageId}`);
-        } else if (outcome.status === "terminated") {
-          // Finished with nothing we write. Name an address that came back
-          // with an unverified status so a person can decide about it.
-          const found = firstString(outcome.row?.contact_email_address);
-          const status = firstString(outcome.row?.contact_email_address_status);
-          reasons.push(
-            found
-              ? `bettercontact found ${found} but its status is ${status ?? "unknown"}; not written`
-              : "bettercontact returned no result",
-          );
-        } else if (outcome.status === "on_hold") {
-          reasons.push(
-            `bettercontact on hold — the account is out of credits (request ${submit.requestId} resumes on its own once topped up)`,
-          );
-        } else {
-          reasons.push(
-            `bettercontact error: ${
-              outcome.error ??
-              `request ${submit.requestId} still ${outcome.status} after the webhook timeout and ${POLL_ATTEMPTS} polls`
-            }`,
-          );
-        }
+    let enrichedData: EnrichedData | null = harvest;
+    if (!harvest?.newEmail) {
+      const bc = await enrichViaBetterContact(ctx, contact, reasons);
+      if (bc && harvest) {
+        enrichedData = bc.newEmail ? mergeBetterContactEmail(harvest, bc) : harvest;
+      } else if (bc) {
+        enrichedData = bc;
       }
     }
 
     let result: WorkflowResult;
 
-    if (!enrichedData || !source) {
+    if (!enrichedData) {
       result = {
         pageId: contact.pageId,
         enriched: false,
@@ -1211,25 +1432,24 @@ const workflow = defineDurable(
         reasons,
       };
     } else {
-      // 2. Update the contact record (inline sub-zap logic).
-      const updateResult = await updateContactRecord(
-        ctx,
-        contact,
-        enrichedData,
-        source,
-      );
+      // 3. Update the contact record (inline sub-zap logic).
+      const updateResult = await updateContactRecord(ctx, contact, enrichedData);
       result = {
         pageId: contact.pageId,
         enriched: true,
-        source,
-        // Notes recorded before the enrichment succeeded (none today, with a
-        // single source; kept so the comment shape survives adding one).
+        source: enrichedData.source,
+        emailSource:
+          enrichedData.emailSource && enrichedData.emailSource !== enrichedData.source
+            ? enrichedData.emailSource
+            : undefined,
+        // Notes from sources tried before (or alongside) the one that did the
+        // work — e.g. HarvestAPI found no address, or BetterContact was skipped.
         reasons: reasons.length ? reasons : undefined,
         ...updateResult,
       };
     }
 
-    // 3. Add a brief comment to the triggering page stating the outcome.
+    // 4. Add a brief comment to the triggering page stating the outcome.
     const comment = await addOutcomeComment(ctx, contact, result);
 
     return { ...result, commentPosted: comment.posted, commentError: comment.error };
