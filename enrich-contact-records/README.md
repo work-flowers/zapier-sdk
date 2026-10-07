@@ -4,10 +4,12 @@ Durable replacement for the "Enrich Contact Records" parent Zap and its
 "[Sub-Zap] Update Contact Record" sub-Zap. The sub-Zap is collapsed into an
 inline function (`updateContactRecord`) — no separate Durable needed.
 
-**Enrichment source: BetterContact** (since 2026-09-18). It replaced the
-Apollo → Lusha → NinjaPear cascade wholesale; see
-[What changed with BetterContact](#what-changed-with-bettercontact) for what was
-gained and what was given up.
+**Enrichment sources: HarvestAPI first, BetterContact as the fallback** (since
+2026-10-07). HarvestAPI is tried whenever the contact has a LinkedIn URL;
+BetterContact covers everything it cannot. See
+[HarvestAPI first, BetterContact as the fallback](#harvestapi-first-bettercontact-as-the-fallback).
+BetterContact alone replaced the Apollo → Lusha → NinjaPear cascade on
+2026-09-18; see [What changed with BetterContact](#what-changed-with-bettercontact).
 
 ## What it does
 
@@ -37,8 +39,19 @@ gained and what was given up.
    Zapier integration puts it in an HTTP header. See
    [Names sent to BetterContact](#names-sent-to-bettercontact). (Added
    2026-10-03.)
-3. **Enrich via BetterContact** — an **async job**, handled as
-   submit → park → resume:
+3. **Enrich via HarvestAPI** — only when the `Linkedin` property is set.
+   `find_profile` (search) is called with the URL (non-ASCII runs
+   percent-encoded), `findEmail: "true"` and `skipSmtp: "false"`, and answers
+   **synchronously** (~17 s) with the profile: name, `currentJobTitle`, `about`,
+   parsed city + country, the current employer's website, and `emails[]`. An
+   address is written only when HarvestAPI marks it `deliverable: true` and
+   `status: "valid"`. An unknown URL returns an empty result, not an error.
+   Errors are caught inside the step and become a reason, like BetterContact's.
+   **If this produced a verified address, BetterContact is not called.**
+4. **Fallback: enrich via BetterContact** — when HarvestAPI was not tried, found
+   no profile, errored, or found the profile **without** a verified address. In
+   that last case HarvestAPI's profile is kept and only the address is taken
+   from BetterContact. An **async job**, handled as submit → park → resume:
    - `ctx.createCallback` mints a single-use URL and the run passes it as the
      job's `webhook`; BetterContact POSTs the finished result there and the run
      resumes with the payload. No polling on the happy path. See
@@ -62,7 +75,7 @@ gained and what was given up.
    - Every BetterContact call catches its own errors and returns a value, so a
      vendor failure becomes a reason in the comment rather than spinning the
      durable's step-retry loop.
-4. **Update contact** — Inline function that replaces the sub-Zap:
+5. **Update contact** — Inline function that replaces the sub-Zap:
    - **Corroborate the enriched address first** (Path U): an enriched email that
      cannot be tied to this contact is **not written anywhere** — not Primary,
      not Secondary, not the Table — and is named in the outcome comment instead.
@@ -89,15 +102,22 @@ gained and what was given up.
      **duplicate contact** when that person registers with it (bug observed
      2026-07-24). Best-effort: a Table error logs and never fails the run.
      **Path U never reaches this step.**
-   - Properties BetterContact does not return (Bio, and usually Job Title and
-     City) are written as `""`, which the Notion action treats as **no change**
-     — a contact keeps whatever it already has.
-5. **Add outcome comment** — Posts a brief comment on the triggering Notion
+   - Properties the source does not return (with BetterContact: Bio, and usually
+     Job Title and City) are written as `""`, which the Notion action treats as
+     **no change** — a contact keeps whatever it already has. HarvestAPI fills
+     Bio from the LinkedIn "about" (capped at 2,000 characters).
+   - **Names:** a HarvestAPI name is LinkedIn's *display* name, which people
+     decorate (`Jane Doe, MBA`, `Jane Doe 🚀`), so it never replaces a name the
+     contact already has — it only fills one in, e.g. for a contact titled with
+     a bare email address.
+6. **Add outcome comment** — Posts a brief comment on the triggering Notion
    page stating the outcome. A transient Notion failure (429, 409, 5xx) is
    retried by the step; a definite rejection is reported in the run output as
    `commentPosted: false` — see [The outcome comment retries transient
    failures](#the-outcome-comment-retries-transient-failures). The comment
-   names the source (**BetterContact**), what changed, and on a skip **why** —
+   names the source (**HarvestAPI**, **BetterContact**, or `HarvestAPI (email
+   via BetterContact)`), what changed, and **why** each earlier source fell
+   short — e.g. `(HarvestAPI: no profile found)`, and on a skip —
    e.g. `Enrichment skipped — BetterContact: skipped — no company domain (a
    personal email names no employer).`, `… BetterContact: on hold — the account
    is out of credits …`, or `… BetterContact: found x@y.com but its status is
@@ -109,7 +129,8 @@ gained and what was given up.
    system user or an integration bot, which makes Notion reject the whole
    comment (`400 Cannot mention bots`). That lost the comment on 18 of 45 runs
    from 2026-09-22 to 2026-10-02; the mention was removed on 2026-10-03.
-6. **Return** — `{ pageId, enriched, source, emailPath }`, plus
+7. **Return** — `{ pageId, enriched, source, emailPath }` (plus `emailSource`
+   when the address came from a different source than the profile), plus
    `unverifiedEmail` and `identity` on a Path U run, and `reasons` on a skip.
 
 ## Workflow
@@ -119,9 +140,17 @@ flowchart TD
     A["Webhook: Contacts DB automation<br/>or button click (hook_v2)"] --> P{"Empty ping?<br/>(URL test, browser hit, curl)"}
     P -- yes --> PS(["Log and skip<br/>(no error raised)"])
     P -- no --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title;<br/>domain falls back to email host)"]
-    B --> N["Render the match name<br/>(drop parenthesised aside,<br/>title initials; fold accents<br/>beyond Latin-1)"]
+    B --> L{"LinkedIn URL set?"}
+    L -- yes --> H["HarvestAPI find_profile<br/>(sync, findEmail on)"]
+    H -- "profile + deliverable,<br/>valid email" --> E
+    H -- "profile, no verified email<br/>(kept; email from fallback)" --> N
+    H -- "no profile / error" --> N
+    L -- no --> N
+    N["Render the match name<br/>(drop parenthesised aside,<br/>title initials; fold accents<br/>beyond Latin-1)"]
     N --> V{"Sendable first AND last name<br/>AND company domain?"}
-    V -- no --> D(["Log, comment the skip reason, return"])
+    V -- no --> D{"HarvestAPI profile<br/>from step 3?"}
+    D -- yes --> E
+    D -- no --> DX(["Comment the reasons, return"])
     V -- yes --> CB["ctx.createCallback<br/>(single-use URL, 10-min deadline)"]
     CB --> SUB["BetterContact enrich_contact<br/>name + domain + LinkedIn URL,<br/>webhook = callback URL,<br/>emails only"]
     SUB -- "submit error" --> D
@@ -131,7 +160,7 @@ flowchart TD
     PL --> ST{"status?"}
     ST -- "on_hold (no credits) /<br/>still processing / error" --> D
     ST -- "terminated, nothing usable<br/>or email not deliverable" --> D
-    ST -- "terminated, usable row" --> E{"Enriched email corroborated?<br/>shared address · contact's LinkedIn ·<br/>known company domain ·<br/>domain+name-gated lookup"}
+    ST -- "terminated, usable row" --> E{"Enriched email corroborated?<br/>shared address · contact's LinkedIn ·<br/>known company domain ·<br/>lookup keyed on own LinkedIn URL<br/>or own domain+name"}
     E -- "no (Path U)" --> U["Write NO email anywhere —<br/>no Primary, no Secondary, no Table row.<br/>Other properties still update;<br/>address named in the comment"]
     E -- "yes" --> EP{"Enriched email vs existing<br/>Primary Email?"}
     EP -- "same or no prior email (Path D)" --> F["Set Primary Email<br/>to enriched email"]
@@ -144,6 +173,35 @@ flowchart TD
     J["Post outcome comment on the page<br/>(no @mention)"]
     J --> K(["Return pageId, enriched, source, emailPath"])
 ```
+
+## HarvestAPI first, BetterContact as the fallback
+
+Added 2026-10-07. HarvestAPI (`App242893CLIAPI`, `find_profile`) looks a
+profile up **by its LinkedIn URL**, an exact key, where BetterContact matches
+on name + company domain. So where the CRM has the URL, HarvestAPI is the
+better first ask: it needs no name or domain, answers in one synchronous call,
+and returns the profile fields BetterContact usually lacks (title, about,
+city). BetterContact stays as the fallback, so coverage is never narrower than
+before.
+
+| HarvestAPI outcome | What happens |
+|---|---|
+| not tried (no `Linkedin` URL) | BetterContact, exactly as before |
+| profile **with** a `deliverable` + `valid` address | written; **BetterContact not called** |
+| profile, address unverified or none | BetterContact asked for the address; HarvestAPI's profile fields are kept and BetterContact's fill only what HarvestAPI left blank. If BetterContact finds nothing, the profile is written without an email |
+| no profile (empty result) or an error | BetterContact, with `HarvestAPI: …` named in the comment |
+
+**What is not used.** HarvestAPI also returns `photo`, a signed LinkedIn CDN
+URL. It is deliberately **not** wired in: Path C stays removed (see
+[Photo path](#photo-path-what-was-learned-before-it-was-removed) for what a
+re-introduction has to get right). The current employer's website is read only
+to corroborate an address; it is not fed to BetterContact as a domain.
+
+**Verified live 2026-10-07:** `find_profile` on a public profile returned the
+row in ~17 s with `emails[0]` = `{ deliverable: true, status: "valid", … }`; a
+non-existent URL returned `data: []`; a throwaway `run-durable` bound the
+`harvestapi` connection (a *private* connection, owned by Dennis) and ran the
+lookup from the durable sandbox.
 
 ## Names sent to BetterContact
 
@@ -175,7 +233,10 @@ contact's own name, the write-back keeps the contact's own `Name` / `First Name`
 
 Covered offline by [`names.test.mjs`](names.test.mjs) (`npm test`; no Zapier
 calls), which also drives the workflow body against a fake BetterContact that
-rejects header-unsafe values with the platform's own message.
+rejects header-unsafe values with the platform's own message, and a fake
+HarvestAPI covering the source order (verified email → no fallback; profile
+without email → BetterContact's address merged in; unverified address not
+written; no profile → fallback; no URL → not called; name kept vs filled).
 
 ## How the async job is handled
 
@@ -260,7 +321,8 @@ Given up — deliberately, since the brief was to replace the cascade:
 
 - **No profile photo or bio.** Those came from Apollo (photo, bio) and
   NinjaPear (photo), and neither returned photos reliably; the only source that
-  ever did was HarvestAPI, by scraping LinkedIn, which is not coming back.
+  ever did was HarvestAPI, by scraping LinkedIn. (HarvestAPI came back as the
+  primary source on 2026-10-07, but its photo is still not used.)
   BetterContact's `contact_avatar` is a documented legacy key that is always
   `null`, and its `enrich_profile` endpoint (not exposed by the Zapier app) has
   no image field either. **Path C was therefore removed outright on
@@ -349,10 +411,13 @@ something the CRM already knows. Any one of these clears it:
 | **Shared address** | the returned record carries an address already on the contact (Primary or any Secondary), compared case-insensitively |
 | **LinkedIn** | the returned profile URL and the contact's reduce to the same `/in/<slug>` |
 | **Company domain** | the enriched address's host, or the record's `company_domain`, equals the `Domain` the CRM already holds |
-| **Gated lookup** | the request itself was gated on the contact's own name + company domain, so any record returned is a person at the employer already recorded — BetterContact's case, and the backstop when nothing above echoes |
+| **Keyed lookup** | the request was keyed on something the CRM already holds, so the record returned is this contact: **HarvestAPI** looks up the contact's own LinkedIn URL (the backstop for a renamed slug); **BetterContact** is gated on the contact's own name + company domain |
 
-BetterContact's result echoes `company_domain`, so in practice the **company
-domain** rule fires first and the gated-lookup rule is the backstop. The
+HarvestAPI's result echoes the LinkedIn URL and BetterContact's echoes
+`company_domain`, so in practice those rules fire first and the keyed-lookup
+rule is the backstop. It is judged against the source the **email** came from:
+when HarvestAPI found the profile and BetterContact the address, BetterContact's
+lookup has to vouch for it. The
 per-source shape is kept in code so a future *fuzzy* source (Apollo was one)
 cannot inherit the gated-lookup exemption by accident.
 
@@ -410,6 +475,7 @@ stale, which is harmless — lookups match on `Email` only.
 | Alias | App key | Connection | Connection id |
 |---|---|---|---|
 | `notion_wf` | `NotionCLIAPI` | `work.flowers \| Dennis` | `02b73654-15c8-85c3-b16a-07304d2beb17` |
+| `harvestapi` | `App242893CLIAPI` (HarvestAPI, `@1.0.0`) | `HarvestAPI (Standard)` (private) | `0252e8c9-0045-8728-ac09-cec85dadbc13` |
 | `bettercontact` | `App217413CLIAPI` (BetterContact, `@1.0.3`) | `dennis@work.flowers` | `027e9dfc-e7ad-8889-a0b4-c34f9b65a362` |
 
 > ⚠️ **Notion connection:** `notion_wf` **must** be the `work.flowers | Dennis`
@@ -420,6 +486,10 @@ stale, which is harmless — lookups match on `Email` only.
 
 The Notion connection must have the **Insert comments** capability enabled so
 the workflow can post outcome comments on the triggering page.
+
+**HarvestAPI action surface** (`list-actions App242893CLIAPI`): `search
+find_profile` (inputs `url`, `findEmail`, `skipSmtp`; booleans as the strings
+`"true"` / `"false"`) and one trigger, `new_received_connection`, unused here.
 
 **BetterContact action surface** (`list-actions App217413CLIAPI`): exactly two
 actions, `write enrich_contact` and `search get_contact`, no triggers. The
@@ -451,13 +521,14 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.79.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.6.1' \
-  --connections '{"notion_wf":{"connectionId":"<notion-conn-id>"},"bettercontact":{"connectionId":"<bettercontact-conn-id>"}}' \
+  --connections '{"notion_wf":{"connectionId":"<notion-conn-id>"},"harvestapi":{"connectionId":"<harvestapi-conn-id>"},"bettercontact":{"connectionId":"<bettercontact-conn-id>"}}' \
   --input '{"data":{"id":"<contact-page-id>","properties":{"First Name":{"rich_text":[{"plain_text":"Test"}]},"Last Name":{"rich_text":[{"plain_text":"User"}]},"Domain":{"rollup":{"array":[{"url":"https://example.com"}]}}}}}' \
   --private
 ```
 
-A run against a real page **writes to that contact** and spends a BetterContact
-credit if an address is found. Use a page you own.
+A run against a real page **writes to that contact** and spends a HarvestAPI
+lookup (when it has a LinkedIn URL) and a BetterContact credit if an address is
+found. Use a page you own.
 
 ### Callback spike (2026-09-18)
 
@@ -495,7 +566,7 @@ the direct publish shape is:
 zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.79.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.6.1' \
-  --connections '{"notion_wf":{"connectionId":"<notion-conn-id>"},"bettercontact":{"connectionId":"<bettercontact-conn-id>"}}' \
+  --connections '{"notion_wf":{"connectionId":"<notion-conn-id>"},"harvestapi":{"connectionId":"<harvestapi-conn-id>"},"bettercontact":{"connectionId":"<bettercontact-conn-id>"}}' \
   --trigger '{"selected_api":"WebHookCLIAPI@1.1.1","action":"hook_v2","authentication_id":null,"params":{}}' \
   --enabled --json
 ```
@@ -507,10 +578,11 @@ declared set when they differ, logging the change in the run summary.
 
 ## Architectural changes vs the original Zaps
 
-- **BetterContact, async, in-run** — the original Zap used NinjaPear as its sole
-  synchronous source; a later cascade added Apollo and Lusha. This Durable
-  submits one BetterContact job and parks on `ctx.createCallback` until the
-  webhook lands, polling only as a fallback.
+- **HarvestAPI, then BetterContact, in-run** — the original Zap used NinjaPear
+  as its sole synchronous source; a later cascade added Apollo and Lusha. This
+  Durable asks HarvestAPI synchronously when there is a LinkedIn URL, and
+  otherwise (or for a missing address) submits one BetterContact job and parks
+  on `ctx.createCallback` until the webhook lands, polling only as a fallback.
 - **No sub-Zap** — the sub-Zap's four-path branching logic (Path D / G / C / E)
   collapses into a single inline function with if/else blocks.
 - **No retry** — the original parent Zap retried enrichment after a 1-minute

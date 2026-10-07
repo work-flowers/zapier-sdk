@@ -121,21 +121,31 @@ check("match name rendered for the request", [c.matchFirstName, c.matchLastName]
 // The fake rejects any header-unsafe string input with the platform's own
 // message, the way the real integration fails before sending.
 const PLATFORM_HEADER_ERROR = (v) => `Action execution failed: ${v} is not a legal HTTP header value`;
-function fakeSdk(log) {
+function fakeSdk(log, { harvest, bcRow } = {}) {
   sdkStub.runAction = async ({ actionKey, inputs }) => {
     log.push({ actionKey, inputs });
+    if (actionKey === "find_profile") {
+      if (harvest === undefined) throw new Error("unexpected action find_profile");
+      return { data: harvest ? [harvest] : [] };
+    }
+    if (actionKey === "update_database_item") return { data: [{ id: inputs.page }] };
     if (actionKey === "enrich_contact") {
       for (const v of Object.values(inputs)) {
         if (typeof v === "string" && !isHeaderSafe(v)) throw new Error(PLATFORM_HEADER_ERROR(v));
       }
       return { data: [{ id: "req-1", success: true }] };
     }
-    if (actionKey === "get_contact") return { data: [{ status: "terminated", data: [] }] };
+    if (actionKey === "get_contact") return { data: [{ status: "terminated", data: bcRow ? [bcRow] : [] }] };
     throw new Error(`unexpected action ${actionKey}`);
   };
   sdkStub.fetch = async (url, init) => {
     log.push({ fetch: url, body: init?.body });
     return { ok: true, status: 200, text: async () => "", headers: new Map() };
+  };
+  sdkStub.listTableRecords = async () => ({ data: [] });
+  sdkStub.createTableRecords = async ({ records }) => {
+    log.push({ table: records });
+    return { data: [] };
   };
 }
 const ctx = {
@@ -143,9 +153,9 @@ const ctx = {
   wait: async () => {},
   createCallback: async () => [Promise.resolve({ status: "timeout" }), "https://callback.invalid/x"],
 };
-async function run(input) {
+async function run(input, fakes) {
   const log = [];
-  fakeSdk(log);
+  fakeSdk(log, fakes);
   const out = await workflow.fn(ctx, input);
   return { out, log };
 }
@@ -166,6 +176,88 @@ async function run(input) {
   const { log } = await run(payload({ Linkedin: { type: "url", url: "https://www.linkedin.com/in/彭思瑀" } }));
   const submit = log.find((e) => e.actionKey === "enrich_contact");
   check("a non-ASCII LinkedIn URL is sent encoded", submit?.inputs.linkedin_url, "https://www.linkedin.com/in/%E5%BD%AD%E6%80%9D%E7%91%80");
+}
+
+// --- HarvestAPI first, BetterContact as the fallback --------------------------
+// Row shapes trimmed from live responses (HarvestAPI find_profile 2026-10-07,
+// BetterContact terminated body 2026-09-18).
+const LI = "https://www.linkedin.com/in/alice-peng";
+const harvestRow = (over = {}) => ({
+  publicIdentifier: "alice-peng",
+  firstName: "Alice",
+  lastName: "Peng 🚀",
+  linkedinUrl: LI,
+  about: "Builds things.",
+  currentJobTitle: "Head of Ops",
+  location: { parsed: { city: "Taipei", country: "Taiwan" } },
+  experience: [{ endDate: { text: "Present" }, company: { website: "https://www.moxa.com/en/" } }],
+  email: "alice.peng@moxa.com",
+  emails: [{ email: "alice.peng@moxa.com", deliverable: true, status: "valid" }],
+  ...over,
+});
+const bcRow = {
+  contact_email_address: "a.peng@moxa.com",
+  contact_email_address_status: "deliverable",
+  company_domain: "moxa.com",
+};
+const withLi = (over = {}) => payload({ Linkedin: { type: "url", url: LI }, ...over });
+const updateOf = (log) => log.find((e) => e.actionKey === "update_database_item")?.inputs ?? {};
+const commentOf = (log) => JSON.parse(log.find((e) => e.fetch)?.body ?? "{}").rich_text?.[0]?.text?.content ?? "";
+
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), bcRow });
+  check("LinkedIn URL → HarvestAPI is asked first", log[0]?.actionKey, "find_profile");
+  check("…with the URL and email search on", [log[0]?.inputs.url, log[0]?.inputs.findEmail], [LI, "true"]);
+  check("a verified HarvestAPI email skips BetterContact", log.some((e) => e.actionKey === "enrich_contact"), false);
+  check("…and is written as Primary", updateOf(log)["properties|||Primary Email|||email"], "alice.peng@moxa.com");
+  check("…sourced to HarvestAPI", [out.source, out.emailSource], ["harvestapi", undefined]);
+  check("…with title, city, country and bio", [
+    updateOf(log)["properties|||Job Title|||rich_text"],
+    updateOf(log)["properties|||City|||select"],
+    updateOf(log)["properties|||Country|||select"],
+    updateOf(log)["properties|||Bio|||rich_text"],
+  ], ["Head of Ops", "Taipei", "Taiwan", "Builds things."]);
+  check("the CRM's own name is kept over LinkedIn's display name", updateOf(log)["properties|||Last Name|||rich_text"], "SY Peng (彭思瑀)");
+  check("…and the email is indexed in the Table", log.find((e) => e.table)?.table[0].data.Email, "alice.peng@moxa.com");
+  check("the comment names HarvestAPI", /enriched via HarvestAPI and updated/.test(commentOf(log)), true);
+}
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow({ email: null, emails: [] }), bcRow });
+  check("HarvestAPI profile without an email → BetterContact runs", log.some((e) => e.actionKey === "enrich_contact"), true);
+  check("…its address is written", updateOf(log)["properties|||Primary Email|||email"], "a.peng@moxa.com");
+  check("…HarvestAPI's profile fields are kept", updateOf(log)["properties|||Job Title|||rich_text"], "Head of Ops");
+  check("…and both sources are reported", [out.source, out.emailSource], ["harvestapi", "bettercontact"]);
+  check("…in the comment too", /via HarvestAPI \(email via BetterContact\)/.test(commentOf(log)), true);
+}
+{
+  const { out, log } = await run(withLi(), {
+    harvest: harvestRow({ emails: [{ email: "alice.peng@moxa.com", deliverable: false, status: "invalid" }] }),
+    bcRow: null,
+  });
+  check("an unverified HarvestAPI email is not written", updateOf(log)["properties|||Primary Email|||email"], undefined);
+  check("…the profile still is", [out.enriched, out.source], [true, "harvestapi"]);
+  check("…and the comment names the address", /HarvestAPI: found alice\.peng@moxa\.com but could not verify it/.test(commentOf(log)), true);
+}
+{
+  const { out, log } = await run(withLi(), { harvest: null, bcRow });
+  check("no HarvestAPI profile → BetterContact does the work", out.source, "bettercontact");
+  check("…and the comment says why", /HarvestAPI: no profile found/.test(commentOf(log)), true);
+}
+{
+  const { out, log } = await run(payload(), { harvest: harvestRow(), bcRow });
+  check("no LinkedIn URL → HarvestAPI is not called", log.some((e) => e.actionKey === "find_profile"), false);
+  check("…BetterContact is", out.source, "bettercontact");
+}
+{
+  const { out } = await run(withLi({ Domain: { type: "rollup", rollup: { type: "array", array: [] } } }), { harvest: null });
+  check("neither source usable → skipped with both reasons", out.reasons?.length, 2);
+}
+{
+  const { log } = await run(
+    withLi({ Name: { type: "title", title: [{ plain_text: "alice@moxa.com" }] } }),
+    { harvest: harvestRow({ lastName: "Peng" }) },
+  );
+  check("a contact with no name takes LinkedIn's", updateOf(log)["properties|||Name|||title"], "Alice Peng");
 }
 
 console.log(`\n${count - failures}/${count} passed`);
