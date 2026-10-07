@@ -20,7 +20,7 @@ src = src
   .replace('import { createZapierSdk } from "@zapier/zapier-sdk";', "const createZapierSdk = () => ({});");
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
 src +=
-  "\nexport const __test = { normalizeInput, isEmptyPing, extractPageId, readClaim, missingFields, billNumber, lineDescription, lineTax, matchingContacts, liveBills, billUrl, CATEGORY_ACCOUNTS };\n";
+  "\nexport const __test = { normalizeInput, isEmptyPing, extractPageId, readClaim, missingFields, billNumber, lineDescription, taxMode, matchingContacts, liveBills, billUrl, CATEGORY_ACCOUNTS };\n";
 const tmp = join(dir, ".workflow.test-copy.ts");
 writeFileSync(tmp, src);
 let t;
@@ -160,10 +160,10 @@ test("datetime expense dates are trimmed to the day", () => {
   assert.equal(c.expenseDate, "2026-10-01");
 });
 
-test("SGD is tax-inclusive at the account default; other currencies carry no tax", () => {
-  assert.deepEqual(t.lineTax(t.readClaim(page())), { line_items_type: "Inclusive" });
+test("SGD is tax-inclusive at the account default; other currencies are NoTax with tax type NONE", () => {
+  assert.deepEqual(t.taxMode(t.readClaim(page())), { amountTypes: "Inclusive" });
   const usd = t.readClaim(page({ properties: { Currency: { select: { name: "USD" } } } }));
-  assert.deepEqual(t.lineTax(usd), { line_items_type: "NoTax" });
+  assert.deepEqual(t.taxMode(usd), { amountTypes: "NoTax", taxType: "NONE" });
 });
 
 test("line description carries merchant, purpose and claim number", () => {

@@ -232,10 +232,21 @@ function lineDescription(c: Claim): string {
   return parts.join("\n");
 }
 
-/** Line tax handling: see HOME_CURRENCY. Omitting `line_tax_type` keeps the
- *  account's default rate. */
-function lineTax(c: Claim): { line_items_type: string; line_tax_type?: string } {
-  return c.currency === HOME_CURRENCY ? { line_items_type: "Inclusive" } : { line_items_type: "NoTax" };
+/**
+ * Tax handling: see HOME_CURRENCY. `amountTypes` is the bill's
+ * `LineAmountTypes` and MUST be sent as the TOP-LEVEL `line_items_type` input.
+ * `new_bill` lists that key only inside the line-items fieldset, but silently
+ * ignores it there: EXP-2 (USD, sent per-line `NoTax`) came back `Exclusive` at
+ * the account's INPUTY24 and Xero added 4.50 of GST to a 50.00 claim. Probed
+ * 2026-10-07 with throwaway drafts: per-line `Inclusive` → Exclusive, total
+ * 118.81 on 109; top-level `Inclusive` → Inclusive, total 109.00.
+ *
+ * `taxType` is the line's explicit tax rate. Omitted for the home currency, so
+ * the account's default rate applies; `NONE` otherwise, so no tax is added even
+ * if `LineAmountTypes` were ever dropped again.
+ */
+function taxMode(c: Claim): { amountTypes: "Inclusive" | "NoTax"; taxType?: string } {
+  return c.currency === HOME_CURRENCY ? { amountTypes: "Inclusive" } : { amountTypes: "NoTax", taxType: "NONE" };
 }
 
 function billUrl(invoiceId: string): string {
@@ -411,6 +422,7 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
     //    signed file URL is good for an hour, far longer than this run needs.
     const accountCode = CATEGORY_ACCOUNTS[claim.category];
     const receipt = claim.receipts[0];
+    const tax = taxMode(claim);
     const bill = await ctx.step("create-xero-bill", async () => {
       try {
         const result = await sdk.runAction({
@@ -428,6 +440,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
             currency: claim.currency,
             number,
             url: claim.pageUrl,
+            // Top level — see taxMode for why the per-line key is not enough.
+            line_items_type: tax.amountTypes,
             ...(receipt ? { attachment: receipt.url } : {}),
             line_items: [
               {
@@ -435,7 +449,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
                 line_quantity: 1,
                 line_unit_amount: claim.amount,
                 line_account_code: accountCode,
-                ...lineTax(claim),
+                line_items_type: tax.amountTypes,
+                ...(tax.taxType ? { line_tax_type: tax.taxType } : {}),
               },
             ],
           },

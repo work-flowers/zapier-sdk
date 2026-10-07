@@ -50,7 +50,8 @@ flowchart TD
 | Other | 429 General Expenses |
 
   **Adding a Category option in Notion means adding a row to `CATEGORY_ACCOUNTS` in `workflow.ts` in the same change.** Otherwise claims in that category fail the run. They never land on a guessed account.
-- **Tax:** for an **SGD** claim, the amount is tax-inclusive at the account's default tax rate. Most of these accounts default to `INPUTY24`, but 510 defaults to `INPUT`. Every other currency is `NoTax`. A receipt that isn't a valid tax invoice gets corrected in the draft.
+- **Tax:** for an **SGD** claim, the amount is tax-inclusive at the account's default tax rate. Most of these accounts default to `INPUTY24` (9%), but **510 defaults to `INPUT`, the old 7% rate**: fix that default in Xero, not here. Every other currency is `NoTax` with tax type `NONE`. A receipt that isn't a valid tax invoice gets corrected in the draft.
+  - **`line_items_type` must go at the top level of `new_bill`'s inputs.** The action lists it only inside the line-items fieldset, but ignores it there. The first live claim, EXP-2 (USD 50.00), came back `Exclusive` at INPUTY24 with 4.50 of GST added, and had to be fixed by hand. Throwaway drafts on 2026-10-07 confirmed it: per-line `Inclusive` gave 118.81 on a 109 claim; top-level `Inclusive` gave 109.00 (100.00 + 9.00).
 - **Attachment:** the first file in *Receipt*. If a claim has more than one receipt, the run logs a warning, and you attach the rest by hand.
 - **Source link:** the bill's URL field points back to the Notion claim.
 
