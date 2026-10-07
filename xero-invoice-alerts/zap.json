@@ -1,7 +1,7 @@
 {
   "name": "xero-invoice-alerts",
   "workflow_id": "019fd4cc-6d23-7aa4-964a-ddc6cf489a1b",
-  "current_version_id": "019fd4cc-b3c5-7bd9-8d24-b4e3a375f063",
+  "current_version_id": "01a116d1-3bcb-750f-be18-e619c2b3f0eb",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfoEGVl7ZLu-3M2wCex1hA",
   "enabled": true,
   "is_private": false,
@@ -110,7 +110,7 @@
   ],
   "pending_verification": "No fire has yet completed a successful Xero read. What to watch for on the first one after ~10:11 UTC 2026-08-06: (1) `priming: true` and `alertsSent: 0` — a priming run must not send anything; (2) rows appearing in table 01KZACA2ZA3XJWWGSMNEC381ZE with `last_alerted_status` set to each invoice's current status; (3) on the NEXT fire, `priming: false` and `alertsSent: 0` again, because nothing has changed since priming. A non-zero `alertsSent` on either of the first two fires means the dedupe rule is wrong and should be investigated before more alerts go out. Also confirm `coverageIncomplete: false` — if true, the window returned more than MAX_PAGES/MAX_INVOICES and the caps need revisiting.",
   "created_at": "2026-08-06T01:59:54.917Z",
-  "version_created_at": "2026-08-06T02:00:13.146Z",
+  "version_created_at": "2026-10-07T14:42:53.822Z",
   "claim_paid": {
     "table": "01M4BBZ4ET36BQ29EAXJ5833JZ (Expense Claim Bills), owned by expense-claim-to-xero-bill",
     "note": "After the alert loop, read the Table's `pending` rows (free) and match them against the invoices THIS pass already fetched. An ACCPAY bill now PAID sets its Notion claim's Status to 'Paid' and the row to `paid` (paid_at = Xero FullyPaidOnDate). Zero extra Xero calls. Exists because Xero has no push trigger for a paid bill: updated_invoice_v2 delivers sales invoices only (verified 2026-10-07: 18 runs of xero-invoice-paid-to-gmail-confirmation, all ACCREC, over a period in which ~20 bills were paid). A Notion refusal closes the row as `error` and fails the run once. Limit: a bill paid while this Zap is down for longer than the 7-day window is never seen; set that claim to Paid by hand.",
