@@ -491,6 +491,11 @@
       "type": "notion_ds",
       "id": "4c0a9038-54fc-4643-a63b-df4e52139219",
       "name": "Expense Claims"
+    },
+    "table:expense-claim-bills": {
+      "type": "table",
+      "id": "01M4BBZ4ET36BQ29EAXJ5833JZ",
+      "name": "Expense Claim Bills"
     }
   },
   "edges": [
@@ -1891,6 +1896,26 @@
     },
     {
       "from": "expense-claim-to-xero-bill",
+      "to": "ds:expense-claims",
+      "kind": "write"
+    },
+    {
+      "from": "expense-claim-to-xero-bill",
+      "to": "table:expense-claim-bills",
+      "kind": "own"
+    },
+    {
+      "from": "table:expense-claim-bills",
+      "to": "xero-invoice-alerts",
+      "kind": "read"
+    },
+    {
+      "from": "xero-invoice-alerts",
+      "to": "table:expense-claim-bills",
+      "kind": "write"
+    },
+    {
+      "from": "xero-invoice-alerts",
       "to": "ds:expense-claims",
       "kind": "write"
     }

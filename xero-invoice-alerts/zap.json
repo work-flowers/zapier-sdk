@@ -22,9 +22,10 @@
   "connections": {
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
-    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
-  "connections_note": "All three are the same credentials the retired Zaps used: Xero work.flowers, Slack (posts to #finance C08GRA41E1J), and the shared dennis@work.flowers Gmail connection on GoogleMailV2CLIAPI@2.14.0. Note the shape mismatch: reads return {\"alias\":{\"connection_id\":…}} (snake_case) while the publish/update flags take {\"alias\":{\"connectionId\":…}} (camelCase).",
+  "connections_note": "All three are the same credentials the retired Zaps used: Xero work.flowers, Slack (posts to #finance C08GRA41E1J), and the shared dennis@work.flowers Gmail connection on GoogleMailV2CLIAPI@2.14.0. Note the shape mismatch: reads return {\"alias\":{\"connection_id\":…}} (snake_case) while the publish/update flags take {\"alias\":{\"connectionId\":…}} (camelCase). notion_wf (work.flowers Notion, added 2026-10-07) sets an expense claim's Status to Paid; see claim_paid.",
   "app_versions": {
     "slack": {
       "implementation_name": "SlackCLIAPI",
@@ -109,5 +110,10 @@
   ],
   "pending_verification": "No fire has yet completed a successful Xero read. What to watch for on the first one after ~10:11 UTC 2026-08-06: (1) `priming: true` and `alertsSent: 0` — a priming run must not send anything; (2) rows appearing in table 01KZACA2ZA3XJWWGSMNEC381ZE with `last_alerted_status` set to each invoice's current status; (3) on the NEXT fire, `priming: false` and `alertsSent: 0` again, because nothing has changed since priming. A non-zero `alertsSent` on either of the first two fires means the dedupe rule is wrong and should be investigated before more alerts go out. Also confirm `coverageIncomplete: false` — if true, the window returned more than MAX_PAGES/MAX_INVOICES and the caps need revisiting.",
   "created_at": "2026-08-06T01:59:54.917Z",
-  "version_created_at": "2026-08-06T02:00:13.146Z"
+  "version_created_at": "2026-08-06T02:00:13.146Z",
+  "claim_paid": {
+    "table": "01M4BBZ4ET36BQ29EAXJ5833JZ (Expense Claim Bills), owned by expense-claim-to-xero-bill",
+    "note": "After the alert loop, read the Table's `pending` rows (free) and match them against the invoices THIS pass already fetched. An ACCPAY bill now PAID sets its Notion claim's Status to 'Paid' and the row to `paid` (paid_at = Xero FullyPaidOnDate). Zero extra Xero calls. Exists because Xero has no push trigger for a paid bill: updated_invoice_v2 delivers sales invoices only (verified 2026-10-07: 18 runs of xero-invoice-paid-to-gmail-confirmation, all ACCREC, over a period in which ~20 bills were paid). A Notion refusal closes the row as `error` and fails the run once. Limit: a bill paid while this Zap is down for longer than the 7-day window is never seen; set that claim to Paid by hand.",
+    "verified": "run-durable dryRun 2026-10-07 with a temporary pending row pointing at a PAID bill: matched it, left EXP-2 (AUTHORISED) alone, wrote nothing."
+  }
 }

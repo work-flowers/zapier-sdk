@@ -31,7 +31,8 @@
     "expense_claims_data_source": "4c0a9038-54fc-4643-a63b-df4e52139219",
     "api_version": "2026-03-11",
     "note": "Write-back + guard property: 'Xero bill' (url), added 2026-10-07 with this Zap. Category options 'Training & courses', 'Events & sponsorship' and 'Memberships & publications' were added the same day. The data source is shared with the Zapier Notion integration (verified 2026-10-07). No page is created here, so repo rule 5 (default template) does not apply.",
-    "automation": "Configured by hand in Notion, not machine-verifiable: Expense Claims -> 'When Status is set to Approved' -> Send webhook to trigger.webhook_url."
+    "automation": "Configured by hand in Notion, not machine-verifiable: Expense Claims -> 'When Status is set to Approved' -> Send webhook to trigger.webhook_url.",
+    "status_flow": "Approved (human; fires the webhook) -> Payment Pending (this Zap, with the bill link) -> Paid (xero-invoice-alerts, when the bill is PAID). The Zapier integration must be allowed to edit the Status property."
   },
   "xero": {
     "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
@@ -47,7 +48,11 @@
       "Other": "429 General Expenses"
     },
     "tax": "SGD claims: line amounts tax-inclusive at the account's default tax rate (line_tax_type omitted). Any other currency: NoTax.",
-    "contact_match": "Notion user email (GET /v1/users/{created_by}) == Xero Contact.EmailAddress, active contacts only. No match or several matches fails the run; no contact is ever created."
+    "contact_match": "Notion user email (GET /v1/users/{created_by}) == Xero Contact.EmailAddress, active contacts only. No match or several matches fails the run; no contact is ever created.",
+    "due_date": "Bill date (Expense date) + 30 days."
   },
-  "created_at": "2026-10-07"
+  "created_at": "2026-10-07",
+  "tables": {
+    "01M4BBZ4ET36BQ29EAXJ5833JZ": "Expense Claim Bills — one row per bill (xero_invoice_id, notion_page_id, bill_number, state pending|paid|error, paid_at). Written here as `pending`; xero-invoice-alerts moves rows to `paid` and sets the claim Paid. Created 2026-10-07; EXP-2 backfilled by hand the same day."
+  }
 }
