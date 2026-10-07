@@ -1,12 +1,12 @@
 {
   "name": "expense-claim-to-xero-bill",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a116a3-c22f-75b3-b5d8-b59a927e753b",
+  "current_version_id": "01a116a3-fc26-7aab-b973-0fcd1d358d24",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbTAJSQ0PeEufWnhLrLbFg",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "expense-claim-to-xero-bill",
     "description": "Notion Expense Claims automation webhook (Status -> Approved) -> resolve the claimant (Created by) to their Xero contact by email -> raise a DRAFT Xero bill EXP-<Claim ID> against that contact, account by Category, receipt attached -> write the bill link back to the claim's 'Xero bill' property.",
     "enable_on_publish": true
@@ -16,7 +16,7 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/CGo7tXSRdROiTmni8/",
     "trigger_note": "Catch hook. A Notion database automation on Expense Claims ('When Status is set to Approved' -> Send webhook) POSTs the page here; `webhook_url` is the URL to paste into that automation. The workflow re-reads the page and bills only a claim whose Status is Approved, so a stray POST or a test ping does nothing. Re-setting Status to Approved re-fires it, which is the normal way to retry a claim after fixing it. Catch hooks drop a repeat POST whose top-level `id` was already seen (W6ZE93-VMEWP); Notion's automation payload has no top-level `id` (the page is under `data`), so repeat approvals of one claim are delivered."
   },
   "connections": {
