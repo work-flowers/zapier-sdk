@@ -121,7 +121,7 @@ check("match name rendered for the request", [c.matchFirstName, c.matchLastName]
 // The fake rejects any header-unsafe string input with the platform's own
 // message, the way the real integration fails before sending.
 const PLATFORM_HEADER_ERROR = (v) => `Action execution failed: ${v} is not a legal HTTP header value`;
-function fakeSdk(log, { harvest, bcRow } = {}) {
+function fakeSdk(log, { harvest, bcRow, upload } = {}) {
   sdkStub.runAction = async ({ actionKey, inputs }) => {
     log.push({ actionKey, inputs });
     if (actionKey === "find_profile") {
@@ -138,9 +138,13 @@ function fakeSdk(log, { harvest, bcRow } = {}) {
     if (actionKey === "get_contact") return { data: [{ status: "terminated", data: bcRow ? [bcRow] : [] }] };
     throw new Error(`unexpected action ${actionKey}`);
   };
+  // Notion: file_uploads (create + poll) answer with `upload` (default: a
+  // real 8 KB JPEG); everything else answers 200 {}.
+  const up = { id: "up-1", status: "uploaded", content_type: "image/jpeg", content_length: 8000, ...upload };
   sdkStub.fetch = async (url, init) => {
-    log.push({ fetch: url, body: init?.body });
-    return { ok: true, status: 200, text: async () => "", headers: new Map() };
+    log.push({ fetch: url, method: init?.method, body: init?.body });
+    const json = /\/file_uploads/.test(url) ? up : {};
+    return { ok: true, status: 200, text: async () => "", json: async () => json, headers: new Map() };
   };
   sdkStub.listTableRecords = async () => ({ data: [] });
   sdkStub.createTableRecords = async ({ records }) => {
@@ -202,7 +206,12 @@ const bcRow = {
 };
 const withLi = (over = {}) => payload({ Linkedin: { type: "url", url: LI }, ...over });
 const updateOf = (log) => log.find((e) => e.actionKey === "update_database_item")?.inputs ?? {};
-const commentOf = (log) => JSON.parse(log.find((e) => e.fetch)?.body ?? "{}").rich_text?.[0]?.text?.content ?? "";
+const commentOf = (log) => JSON.parse(log.find((e) => /\/comments$/.test(e.fetch ?? ""))?.body ?? "{}").rich_text?.[0]?.text?.content ?? "";
+const iconPatchOf = (log) => {
+  const e = log.find((x) => x.method === "PATCH" && /\/pages\//.test(x.fetch ?? ""));
+  return e ? JSON.parse(e.body) : null;
+};
+const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shrink_800_800/0/1?e=1793232000&v=beta&t=x";
 
 {
   const { out, log } = await run(withLi(), { harvest: harvestRow(), bcRow });
@@ -273,6 +282,39 @@ const commentOf = (log) => JSON.parse(log.find((e) => e.fetch)?.body ?? "{}").ri
     updateOf(log2)["properties|||City|||select"],
     updateOf(log2)["properties|||Country|||select"],
   ], ["Washington D.C.", "Bonaire Sint Eustatius and Saba"]);
+}
+
+// --- Path C: HarvestAPI photo → page icon --------------------------------------
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow({ photo: PHOTO }) });
+  const create = log.find((e) => /\/file_uploads$/.test(e.fetch ?? ""));
+  check("the photo is imported into Notion, not linked", JSON.parse(create?.body ?? "{}").mode, "external_url");
+  check("…from HarvestAPI's URL", JSON.parse(create?.body ?? "{}").external_url, PHOTO);
+  check("…and set as the icon only", iconPatchOf(log), { icon: { type: "file_upload", file_upload: { id: "up-1" } } });
+  check("…reported in output and comment", [out.iconUpdated, /profile icon/.test(commentOf(log))], [true, true]);
+}
+{
+  const { out, log } = await run(withLi(), {
+    harvest: harvestRow({ photo: "https://static.licdn.com/aero-v1/sc/h/9c8pery4andzj6ohjkjp54ma2" }),
+  });
+  check("LinkedIn's silhouette URL is never imported", log.some((e) => /file_uploads/.test(e.fetch ?? "")), false);
+  check("…and the icon is left alone", [iconPatchOf(log), out.iconUpdated], [null, false]);
+}
+{
+  const { out, log } = await run(withLi(), {
+    harvest: harvestRow({ photo: PHOTO }),
+    upload: { content_type: "image/svg+xml", content_length: 489 },
+  });
+  check("an imported SVG placeholder is not set", [iconPatchOf(log), out.iconUpdated, out.iconError], [null, false, undefined]);
+}
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow({ photo: PHOTO }), upload: { status: "failed" } });
+  check("a failed import does not fail the run", [out.enriched, out.iconUpdated], [true, false]);
+  check("…and is named in the comment", /Profile photo not stored: Notion could not import the photo/.test(commentOf(log)), true);
+}
+{
+  const { log } = await run(payload(), { bcRow });
+  check("a BetterContact-only run never touches the icon", log.some((e) => /file_uploads/.test(e.fetch ?? "")), false);
 }
 
 console.log(`\n${count - failures}/${count} passed`);
