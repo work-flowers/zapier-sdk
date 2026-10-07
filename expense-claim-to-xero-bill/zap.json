@@ -1,0 +1,53 @@
+{
+  "name": "expense-claim-to-xero-bill",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "expense-claim-to-xero-bill",
+    "description": "Notion Expense Claims automation webhook (Status -> Approved) -> resolve the claimant (Created by) to their Xero contact by email -> raise a DRAFT Xero bill EXP-<Claim ID> against that contact, account by Category, receipt attached -> write the bill link back to the claim's 'Xero bill' property.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. A Notion database automation on Expense Claims ('When Status is set to Approved' -> Send webhook) POSTs the page here; `webhook_url` is the URL to paste into that automation. The workflow re-reads the page and bills only a claim whose Status is Approved, so a stray POST or a test ping does nothing. Re-setting Status to Approved re-fires it, which is the normal way to retry a claim after fixing it. Catch hooks drop a repeat POST whose top-level `id` was already seen (W6ZE93-VMEWP); Notion's automation payload has no top-level `id` (the page is under `data`), so repeat approvals of one claim are delivered."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+  },
+  "zapier_durable_version": "0.12.6",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.103.0"
+  },
+  "notion": {
+    "expense_claims_data_source": "4c0a9038-54fc-4643-a63b-df4e52139219",
+    "api_version": "2026-03-11",
+    "note": "Write-back + guard property: 'Xero bill' (url), added 2026-10-07 with this Zap. Category options 'Training & courses', 'Events & sponsorship' and 'Memberships & publications' were added the same day. The data source is shared with the Zapier Notion integration (verified 2026-10-07). No page is created here, so repo rule 5 (default template) does not apply.",
+    "automation": "Configured by hand in Notion, not machine-verifiable: Expense Claims -> 'When Status is set to Approved' -> Send webhook to trigger.webhook_url."
+  },
+  "xero": {
+    "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+    "category_accounts": {
+      "Travel": "420 Travel & Entertainment",
+      "Meals": "420 Travel & Entertainment",
+      "Software & subscriptions": "510 Subscriptions - Software",
+      "Office supplies": "453 Office Expenses",
+      "Professional services": "313 Professional Fees",
+      "Training & courses": "475 Learning & Development",
+      "Events & sponsorship": "405 Event & Sponsorship Costs",
+      "Memberships & publications": "485 Subscriptions - Non-Software",
+      "Other": "429 General Expenses"
+    },
+    "tax": "SGD claims: line amounts tax-inclusive at the account's default tax rate (line_tax_type omitted). Any other currency: NoTax.",
+    "contact_match": "Notion user email (GET /v1/users/{created_by}) == Xero Contact.EmailAddress, active contacts only. No match or several matches fails the run; no contact is ever created."
+  },
+  "created_at": "2026-10-07"
+}

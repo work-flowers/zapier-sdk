@@ -58,6 +58,7 @@
     "finance-xero": {
       "label": "Finance",
       "zaps": [
+        "expense-claim-to-xero-bill",
         "drive-invoice-to-xero",
         "drive-paid-receipts-to-table",
         "drive-screenshot-to-xero-sales-invoice",
@@ -485,6 +486,11 @@
       "type": "notion_ds",
       "id": "1714cb13-d1b1-4cab-9d2e-c56aadbfda47",
       "name": "Zapier Zap Runs"
+    },
+    "ds:expense-claims": {
+      "type": "notion_ds",
+      "id": "4c0a9038-54fc-4643-a63b-df4e52139219",
+      "name": "Expense Claims"
     }
   },
   "edges": [
@@ -1872,6 +1878,21 @@
       "from": "ds:zapier-zap-runs",
       "to": "zapier-error-email-to-triage",
       "kind": "read"
+    },
+    {
+      "from": "ds:expense-claims",
+      "to": "expense-claim-to-xero-bill",
+      "kind": "trigger"
+    },
+    {
+      "from": "expense-claim-to-xero-bill",
+      "to": "app:xero",
+      "kind": "write"
+    },
+    {
+      "from": "expense-claim-to-xero-bill",
+      "to": "ds:expense-claims",
+      "kind": "write"
     }
   ],
   "excluded_zaps": {
