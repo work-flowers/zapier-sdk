@@ -89,14 +89,14 @@ BetterContact alone replaced the Apollo → Lusha → NinjaPear cascade on
      Secondary. See [Email paths](#email-paths).
    - **New/different email** (Path G): keeps the existing Primary Email, adds
      the enriched email to Secondary Email.
-   - **Page icon from the profile photo** (Path C, **icon only**): when
-     HarvestAPI returns a real `photo`, Notion imports it
-     (`file_uploads` `external_url`) and the page icon is set to the stored
-     file. The cover is left as it is. LinkedIn's placeholder silhouette is
+   - **Page icon and cover from the profile photo** (Path C): when
+     HarvestAPI returns a real `photo`, Notion imports it once
+     (`file_uploads` `external_url`) and both the page icon and the cover are
+     set to the stored file. LinkedIn's placeholder silhouette is
      filtered, and a photo that fails to import is named in the comment, never
      failing the run. BetterContact returns no photo, so a BetterContact-only
-     run leaves the icon alone. See [Path C: profile photo → page
-     icon](#path-c-profile-photo--page-icon). (Removed 2026-09-18, back
+     run leaves the icon and cover alone. See [Path C: profile photo → page
+     icon and cover](#path-c-profile-photo--page-icon-and-cover). (Removed 2026-09-18, back
      2026-10-07.)
    - **Index the email in the email→contact Zapier Table**
      (`01JYEPSEARXB2Z6BJRCMFGXBC2`): whenever a new email lands on the contact
@@ -176,7 +176,7 @@ flowchart TD
     G --> J
     U --> J
     J{"HarvestAPI photo?<br/>(placeholder filtered)"}
-    J -- yes --> IC["Path C: import into Notion<br/>(file_uploads external_url),<br/>set as page icon"]
+    J -- yes --> IC["Path C: import into Notion<br/>(file_uploads external_url),<br/>set as page icon + cover"]
     J -- no --> JC
     IC --> JC
     JC["Post outcome comment on the page<br/>(no @mention)"]
@@ -200,8 +200,8 @@ before.
 | profile, address unverified or none | BetterContact asked for the address; HarvestAPI's profile fields are kept and BetterContact's fill only what HarvestAPI left blank. If BetterContact finds nothing, the profile is written without an email |
 | no profile (empty result) or an error | BetterContact, with `HarvestAPI: …` named in the comment |
 
-**The photo** (`photo`, a signed LinkedIn CDN URL) becomes the page icon; see
-[Path C](#path-c-profile-photo--page-icon). The current employer's website is
+**The photo** (`photo`, a signed LinkedIn CDN URL) becomes the page icon and cover; see
+[Path C](#path-c-profile-photo--page-icon-and-cover). The current employer's website is
 read only to corroborate an address; it is not fed to BetterContact as a domain.
 
 **Select values never carry a comma.** Notion rejects a `select` option
@@ -339,8 +339,8 @@ Given up — deliberately, since the brief was to replace the cascade:
 - **No profile photo or bio.** Those came from Apollo (photo, bio) and
   NinjaPear (photo), and neither returned photos reliably; the only source that
   ever did was HarvestAPI, by scraping LinkedIn. (HarvestAPI came back as the
-  primary source on 2026-10-07 and with it Path C, as icon only — see
-  [Path C](#path-c-profile-photo--page-icon).)
+  primary source on 2026-10-07 and with it Path C, icon and cover — see
+  [Path C](#path-c-profile-photo--page-icon-and-cover).)
   BetterContact's `contact_avatar` is a documented legacy key that is always
   `null`, and its `enrich_profile` endpoint (not exposed by the Zapier app) has
   no image field either. **Path C was therefore removed outright on
@@ -358,11 +358,12 @@ Given up — deliberately, since the brief was to replace the cascade:
   skipped with a reason where Apollo/Lusha could sometimes match them. Job
   title, city and country arrive only when a provider happened to return them.
 
-## Path C: profile photo → page icon
+## Path C: profile photo → page icon and cover
 
 Live 2026-08-12 → 2026-09-18 (Apollo / NinjaPear photos, icon **and** cover),
 removed when no source returned photos, and back on **2026-10-07** with
-HarvestAPI's `photo` as the **icon only**. The code was restored from the
+HarvestAPI's `photo`, again as **icon and cover** (briefly icon-only on
+2026-10-07 until asked for the cover too). The code was restored from the
 removed version with the same guards; the lessons that shaped it:
 
 - **Upload, never link.** Enrichment photo URLs were signed, time-limited
@@ -370,8 +371,8 @@ removed version with the same guards; the lessons that shaped it:
   `{type:"external"}` icon left the page with an icon and cover that rendered
   as blank white space once the link expired — 210 of 962 contacts by the
   2026-08-12 audit. The fix was `POST /v1/file_uploads {mode:"external_url"}`
-  → poll until `uploaded` → `PATCH /v1/pages/{id}` with `file_upload` as the
-  icon (it used to back the cover too). `filename` is required in that mode.
+  → poll until `uploaded` → `PATCH /v1/pages/{id}` with `file_upload` for both
+  icon and cover (one upload backs both). `filename` is required in that mode.
   Re-verified 2026-10-07 with a HarvestAPI photo URL: imported as a 57 KB
   `image/jpeg`, `uploaded` within seconds.
 - **The durable cannot download the bytes itself.** A bare `fetch` fails for
@@ -388,9 +389,10 @@ removed version with the same guards; the lessons that shaped it:
   `content_length`).
 - **Never fail the run over a photo.** Catch the import inside the step and
   report it in the outcome comment; leave only the Notion PATCH to throw.
-- **Every enrichment overwrites the icon** when a real photo comes back,
-  replacing the Contacts default-template icon (or an older photo). Contacts
-  whose icon is one of the 210 expired `external` links from the 2026-08-12
+- **Every enrichment overwrites the icon and cover** when a real photo comes
+  back, replacing the Contacts default-template icon and any existing cover
+  (an older photo, a Clay banner). Contacts whose icon or cover is one of the
+  210 expired `external` links from the 2026-08-12
   audit are repaired the next time they are enriched with a LinkedIn URL.
 
 ## The outcome comment retries transient failures
@@ -613,10 +615,10 @@ declared set when they differ, logging the change in the run summary.
   collapses into a single inline function with if/else blocks.
 - **No retry** — the original parent Zap retried enrichment after a 1-minute
   delay on error. This Durable logs and skips instead.
-- **Page icon, not cover** — the sub-Zap's Path C icon/cover update was carried
-  over, removed on 2026-09-18 when no photo source remained, and restored on
-  2026-10-07 for HarvestAPI's photo as the icon only, uploaded to Notion rather
-  than linked.
+- **Page icon and cover, uploaded** — the sub-Zap's Path C icon/cover update
+  was carried over, removed on 2026-09-18 when no photo source remained, and
+  restored on 2026-10-07 for HarvestAPI's photo, uploaded to Notion rather than
+  linked.
 - **Outcome comment** — after every run, a brief comment on the triggering page
   (no @mention since 2026-10-03). Transient Notion failures are
   retried, not swallowed.

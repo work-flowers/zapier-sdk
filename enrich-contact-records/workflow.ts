@@ -840,8 +840,8 @@ function normalizeLinkedin(url: string | null | undefined): string {
 //
 // Storing the bytes in Notion instead makes it permanent. The PATCH comes back
 // as `type: "file"` on Notion's own S3, whose URL Notion re-signs on each read.
-// (Until 2026-09-18 one upload backed both the icon and the cover; since its
-// return on 2026-10-07 the photo is set as the icon only.)
+// One upload backs both the icon and the cover — verified 2026-08-12 against a
+// live contact, and again 2026-10-07; the docs don't state it either way.
 //
 // Notion does the downloading, via `file_uploads` mode `external_url`.
 //
@@ -983,8 +983,8 @@ type DurableCtx = DurableContext;
 //   Path D "Same or No Prior Email" — set primary email to enriched email
 //   Path G "New Email"            — keep existing primary, add new to secondary
 //   Path C "Update Page Icon"      — set page icon + cover to profile pic
-//                                    (removed 2026-09-18; back 2026-10-07 as
-//                                    icon only, from HarvestAPI's photo)
+//                                    (removed 2026-09-18; back 2026-10-07,
+//                                    from HarvestAPI's photo)
 //   Path E "Exit"                  — return
 //
 // In the Durable these collapse to sequential if/else blocks, plus one path the
@@ -1208,12 +1208,12 @@ async function updateContactRecord(
     });
   }
 
-  // --- Update the page icon from the profile photo (Path C) ---
+  // --- Update the page icon + cover from the profile photo (Path C) ---
   //
   // The photo is uploaded to Notion rather than linked. See "Profile photo
   // storage" above: linking the source URL is what left 210 contacts rendering
-  // a blank icon once the signed link expired. Icon only — the cover is left
-  // as it is.
+  // a blank icon and cover once the signed link expired. The one upload backs
+  // both.
   let iconUpdated = false;
   let iconError: string | undefined;
   if (enriched.profilePicUrl) {
@@ -1250,6 +1250,7 @@ async function updateContactRecord(
         },
         body: JSON.stringify({
           icon: { type: "file_upload", file_upload: { id: uploadId } },
+          cover: { type: "file_upload", file_upload: { id: uploadId } },
         }),
       });
       if (!res.ok) {
@@ -1373,7 +1374,7 @@ async function addOutcomeComment(
     if (result.emailPath === "same-or-no-prior") changes.push("primary email");
     if (result.emailPath === "new-email") changes.push("secondary email");
     changes.push("contact details");
-    if (result.iconUpdated) changes.push("profile icon");
+    if (result.iconUpdated) changes.push("profile icon and cover");
     let via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
     if (result.emailSource && result.emailSource !== result.source) {
       via += ` (email via ${SOURCE_LABELS[result.emailSource]})`;
