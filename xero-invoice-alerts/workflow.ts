@@ -596,6 +596,37 @@ async function fetchInvoiceDetail(invoiceId: string): Promise<any> {
   return (JSON.parse(body)?.Invoices ?? [])[0] ?? null;
 }
 
+/**
+ * The windowed read, as ONE step so the page walk is a single retry unit.
+ *
+ * Lives in a helper that takes `ctx` because of the publish-time analyzer: a
+ * step in the workflow body whose callback reaches `sdk.runAction` through a
+ * function call is refused as `malformed-run-action` ("Pass appKey, actionType,
+ * and actionKey on the sdk.runAction call") — that refused this Zap's first
+ * republish on 2026-10-07, on code unchanged since 2026-08-06. The analyzer does
+ * not follow `ctx` into a helper. Verified with validate-workflow on a reduced
+ * copy: the inline form reproduces the error, this form passes. The step id is
+ * unchanged.
+ */
+function fetchWindow(
+  ctx: DurableContext,
+  sinceIso: string,
+): Promise<{ rows: any[]; pages: number; truncated: boolean }> {
+  return ctx.step("fetch-invoices", async () => {
+    const rows: any[] = [];
+    let pages = 0;
+    let truncated = false;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const batch = await fetchInvoicePage(sinceIso, page);
+      pages = page;
+      rows.push(...batch);
+      if (batch.length < 100) break;
+      if (page === MAX_PAGES) truncated = true;
+    }
+    return { rows, pages, truncated };
+  });
+}
+
 /** State rows for one invoice id, oldest ULID first so racers agree. */
 async function findStateRows(invoiceId: string): Promise<any[]> {
   const hit = await sdk.listTableRecords({
@@ -646,19 +677,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 2. Read Xero once. Bounded pages, all in ONE step so the page walk is a
     //    single retry unit.
-    const fetched = await ctx.step("fetch-invoices", async () => {
-      const rows: any[] = [];
-      let pages = 0;
-      let truncated = false;
-      for (let page = 1; page <= MAX_PAGES; page++) {
-        const batch = await fetchInvoicePage(sinceIso, page);
-        pages = page;
-        rows.push(...batch);
-        if (batch.length < 100) break;
-        if (page === MAX_PAGES) truncated = true;
-      }
-      return { rows, pages, truncated };
-    });
+    const fetched = await fetchWindow(ctx, sinceIso);
 
     // Deterministic order so per-item step names are stable across retries.
     // The batch itself is memoized by the step above, so an index can never
