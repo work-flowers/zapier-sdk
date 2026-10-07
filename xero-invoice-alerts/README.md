@@ -24,6 +24,7 @@ deduped through its own state Table.
 4. **Dedupe** against the [state Table](#dedupe-the-part-that-replaced-zapiers-polling-dedupe): an
    alert fires only if the invoice's current qualifying status differs from the one we last alerted on.
 5. **Re-read the invoice in full** before alerting, then send it and record the new state.
+6. **Mark paid expense claims.** Read the `pending` rows of the **Expense Claim Bills** Table (free). Any of their bills that this pass read as `ACCPAY` + `PAID` moves its Notion expense claim to **Paid**, and its row to `paid`. This reuses the invoices already fetched, so it costs **no extra Xero calls**. See [Expense claims](#expense-claims-marking-paid).
 
 | Type + status | Channel | Destination |
 | --- | --- | --- |
@@ -160,6 +161,16 @@ jumble are all carried over verbatim. One deliberate change:
 > published `paused: true` and the durable itself had **0 runs** — so no recipient experience
 > regressed.
 
+## Expense claims: marking Paid
+
+[`expense-claim-to-xero-bill`](../expense-claim-to-xero-bill/) raises a bill for each approved Notion expense claim. It also writes a `pending` row (`xero_invoice_id`, `notion_page_id`, `bill_number`) to the Zapier Table **Expense Claim Bills**, `01M4BBZ4ET36BQ29EAXJ5833JZ`. On every run, after the alerts, this Zap:
+
+1. lists the `pending` rows (free; no task, no Xero call);
+2. matches them against the invoices it has just read. A bill that is `ACCPAY` + `PAID` sets the claim's Notion **Status** to **Paid**, and the row to `paid`, with `paid_at` set to Xero's `FullyPaidOnDate`;
+3. when Notion refuses (claim deleted, Status renamed, or the integration not allowed to edit Status), closes the row as `error` and **fails the run once** at the end, after every alert has gone out. It doesn't stay `pending` and turn every hour red.
+
+It lives here, and not in a Zap of its own, because Xero has no push trigger for a paid bill. `updated_invoice_v2` delivers sales invoices only (verified 2026-10-07), and a polling "New Bill / paid" trigger would cost about 1,440 Xero calls a day. This pass reuses the window this Zap already reads, so it adds none. **Limit:** a bill paid while this Zap is down for more than the 7-day window is never seen.
+
 ## Testing without sending
 
 ```bash
@@ -170,6 +181,8 @@ A dry run computes the whole pass against live Xero data, reports what it *would
 no state. It is the safe way to inspect this Zap.
 
 ## Maintainer notes
+
+- **Per-invoice steps go through `indexedStep(ctx, id, run)`.** Zapier's publish-time analyzer began refusing template-literal step IDs in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The IDs (`find-state-003`, …) are unchanged, so runs already in progress replay against the same journal.
 
 - **`moh` must be the string `"00"`, not the integer `0`** — even though `list-trigger-input-fields`
   declares it `value_type: INTEGER`. The real choices are `"00"/"15"/"30"/"45"`; confirm with

@@ -1,13 +1,13 @@
 # expense-claim-to-xero-bill
 
-When a reimbursement claim in the Notion **🧾 Expense Claims DB** is set to **Approved**, this Zap raises a **draft** bill in Xero to pay the claimant back. Then it links the bill from the claim.
+When a reimbursement claim in the Notion **🧾 Expense Claims DB** is set to **Approved**, this Zap raises a **draft** bill in Xero to pay the claimant back. Then it links the bill from the claim, moves the claim to **Payment Pending**, and records the bill in the **Expense Claim Bills** Zapier Table. When Xero reports that bill paid, [`xero-invoice-alerts`](../xero-invoice-alerts/) moves the claim to **Paid**.
 
 | | |
 | --- | --- |
 | Trigger | Catch hook (`WebHookCLIAPI` `hook_v2`). A Notion database automation on Expense Claims (`4c0a9038-54fc-4643-a63b-df4e52139219`) POSTs the page when **Status is set to Approved**. The URL to paste in is `trigger.webhook_url` in [`zap.json`](zap.json), filled in after the first publish |
-| Writes | Xero draft bill (`new_bill`). Notion `Xero bill` URL property on the claim |
+| Writes | Xero draft bill (`new_bill`). Zapier Table **Expense Claim Bills** (`01M4BBZ4ET36BQ29EAXJ5833JZ`) row, `pending`. Notion `Xero bill` URL + Status → **Payment Pending** on the claim |
 | Connections | `notion_wf` (work.flowers Notion), `xero_wf` (Xero work.flowers). The catch hook itself needs none |
-| Cost | 3 Xero tasks per claim (find contact, find existing bill, create bill). The Notion reads and write go through `sdk.fetch` |
+| Cost | 3 Xero tasks per claim (find contact, find existing bill, create bill). The Notion reads and write go through `sdk.fetch`, and Table reads and writes cost no tasks |
 
 ## Flow
 
@@ -24,16 +24,18 @@ flowchart TD
   U --> C{Exactly one active Xero contact<br/>with that email?}
   C -- no --> E2[Fail: fix the contact in Xero]
   C -- yes --> X{Bill EXP-n already<br/>in Xero?}
-  X -- yes --> W[Write bill link to claim]
-  X -- no --> B[Create DRAFT bill EXP-n:<br/>contact, account by Category,<br/>receipt attached]
-  B --> W
+  X -- yes --> TB[Find-or-create Table row<br/>state = pending]
+  X -- no --> B[Create DRAFT bill EXP-n:<br/>contact, account by Category,<br/>due +30 days, receipt attached]
+  B --> TB
+  TB --> W[Claim: Xero bill link,<br/>Status = Payment Pending]
+  W -. later, hourly .-> A[xero-invoice-alerts sees the<br/>bill PAID → claim Status = Paid]
 ```
 
 ## What the bill looks like
 
 - **Contact:** the claimant. This is the Notion user in *Created by*, matched to Xero by **email address**, never by name. Notion display names are often a first name only ("Dennis"), while the Xero contact is "Dennis Chiuten".
 - **Number:** `EXP-<Claim ID>`. This is also the dedupe key (see below).
-- **Date:** *Expense date*. There is no due date; set one when you approve the bill.
+- **Date:** *Expense date*. **Due date:** 30 days after that (`PAYMENT_TERMS_DAYS`), worked out with integer date arithmetic because the durable runtime rejects `new Date` in the workflow body.
 - **Currency:** *Currency*. "Other" fails the run, because Xero needs an ISO code.
 - **One line:** *Claim description*, the merchant, the business purpose and the claim number. Quantity 1 at *Amount*, coded to the account for its *Category*:
 
@@ -50,9 +52,23 @@ flowchart TD
 | Other | 429 General Expenses |
 
   **Adding a Category option in Notion means adding a row to `CATEGORY_ACCOUNTS` in `workflow.ts` in the same change.** Otherwise claims in that category fail the run. They never land on a guessed account.
-- **Tax:** for an **SGD** claim, the amount is tax-inclusive at the account's default tax rate. Most of these accounts default to `INPUTY24`, but 510 defaults to `INPUT`. Every other currency is `NoTax`. A receipt that isn't a valid tax invoice gets corrected in the draft.
+- **Tax:** for an **SGD** claim, the amount is tax-inclusive at the account's default tax rate. Most of these accounts default to `INPUTY24` (9%), but **510 defaults to `INPUT`, the old 7% rate**: fix that default in Xero, not here. Every other currency is `NoTax` with tax type `NONE`. A receipt that isn't a valid tax invoice gets corrected in the draft.
+  - **`line_items_type` must go at the top level of `new_bill`'s inputs.** The action lists it only inside the line-items fieldset, but ignores it there. The first live claim, EXP-2 (USD 50.00), came back `Exclusive` at INPUTY24 with 4.50 of GST added, and had to be fixed by hand. Throwaway drafts on 2026-10-07 confirmed it: per-line `Inclusive` gave 118.81 on a 109 claim; top-level `Inclusive` gave 109.00 (100.00 + 9.00).
 - **Attachment:** the first file in *Receipt*. If a claim has more than one receipt, the run logs a warning, and you attach the rest by hand.
 - **Source link:** the bill's URL field points back to the Notion claim.
+
+## Status flow
+
+| Status | Set by |
+| --- | --- |
+| Submitted / Under review | the claimant / reviewer |
+| **Approved** | a human; this fires the Notion automation |
+| **Payment Pending** | this Zap, in the same update that writes the bill link |
+| **Paid** | [`xero-invoice-alerts`](../xero-invoice-alerts/), on its hourly read, once Xero shows the bill `PAID` |
+
+The Paid step lives in `xero-invoice-alerts` and not in a Zap of its own because Xero has no push trigger for a paid bill. `updated_invoice_v2` ("Updated Sales Invoice") delivers sales invoices only: across 18 runs of `xero-invoice-paid-to-gmail-confirmation`, every one was `ACCREC`, while about 20 bills were paid over the same period. The alternative, a "New Bill / paid" polling trigger, would cost about 1,440 Xero calls a day. `xero-invoice-alerts` already reads every invoice updated in the last 7 days each hour, paid bills included, so the check adds **no Xero calls**, and its Table read is free. A bill paid while that Zap is down for more than 7 days is never seen; set that claim to Paid by hand.
+
+**The Zapier Notion integration must be allowed to edit the Status property.** Without that, the update that writes the bill link fails too.
 
 ## Failure modes and replays
 
@@ -66,6 +82,7 @@ A re-run is safe at any point, including a double approval:
 
 - If the claim already has a `Xero bill` link, the run is skipped.
 - If Xero already holds a live bill numbered `EXP-n` (say, a run created the bill and then died before the write-back), that bill is linked rather than duplicated. Deleted and voided bills don't count.
+- The Table row is find-or-create on the invoice ID, and it is written *before* the Notion update. Once the claim has a link, a replay stops at the guard and would never get as far as writing the row.
 
 Every case below **fails the run on purpose**. That is the repo's default unrecognised-payload mechanism (see `CLAUDE.md`), and nobody is waiting on a background run, so a silent skip would go unnoticed:
 

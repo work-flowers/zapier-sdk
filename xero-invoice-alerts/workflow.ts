@@ -1,5 +1,5 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts
-import { defineDurable } from "@zapier/zapier-durable";
+import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
 
@@ -64,6 +64,22 @@ const SUBCONTRACTOR_ACCOUNT_CODE = "490";
  */
 const ALERT_STATE_TABLE = "01KZACA2ZA3XJWWGSMNEC381ZE";
 const KEY_FIELD = "xero_invoice_id";
+
+// --- Expense claims: mark Paid ------------------------------------------------
+//
+// `expense-claim-to-xero-bill` raises a bill per approved Notion expense claim
+// and records it in the "Expense Claim Bills" Table as `pending`. Xero has no
+// push trigger for a bill being paid (`updated_invoice_v2` delivers sales
+// invoices only — verified 2026-10-07 against this account's run history), so
+// the paid check rides on THIS Zap's hourly read, which already includes every
+// paid bill updated in the window: zero extra Xero calls, and the Table read
+// is free. A pending bill seen here as PAID moves its claim to "Paid".
+const CLAIM_BILLS_TABLE = "01M4BBZ4ET36BQ29EAXJ5833JZ";
+const NOTION_CONNECTION = "notion_wf"; // work.flowers workspace connection
+const NOTION_API = "https://api.notion.com/v1";
+const NOTION_VERSION = "2026-03-11";
+const CLAIM_STATUS_PROP = "Status";
+const CLAIM_STATUS_PAID = "Paid";
 
 // --- Window and safety limits ----------------------------------------------
 
@@ -442,6 +458,89 @@ function buildSubcontractorBody(inv: Invoice): string {
   ].join("\n");
 }
 
+// --- Per-item steps ----------------------------------------------------------
+
+/**
+ * A step whose id carries a loop index. The runtime needs the index (two steps
+ * with one id in a run collide), but Zapier's publish-time analyzer — which
+ * began refusing on 2026-09-03, after this Zap's last publish — rejects a
+ * template-literal step id in the workflow body, and does not follow `ctx` into
+ * a helper. The ids are exactly the ones the body used before, so in-flight
+ * runs replay against the same journal.
+ */
+function indexedStep<T>(ctx: DurableContext, id: string, run: () => Promise<T>): Promise<T> {
+  return ctx.step(id, run);
+}
+
+interface PendingClaimBill {
+  rowId: string;
+  invoiceId: string;
+  pageId: string;
+  billNumber: string;
+}
+
+/** Xero's `/Date(1790844250093+0000)/` as `YYYY-MM-DD`, or null. */
+function xeroDotNetDate(v: unknown): string | null {
+  const m = /\/Date\((-?\d+)/.exec(String(v ?? ""));
+  return m ? isoDateFromEpochMs(Number(m[1])) : null;
+}
+
+/** Pending claim bills whose invoice this pass read as PAID. */
+function paidClaimBills(
+  pending: PendingClaimBill[],
+  rows: any[],
+): { claim: PendingClaimBill; paidOn: string | null }[] {
+  const byId = new Map<string, any>();
+  for (const r of rows) {
+    const id = firstString(r?.InvoiceID);
+    if (id) byId.set(id, r);
+  }
+  const out: { claim: PendingClaimBill; paidOn: string | null }[] = [];
+  for (const claim of pending) {
+    const inv = byId.get(claim.invoiceId);
+    if (!inv) continue;
+    if ((firstString(inv.Type) ?? "").toUpperCase() !== "ACCPAY") continue;
+    if ((firstString(inv.Status) ?? "").toUpperCase() !== "PAID") continue;
+    out.push({ claim, paidOn: xeroDotNetDate(inv.FullyPaidOnDate) });
+  }
+  return out;
+}
+
+/**
+ * Move one claim to Paid and close its Table row. A Notion failure (claim
+ * deleted, property renamed) closes the row as `error` with the message rather
+ * than leaving it pending, so it surfaces ONCE — the run fails at the end —
+ * instead of turning every hourly run red.
+ */
+async function markClaimPaid(
+  ctx: DurableContext,
+  tag: string,
+  claim: PendingClaimBill,
+  paidOn: string,
+): Promise<{ ok: boolean; message: string | null }> {
+  const notion = await indexedStep(ctx, `claim-paid-notion-${tag}`, async () => {
+    const res = await sdk.fetch(`${NOTION_API}/pages/${claim.pageId}`, {
+      connection: NOTION_CONNECTION,
+      method: "PATCH",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({ properties: { [CLAIM_STATUS_PROP]: { status: { name: CLAIM_STATUS_PAID } } } }),
+    });
+    if (res.ok) return { ok: true, message: null };
+    const text = await res.text();
+    // 5xx and rate limits are worth the step's retries; anything else won't change.
+    if (res.status >= 500 || res.status === 429) throw new Error(`Notion ${res.status}: ${text}`);
+    return { ok: false, message: `Notion ${res.status}: ${text.slice(0, 300)}` };
+  });
+  await indexedStep(ctx, `claim-paid-row-${tag}`, async () =>
+    sdk.updateTableRecords({
+      table: CLAIM_BILLS_TABLE,
+      keyMode: "names",
+      records: [{ id: claim.rowId, data: { state: notion.ok ? "paid" : "error", paid_at: paidOn } }],
+    }),
+  );
+  return notion;
+}
+
 // --- Xero / Table access ---------------------------------------------------
 
 /** One page of invoices updated on or after `sinceIso`. */
@@ -610,11 +709,11 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const tag = String(i).padStart(3, "0");
       const status = (inv.status ?? "").toUpperCase();
 
-      const rows = await ctx.step(`find-state-${tag}`, async () => findStateRows(invoiceId));
+      const rows = await indexedStep(ctx, `find-state-${tag}`, async () => findStateRows(invoiceId));
 
       // Converge on the earliest ULID if a race ever produced duplicates.
       if (rows.length > 1) {
-        await ctx.step(`delete-dupe-state-${tag}`, async () =>
+        await indexedStep(ctx, `delete-dupe-state-${tag}`, async () =>
           sdk.deleteTableRecords({
             table: ALERT_STATE_TABLE,
             records: rows.slice(1).map((r: any) => r.id),
@@ -633,7 +732,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       if (!shouldAlert) {
         // Still refresh last_seen so the row shows the Zap is watching.
         if (!dryRun && existing) {
-          await ctx.step(`touch-state-${tag}`, async () =>
+          await indexedStep(ctx, `touch-state-${tag}`, async () =>
             sdk.updateTableRecords({
               table: ALERT_STATE_TABLE,
               keyMode: "names",
@@ -664,7 +763,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       let skipReason: string | null = null;
 
       if (shouldAlert) {
-        const detail = await ctx.step(`fetch-detail-${tag}`, async () => fetchInvoiceDetail(invoiceId));
+        const detail = await indexedStep(ctx, `fetch-detail-${tag}`, async () => fetchInvoiceDetail(invoiceId));
         if (detail) full = readInvoice(detail);
       }
 
@@ -693,7 +792,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           // `from` is deliberately not set: the Gmail connection already sends
           // as dennis@work.flowers, and the field is a dynamic enum that
           // rejects an unvalidated literal.
-          const sent = await ctx.step(`send-email-${tag}`, async () =>
+          const sent = await indexedStep(ctx, `send-email-${tag}`, async () =>
             sdk.runAction({
               appKey: GMAIL_APP_KEY,
               actionType: "write",
@@ -719,7 +818,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             channel === "slack-bill-draft"
               ? buildBillSlackText(full)
               : buildSalesInvoiceSlackText(full);
-          const posted = await ctx.step(`post-slack-${tag}`, async () =>
+          const posted = await indexedStep(ctx, `post-slack-${tag}`, async () =>
             sdk.runAction({
               appKey: SLACK_APP_KEY,
               actionType: "write",
@@ -776,7 +875,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         };
         if (existing) {
           const priorCount = toNumber(existing?.data?.alert_count) ?? 0;
-          await ctx.step(`update-state-${tag}`, async () =>
+          await indexedStep(ctx, `update-state-${tag}`, async () =>
             sdk.updateTableRecords({
               table: ALERT_STATE_TABLE,
               keyMode: "names",
@@ -786,7 +885,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             }),
           );
         } else {
-          await ctx.step(`create-state-${tag}`, async () =>
+          await indexedStep(ctx, `create-state-${tag}`, async () =>
             sdk.createTableRecords({
               table: ALERT_STATE_TABLE,
               keyMode: "names",
@@ -803,7 +902,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       } else if (!existing) {
         // Priming, or an invoice seen for the first time in a state we have
         // nothing to say about — record it so it is not reconsidered.
-        await ctx.step(`create-state-${tag}`, async () =>
+        await indexedStep(ctx, `create-state-${tag}`, async () =>
           sdk.createTableRecords({
             table: ALERT_STATE_TABLE,
             keyMode: "names",
@@ -835,6 +934,42 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }
     }
 
+    // 4. Expense claims whose bill is now paid. Runs after the alerts, and
+    //    reads only what this pass already fetched — no extra Xero call.
+    const pendingClaims = await ctx.step("read-pending-claim-bills", async () => {
+      const hit = await sdk.listTableRecords({
+        table: CLAIM_BILLS_TABLE,
+        keyMode: "names",
+        filters: [{ fieldKey: "state", operator: "exact", value: "pending" }],
+        pageSize: 100,
+      });
+      return (hit?.data ?? [])
+        .map((r: any) => ({
+          rowId: String(r.id),
+          invoiceId: labeledValue(r.data?.xero_invoice_id) ?? "",
+          pageId: labeledValue(r.data?.notion_page_id) ?? "",
+          billNumber: labeledValue(r.data?.bill_number) ?? "",
+        }))
+        .filter((r: PendingClaimBill) => r.invoiceId && r.pageId);
+    });
+    const claimsToMark = paidClaimBills(pendingClaims, fetched.rows).sort((a, b) =>
+      a.claim.invoiceId.localeCompare(b.claim.invoiceId),
+    );
+    const claimsPaid: any[] = [];
+    const claimErrors: string[] = [];
+    for (let i = 0; i < claimsToMark.length; i++) {
+      const { claim, paidOn } = claimsToMark[i];
+      if (dryRun) {
+        console.log(`dry run: would mark expense claim ${claim.billNumber} Paid (${claim.pageId})`);
+        claimsPaid.push({ billNumber: claim.billNumber, outcome: "dry-run" });
+        continue;
+      }
+      const res = await markClaimPaid(ctx, String(i).padStart(3, "0"), claim, paidOn ?? clock.today);
+      claimsPaid.push({ billNumber: claim.billNumber, pageId: claim.pageId, outcome: res.ok ? "paid" : "error" });
+      if (!res.ok) claimErrors.push(`${claim.billNumber} (${claim.pageId}): ${res.message}`);
+      else console.log(`expense claim ${claim.billNumber} marked Paid`);
+    }
+
     if (alertCapHit) {
       console.log(
         `WARNING: hit MAX_ALERTS_PER_RUN (${MAX_ALERTS_PER_RUN}). ${skipped.filter((s) => s.reason === "alert cap reached").length} ` +
@@ -847,6 +982,15 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       `xero-invoice-alerts done: ${alertsSent} alert(s) sent, ${skipped.length} skipped, ` +
         `${stateWritten} state row(s) written${priming ? " (PRIMING — no alerts by design)" : ""}`,
     );
+
+    // Every alert and every other claim is already done; this surfaces the
+    // claim(s) Notion refused, once (their rows are now `error`, not pending).
+    if (claimErrors.length > 0) {
+      throw new Error(
+        `${claimErrors.length} expense claim(s) were paid in Xero but could not be set to Paid in Notion — ` +
+          `set them by hand: ${claimErrors.join("; ")}`,
+      );
+    }
 
     return {
       windowFrom: sinceIso,
@@ -863,6 +1007,8 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       stateRowsWritten: stateWritten,
       alerted,
       skipped,
+      pendingClaimBills: pendingClaims.length,
+      claimsPaid,
     };
   },
 );

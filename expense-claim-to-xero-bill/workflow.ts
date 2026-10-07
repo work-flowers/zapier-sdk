@@ -36,6 +36,21 @@ const PROP_RECEIPT = "Receipt";
 const PROP_STATUS = "Status";
 const PROP_XERO_BILL = "Xero bill";
 
+/** Status the claim moves to once its bill exists; `xero-invoice-alerts` moves
+ *  it on to "Paid" when Xero reports the bill paid. */
+const STATUS_PAYMENT_PENDING = "Payment Pending";
+
+// --- Zapier Table ---------------------------------------------------------------
+
+/**
+ * "Expense Claim Bills": one row per bill, keyed on `xero_invoice_id`. This Zap
+ * writes each row as `pending`; `xero-invoice-alerts` reads the pending rows
+ * on its hourly pass (free, no task), and when one of those bills shows up
+ * PAID it sets the claim to Paid and the row to `paid`.
+ */
+const CLAIM_BILLS_TABLE = "01M4BBZ4ET36BQ29EAXJ5833JZ";
+const TABLE_KEY_FIELD = "xero_invoice_id";
+
 // --- Bill shape ----------------------------------------------------------------
 
 /**
@@ -70,6 +85,9 @@ const APPROVED_STATUS = "Approved";
 
 /** Bills are created for review, never posted automatically. */
 const BILL_STATUS = "draft";
+
+/** Due date = bill date (the expense date) + this many days. */
+const PAYMENT_TERMS_DAYS = 30;
 
 /** `InvoiceNumber` on the bill — the dedupe key a re-run looks for. */
 const BILL_NUMBER_PREFIX = "EXP-";
@@ -219,6 +237,46 @@ function missingFields(c: Claim): string[] {
   return missing;
 }
 
+// Calendar arithmetic in integers: the durable runtime's determinism guard
+// rejects `new Date(...)` in the workflow body even with a fixed argument.
+// Hinnant's civil-from-days pair, as in drive-invoice-to-xero.
+
+/** Days since the Unix epoch for a `YYYY-MM-DD` triple. */
+function daysFromCivil(y: number, m: number, d: number): number {
+  const yy = y - (m <= 2 ? 1 : 0);
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const mp = (m + 9) % 12;
+  const doy = Math.floor((153 * mp + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/** `YYYY-MM-DD` from epoch milliseconds. */
+function isoDateFromEpochMs(ms: number): string {
+  const z = Math.floor(ms / 86400000) + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor(
+    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365,
+  );
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp + (mp < 10 ? 3 : -9);
+  const y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function shiftIsoDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return isoDateFromEpochMs((daysFromCivil(y, m, d) + days) * 86400000);
+}
+
+function dueDate(c: Claim): string {
+  return shiftIsoDate(c.expenseDate, PAYMENT_TERMS_DAYS);
+}
+
 function billNumber(c: Claim): string {
   return `${BILL_NUMBER_PREFIX}${c.claimNumber}`;
 }
@@ -232,10 +290,21 @@ function lineDescription(c: Claim): string {
   return parts.join("\n");
 }
 
-/** Line tax handling: see HOME_CURRENCY. Omitting `line_tax_type` keeps the
- *  account's default rate. */
-function lineTax(c: Claim): { line_items_type: string; line_tax_type?: string } {
-  return c.currency === HOME_CURRENCY ? { line_items_type: "Inclusive" } : { line_items_type: "NoTax" };
+/**
+ * Tax handling: see HOME_CURRENCY. `amountTypes` is the bill's
+ * `LineAmountTypes` and MUST be sent as the TOP-LEVEL `line_items_type` input.
+ * `new_bill` lists that key only inside the line-items fieldset, but silently
+ * ignores it there: EXP-2 (USD, sent per-line `NoTax`) came back `Exclusive` at
+ * the account's INPUTY24 and Xero added 4.50 of GST to a 50.00 claim. Probed
+ * 2026-10-07 with throwaway drafts: per-line `Inclusive` → Exclusive, total
+ * 118.81 on 109; top-level `Inclusive` → Inclusive, total 109.00.
+ *
+ * `taxType` is the line's explicit tax rate. Omitted for the home currency, so
+ * the account's default rate applies; `NONE` otherwise, so no tax is added even
+ * if `LineAmountTypes` were ever dropped again.
+ */
+function taxMode(c: Claim): { amountTypes: "Inclusive" | "NoTax"; taxType?: string } {
+  return c.currency === HOME_CURRENCY ? { amountTypes: "Inclusive" } : { amountTypes: "NoTax", taxType: "NONE" };
 }
 
 function billUrl(invoiceId: string): string {
@@ -411,6 +480,7 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
     //    signed file URL is good for an hour, far longer than this run needs.
     const accountCode = CATEGORY_ACCOUNTS[claim.category];
     const receipt = claim.receipts[0];
+    const tax = taxMode(claim);
     const bill = await ctx.step("create-xero-bill", async () => {
       try {
         const result = await sdk.runAction({
@@ -425,9 +495,12 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
             contact_name: contact.name,
             status: BILL_STATUS,
             date: claim.expenseDate,
+            due_date: dueDate(claim),
             currency: claim.currency,
             number,
             url: claim.pageUrl,
+            // Top level — see taxMode for why the per-line key is not enough.
+            line_items_type: tax.amountTypes,
             ...(receipt ? { attachment: receipt.url } : {}),
             line_items: [
               {
@@ -435,7 +508,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
                 line_quantity: 1,
                 line_unit_amount: claim.amount,
                 line_account_code: accountCode,
-                ...lineTax(claim),
+                line_items_type: tax.amountTypes,
+                ...(tax.taxType ? { line_tax_type: tax.taxType } : {}),
               },
             ],
           },
@@ -476,14 +550,50 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
     );
   }
 
-  // 6. Link the bill from the claim. PATCHing a URL property is idempotent.
+  // 6. Record the bill for the paid check, BEFORE the Notion write: once the
+  //    claim carries a bill link, a replay skips at the guard above and would
+  //    never reach this step. Find-or-create, so a step retry is harmless.
+  const tableRow = await ctx.step("record-claim-bill", async () => {
+    const hit = await sdk.listTableRecords({
+      table: CLAIM_BILLS_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: TABLE_KEY_FIELD, operator: "exact", value: invoiceId }],
+      pageSize: 10,
+    });
+    const found = (hit?.data ?? [])[0];
+    if (found) return { id: String(found.id), created: false };
+    const created = await sdk.createTableRecords({
+      table: CLAIM_BILLS_TABLE,
+      keyMode: "names",
+      records: [
+        {
+          data: {
+            [TABLE_KEY_FIELD]: invoiceId,
+            notion_page_id: pageId,
+            bill_number: number,
+            state: "pending",
+            paid_at: "",
+          },
+        },
+      ],
+    });
+    return { id: String((created as any)?.data?.[0]?.id ?? ""), created: true };
+  });
+
+  // 7. Link the bill from the claim and move it to Payment Pending. Both are
+  //    plain property sets, so replaying the PATCH lands in the same state.
   const url = billUrl(invoiceId);
   await ctx.step("write-back-bill-link", async () => {
     const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
       connection: NOTION_CONNECTION,
       method: "PATCH",
       headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
-      body: JSON.stringify({ properties: { [PROP_XERO_BILL]: { url } } }),
+      body: JSON.stringify({
+        properties: {
+          [PROP_XERO_BILL]: { url },
+          [PROP_STATUS]: { status: { name: STATUS_PAYMENT_PENDING } },
+        },
+      }),
     });
     if (!res.ok) throw new Error(`Notion write-back to claim ${pageId} failed (${res.status}): ${await res.text()}`);
     return { ok: true };
@@ -495,6 +605,8 @@ const workflow = defineDurable("expense-claim-to-xero-bill", async (ctx, rawInpu
     billNumber: number,
     invoiceId,
     billUrl: url,
+    dueDate: dueDate(claim),
+    tableRow,
     contact: contact.name,
     accountCode: CATEGORY_ACCOUNTS[claim.category],
     currency: claim.currency,
