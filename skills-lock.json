@@ -11,7 +11,7 @@
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/doctor/SKILL.md",
-      "computedHash": "6fe3c1e72e2eae2ea1c1675a71d55194dfcc339943817567cfe7336160674d33"
+      "computedHash": "f8ea7aa22e8d2f9d6658676c4c21ff78df5b71a78e3c874695261657252d24c3"
     },
     "workflows-history": {
       "source": "zapier/agent-skills",
