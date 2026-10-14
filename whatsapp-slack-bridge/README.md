@@ -259,6 +259,13 @@ correct `inboundFileUrl()` in [`shared.ts`](shared.ts).
   `get_approved_templates`) without checking `WhatsApp Marketing Opt-In`, and 4
   of the 6 contacts with a Slack channel are opted out. This migration does not
   change that exposure.
+- **Slack mrkdwn is flattened, not translated.** Slack's raw `text` wraps every
+  link as `<url|label>` and HTML-escapes `& < >`, which WhatsApp showed verbatim
+  and unclickable. `slackToWhatsAppText()` in [`shared.ts`](shared.ts) unwraps
+  links to the bare URL (or `label (url)` for a named link), turns mentions into
+  `@name`/`#channel`, and unescapes entities. User mentions without a cached
+  name become `@someone`, since resolving them would cost a Slack lookup.
+  Bold/italic/strike/code markers are the same in both and pass through.
 - **Opt-out blocks proactive sends only**, never a reply inside the service
   window — a customer messaging us is consent to reply. Since these three
   workflows do no outbound marketing, the flag is recorded and surfaced in Slack
