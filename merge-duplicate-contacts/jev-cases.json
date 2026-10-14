@@ -1,0 +1,198 @@
+[
+  {
+    "label": "Appireddy -> Appi Pamulapati",
+    "truth": "same",
+    "source": "3f991b07-11ac-8197-94af-d7870910ec5a",
+    "target": "2e691b07-11ac-8132-9f76-e0244cf7bc33"
+  },
+  {
+    "label": "Ustaz Syakir -> Syakir Samsaimon",
+    "truth": "same",
+    "source": "2fe91b07-11ac-8136-a6c6-e1dcdbc1f8cb",
+    "target": "643a6012-6951-4bb0-97de-791a93799d14"
+  },
+  {
+    "label": "New Contact -> Alasdair Bell",
+    "truth": "same",
+    "a": {
+      "Name": "New Contact",
+      "Primary Email": "ab@alasdairbell.com"
+    },
+    "b": {
+      "Name": "Alasdair Bell",
+      "First Name": "Alasdair",
+      "Last Name": "Bell",
+      "Primary Email": "ab@alasdairbell.com",
+      "Secondary Email": [
+        "alasdair.bell@gmail.com"
+      ],
+      "Linkedin": "https://linkedin.com/in/alasdairbell",
+      "Job Title": "Partner",
+      "Company": [
+        "Turing Works"
+      ],
+      "City": "Sydney",
+      "Country": "Australia"
+    }
+  },
+  {
+    "label": "NEG one shared address, different names (Sachin/Lionel shape)",
+    "truth": "diff",
+    "a": {
+      "Name": "Sachin Kolekar",
+      "Primary Email": "sachin@knoxxfoods.com",
+      "Job Title": "CTO",
+      "Company": [
+        "Knoxx Foods"
+      ]
+    },
+    "b": {
+      "Name": "Lionel Sim",
+      "Primary Email": "lionel@theaicapitol.com",
+      "Secondary Email": [
+        "sachin@knoxxfoods.com"
+      ],
+      "Company": [
+        "The AI Capitol"
+      ]
+    }
+  },
+  {
+    "label": "NEG colleagues on one work domain",
+    "truth": "diff",
+    "a": {
+      "Name": "Sachin Kolekar",
+      "Primary Email": "sachin@knoxxfoods.com",
+      "Company": [
+        "Knoxx Foods"
+      ]
+    },
+    "b": {
+      "Name": "Minnie Dua",
+      "Primary Email": "minnie@knoxxfoods.com",
+      "Company": [
+        "Knoxx Foods"
+      ]
+    }
+  },
+  {
+    "label": "NEG two Grace Tangs, different employers",
+    "truth": "diff",
+    "a": {
+      "Name": "Grace Tang",
+      "Primary Email": "grace.tang@dbs.com",
+      "Job Title": "VP Operations",
+      "Company": [
+        "DBS Bank"
+      ],
+      "City": "Singapore"
+    },
+    "b": {
+      "Name": "Grace Tang",
+      "Primary Email": "gtang@shopee.com",
+      "Job Title": "Product Manager",
+      "Company": [
+        "Shopee"
+      ],
+      "City": "Singapore"
+    }
+  },
+  {
+    "label": "NEG same surname, sibling domains, different given names",
+    "truth": "diff",
+    "a": {
+      "Name": "Ravi Pamulapati",
+      "Primary Email": "ravi@knoxxinnovations.com",
+      "Company": [
+        "Knoxx Innovations Pty Ltd"
+      ]
+    },
+    "b": {
+      "Name": "Appi Pamulapati",
+      "First Name": "Appi",
+      "Last Name": "Pamulapati",
+      "Primary Email": "appi@knoxxfoods.com",
+      "Linkedin": "http://www.linkedin.com/in/appi-reddy",
+      "Job Title": "Head of R&D",
+      "Company": [
+        "Knoxx Business Group Pty Ltd"
+      ]
+    }
+  },
+  {
+    "label": "NEG Sam/Samantha Lee, unrelated companies",
+    "truth": "diff",
+    "a": {
+      "Name": "Sam Lee",
+      "Primary Email": "sam@acme.io",
+      "Company": [
+        "Acme"
+      ]
+    },
+    "b": {
+      "Name": "Samantha Lee",
+      "Primary Email": "samantha.lee@globex.com",
+      "Job Title": "CFO",
+      "Company": [
+        "Globex"
+      ],
+      "City": "Sydney"
+    }
+  },
+  {
+    "label": "NEG Chris Wong / Christine Wong, same company",
+    "truth": "diff",
+    "a": {
+      "Name": "Chris Wong",
+      "Primary Email": "chris@knoxxfoods.com",
+      "Company": [
+        "Knoxx Foods"
+      ]
+    },
+    "b": {
+      "Name": "Christine Wong",
+      "Primary Email": "christine@knoxxfoods.com",
+      "Job Title": "Finance Manager",
+      "Company": [
+        "Knoxx Foods"
+      ]
+    }
+  },
+  {
+    "label": "NEG role mailbox at sibling domains",
+    "truth": "diff",
+    "a": {
+      "Name": "Priya Nair",
+      "Primary Email": "sales@knoxxinnovations.com",
+      "Company": [
+        "Knoxx Innovations Pty Ltd"
+      ]
+    },
+    "b": {
+      "Name": "Rahul Mehta",
+      "Primary Email": "sales@knoxxfoods.com",
+      "Job Title": "Sales Director",
+      "Company": [
+        "Knoxx Business Group Pty Ltd"
+      ]
+    }
+  },
+  {
+    "label": "NEG same first-name mailbox at sibling domains, different surnames",
+    "truth": "diff",
+    "a": {
+      "Name": "Appi Reddy",
+      "Primary Email": "appi@knoxxinnovations.com",
+      "Company": [
+        "Knoxx Innovations Pty Ltd"
+      ]
+    },
+    "b": {
+      "Name": "Appi Kumar",
+      "Primary Email": "appi@knoxxfoods.com",
+      "Company": [
+        "Knoxx Business Group Pty Ltd"
+      ]
+    }
+  }
+]

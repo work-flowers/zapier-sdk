@@ -27,7 +27,7 @@
     "model_id": "jev-latest",
     "provider": "TypeSafe (api.typesafe.ai/v1/systemone), via sdk.fetch on the typesafe connection (API by Zapier, Bearer)",
     "verified_against": "jev-1.13.0",
-    "note": "Added 2026-10-03 as a second opinion on the name-mismatch decline only: merge when Jev's same-person probability >= 0.85 AND evidence score >= 2/3. LinkedIn conflicts stay a hard decline Jev never sees; rule merges make no Jev call. Replayed the 6 real Duplicate-of requests: both real false declines (Ustaz Syakir, New Contact/Alasdair Bell) now merge; constructed negatives score <= 0.35. One Zapier task per Jev call plus ~$0.0001 TypeSafe usage. See README 'Second opinion from Jev'."
+    "note": "Added 2026-10-03 as a second opinion on the name-mismatch decline only: merge when Jev's same-person probability >= 0.85 AND evidence score >= 2/3. LinkedIn conflicts stay a hard decline Jev never sees; rule merges make no Jev call. Replayed the 6 real Duplicate-of requests: both real false declines (Ustaz Syakir, New Contact/Alasdair Bell) now merge; constructed negatives score <= 0.35. One Zapier task per Jev call plus ~$0.0001 TypeSafe usage. Criteria revised 2026-10-14 after a false decline (Appireddy/Appi Pamulapati, 0.67/1.8): they now require compatible names and name the same-mailbox-at-related-domains and LinkedIn-handle identifiers; thresholds unchanged. replay-jev.mjs over jev-cases.json: 3/3 real duplicates merge, 8/8 negatives decline, three runs. See README 'Second opinion from Jev'."
   },
   "is_private_note": "Corrected 2026-10-03: get-workflow reports is_private false, so this Zap is account-visible. The previous `true` here (and CLAUDE.md listing it as a grandfathered private Zap) were wrong."
 }

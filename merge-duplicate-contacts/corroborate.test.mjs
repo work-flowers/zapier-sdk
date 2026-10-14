@@ -114,6 +114,11 @@ check("long notes are capped",
   contactSummary(contact({ name: "A B", note: "x".repeat(2000) })).Note.length,
   600);
 
+check("criteria name the identifiers that corroborated Appireddy / Appi",
+  ["mailbox name", "LinkedIn handle", "shortened or extended given name"].map((k) =>
+    JSON.stringify(JEV_QUESTIONS).includes(k)),
+  [true, true, true]);
+
 check("questions are one yes/no and one 4-level score",
   [JEV_QUESTIONS.same_person.type, JEV_QUESTIONS.evidence.type, JEV_QUESTIONS.evidence.criteria.length],
   ["noul", "score", 4]);
@@ -123,6 +128,9 @@ const answer = (p, e) => ({ model: "jev-1.13.0", answers: { same_person: { type:
 
 check("Ustaz Syakir / Syakir Samsaimon (0.96, 2.37) merges", jevVerdict(answer(0.96, 2.37)).merge, true);
 check("New Contact / Alasdair Bell (0.88, 2.01) merges", jevVerdict(answer(0.88, 2.01)).merge, true);
+check("Appireddy / Appi Pamulapati (0.89, 2.4) merges", jevVerdict(answer(0.89, 2.4)).merge, true);
+check("Appireddy / Appi Pamulapati under the first questions (0.67, 1.83) declined", jevVerdict(answer(0.67, 1.83)).merge, false);
+check("same first-name mailbox at sibling domains, different surnames (0.75, 1.9) declines", jevVerdict(answer(0.75, 1.9)).merge, false);
 check("one shared address, different names (0.07, 0.99) declines", jevVerdict(answer(0.07, 0.99)).merge, false);
 check("two Grace Tangs (0.35, 1.03) declines", jevVerdict(answer(0.35, 1.03)).merge, false);
 check("confident but weak evidence (0.9, 1.5) declines: both bars must clear", jevVerdict(answer(0.9, 1.5)).merge, false);
