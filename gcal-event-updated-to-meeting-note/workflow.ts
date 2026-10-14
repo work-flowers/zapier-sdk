@@ -6,8 +6,10 @@ import { z } from "zod";
 const sdk = createZapierSdk();
 
 // --- Bindings --------------------------------------------------------------
-// The Google Calendar credential lives on the TRIGGER, not here: this workflow
-// never calls Google back, it only consumes the event the trigger delivers.
+// The Google Calendar credential lives on the classic hand-off Zap's trigger,
+// not here: this workflow never calls Google, it only consumes the event the
+// hand-off forwards. (It used to poll `event_updated` itself; that trigger
+// never re-fires on durables — see the README.)
 const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
 
@@ -85,10 +87,67 @@ const InputSchema = z
 
 type Input = z.infer<typeof InputSchema>;
 
-/** `run-durable` hands manual input through as a JSON string. */
+/** `run-durable` hands manual input through as a JSON string. A blank body is
+ *  left as "" so `isEmptyPing` skips it rather than `JSON.parse` throwing. */
 function normalizeInput(rawInput: unknown): unknown {
-  if (typeof rawInput === "string") return JSON.parse(rawInput);
+  if (typeof rawInput === "string") {
+    return rawInput.trim() === "" ? "" : JSON.parse(rawInput);
+  }
   return rawInput;
+}
+
+/**
+ * A touch of the public catch URL with nothing in it — a browser visit, a curl
+ * to check it is live, a "test" from the classic Zap's editor before it has
+ * sample data. Skipped, never thrown (shared rules: webhook-trigger durables).
+ */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper with something in it — treat as a real event
+  }
+  return true;
+}
+
+/**
+ * The classic hand-off Zap ("Updated Meeting → hand off to durable") POSTs a
+ * FLAT JSON body, mapped field by field in a Webhooks by Zapier step:
+ *
+ *   source          "classic-handoff"
+ *   id              `<event id>_<updated>` — the dedupe key, NOT the event id
+ *   event_id        the Google occurrence id (the lookup key)
+ *   updated, iCalUID, summary, status, start_dateTime, end_dateTime
+ *
+ * The top-level `id` is composite because the durable runtime drops any
+ * catch-hook POST whose top-level `id` it has already seen (Zapier bug
+ * W6ZE93-VMEWP) — forwarding the bare event id would bring back the exact bug
+ * the hand-off exists to route around.
+ *
+ * This maps that body back onto the Google event shape the rest of the
+ * workflow reads, so a raw Google event (a `run-durable` replay of an old run's
+ * input) still works unchanged.
+ */
+const HANDOFF_SOURCE = "classic-handoff";
+
+function fromHandoff(payload: unknown): unknown {
+  const o = (payload ?? {}) as Record<string, unknown>;
+  if (o.source !== HANDOFF_SOURCE) return payload;
+  // Classic Webhooks steps send an unmapped/empty field as "" — collapse to null
+  // so the schema's optional fields read as absent rather than as "".
+  const s = (v: unknown): string | null => firstString(v);
+  return {
+    id: s(o.event_id),
+    iCalUID: s(o.iCalUID),
+    summary: s(o.summary),
+    status: s(o.status),
+    start: { dateTime: s(o.start_dateTime) },
+    end: { dateTime: s(o.end_dateTime) },
+  };
 }
 
 // --- Deterministic time comparison -----------------------------------------
@@ -215,7 +274,13 @@ function extractRow(result: unknown): MappingRow | null {
 const workflow = defineDurable<Input, unknown>(
   "gcal-event-updated-to-meeting-note",
   async (ctx: DurableContext, rawInput: Input) => {
-    const event = InputSchema.parse(normalizeInput(rawInput));
+    const payload = normalizeInput(rawInput);
+    if (isEmptyPing(payload)) {
+      console.log("empty payload — treating as a ping of the catch URL, not an event");
+      return { skipped: "empty-payload" };
+    }
+
+    const event = InputSchema.parse(fromHandoff(payload));
 
     const eventId = firstString(event.id);
     const iCalUID = firstString(event.iCalUID);
@@ -223,8 +288,12 @@ const workflow = defineDurable<Input, unknown>(
     const startDateTime = firstString(event.start?.dateTime);
     const endDateTime = firstString(event.end?.dateTime);
 
+    // Non-empty but no event id: a real delivery whose shape we failed to read
+    // (a hand-off Zap with an unmapped field, say). Never a silent skip.
     if (!eventId) {
-      return { skipped: "no-event-id" };
+      throw new Error(
+        `No Google event id in the payload: ${JSON.stringify(payload).slice(0, 300)}`,
+      );
     }
 
     // A cancelled occurrence still arrives on `event_updated`. Rewriting the

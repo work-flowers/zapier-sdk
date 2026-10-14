@@ -4,16 +4,20 @@ Keeps a Notion **meeting note**'s `Date` in step with the Google Calendar event 
 
 Replaces the classic Zap **“Updated Meeting → Update Meeting Note in Notion”**, which had been silently failing since May 2026 (see [Why the classic Zap stopped working](#why-the-classic-zap-stopped-working)).
 
-- **Trigger:** Google Calendar → *Event Updated* (`GoogleCalendarCLIAPI@1.15.0` / `event_updated`), calendar `dennis@work.flowers`, `expand_recurring: false`
+- **Trigger:** a `WebHookCLIAPI` catch hook, fed by the **classic hand-off Zap** *"Updated Meeting → hand off to durable"*, which watches Google Calendar → *New or Updated Event* on `dennis@work.flowers` and forwards only real reschedules of meetings that have a note (see [Classic hand-off](#classic-hand-off)). Until 2026-10 this durable polled `event_updated` itself. On durables that trigger fires **only on an event's first sighting**, so this update-only Zap never saw a reschedule.
+- **Catch URL:** filled into `zap.json` `trigger.webhook_url` by the publish pipeline on merge.
 - **Workflow ID:** `019fb770-139b-74ca-bf9b-fec7ea0c9c3b` · [editor](https://zapier.com/durables-editor/019fb770-139b-74ca-bf9b-fec7ea0c9c3b)
-- **Cost:** 1 task per *actual* reschedule. The lookup and the write-back are Zapier Tables ops, which are free, and every skip path exits before the one Notion call.
+- **Cost:** about 2 tasks per *actual* reschedule: the classic Zap's Webhooks POST plus this workflow's one Notion write. The classic Zap's Table lookup and filters are free, and they stop everything else before the POST.
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    T([Google Calendar: Event Updated<br/>expand_recurring = false]) --> G1{has event id?}
-    G1 -- no --> S1[/skip: no-event-id/]
+    C([Classic Zap: GCal New or Updated Event<br/>+ free Table lookup + filter]) -- "POST source, id = event_id_updated, event fields" --> T([Catch hook])
+    T --> P{empty ping?}
+    P -- yes --> S0[/skip: empty-payload/]
+    P -- no --> G1{has event id?}
+    G1 -- no --> S1[throw: unrecognised payload]
     G1 -- yes --> G2{status = cancelled?}
     G2 -- yes --> S2[/skip: event-cancelled/]
     G2 -- no --> G3{start.dateTime<br/>and end.dateTime?}
@@ -29,6 +33,47 @@ flowchart TD
     G6 -- no --> R[refresh-mapping-row<br/>Table: Start, End, Event Title, iCal UID<br/>0 tasks]
     R --> D([updated])
 ```
+
+## Classic hand-off
+
+**Why it exists:** durables add a dedupe layer keyed on the trigger record's raw `id` (Zapier bug W6ZE93-VMEWP, filed from this Zap among others, confirmed 2026-09-08, no ETA). `event_updated` sends the bare occurrence id, so this workflow saw each event only once, on its first sighting: 300 runs, 300 distinct ids (2026-09-07 → 2026-10-14). A reschedule, the one thing it exists for, never arrived. Classic Zaps dedupe on `id` + `updated`, so a classic Zap watches the calendar and forwards each real reschedule here. Zapier Support recommended this workaround on 2026-09-08 and again on 2026-10-14.
+
+**The catch hook dedupes too.** A raw catch hook drops a second POST whose top-level `id` it has already seen (proven 2026-10-01 on [`save-tagged-docs-to-notion`](../save-tagged-docs-to-notion/)). So the hand-off must **not** send the event id as `id`. It sends `<event id>_<updated>`, and the event id goes in `event_id`. On this path the workflow never reads `id`.
+
+**Filter in the classic Zap, not here.** The raw trigger fires about 60 times a day: cancelled tombstones, Gemini touching a whole series, RSVPs. Only the POST costs a classic task, so the free steps in front of it must drop everything that isn't a reschedule of a meeting with a note. This workflow still re-checks each condition, so a filter that lets too much through only wastes a task.
+
+**Payload contract** (Webhooks by Zapier POST, Payload Type `json`, every value a plain mapped field):
+
+| Key | Mapped from the trigger |
+| --- | --- |
+| `source` | `classic-handoff` (literal) |
+| `id` | `{{id}}_{{updated}}`: the dedupe key, which must change on every edit |
+| `event_id` | `{{id}}`: the **occurrence** id, the Table's lookup key |
+| `updated` | `{{updated}}` |
+| `iCalUID` | `{{iCalUID}}` |
+| `summary` | `{{summary}}` |
+| `status` | `{{status}}` |
+| `start_dateTime` | `{{start.dateTime}}` (*Event Begins*) |
+| `end_dateTime` | `{{end.dateTime}}` (*Event Ends*) |
+
+**Setup (Zapier UI; the CLI and MCP can't create classic Zaps).** The quickest path is to duplicate the old classic Zap *"Updated Meeting → Update Meeting Note in Notion"*. It already has the trigger, the Table lookup and the date filter, so the only change is replacing its Notion step with the POST. Otherwise, build it new and name it **"Updated Meeting → hand off to durable"**:
+
+1. **Trigger:** Google Calendar → *New or Updated Event*. Account `dennis@work.flowers` (connection `02a752ba-…`), calendar `dennis@work.flowers`. If the trigger offers *Expand Recurring Events*, set it to **No**, matching the old durable trigger (see "What it deliberately does not do").
+2. **Filter:** continue only if *Status* (text) does not exactly match `cancelled` **and** *Event Begins* (`start.dateTime`) exists. All-day events have no `dateTime` and never have notes.
+3. **Zapier Tables → Find Record:** table **[Table] Meeting Note IDs** (`01JZCVG73MBWWB0357CEPS4903`), field **Event ID** exactly matches `{{id}}`. Leave *success when nothing is found* **off**, so an event with no note halts here quietly (the normal case).
+4. **Filter:** continue if **any** of these OR groups passes. Each group is one Date/time condition comparing the trigger to the row found in step 3:
+   - *Event Begins* is after **Start**
+   - *Event Begins* is before **Start**
+   - *Event Ends* is after **End**
+   - *Event Ends* is before **End**
+   - **Start** does not exist (a row written without times; let the durable decide)
+
+   Zapier compares these as instants, so `+08:00` against `Z` is not a false change.
+5. **Webhooks by Zapier → POST:** URL = the catch URL from `zap.json` `trigger.webhook_url`. Payload Type `json`. Data = the table above. *Wrap Request in Array* and *Unflatten* both **No**.
+6. **Test:** move a past meeting that has a note by 30 minutes, then check `list-workflow-runs` for `updated: true`. Move it back and confirm a **second** run. That second run is the whole point of the hand-off.
+7. Turn the classic Zap on, and make sure the *old* classic Zap stays off. Otherwise both write the note.
+
+**When Zapier fixes W6ZE93-VMEWP:** switch back to the native trigger kept under `zap.json` `handoff.previous_trigger`, re-verify with two reschedules of one event, then turn the classic Zap off. The raw-event input path still works (`run-durable` replays use it), so the workflow needs no change.
 
 ## The two Google Calendar ids — and why it matters
 
@@ -90,14 +135,17 @@ Run against production on 2026-07-31 via `run-durable`:
 | All-day event | `start.date` only, no `dateTime` | `skipped: not-a-timed-event` |
 | **First live trigger run** (`019fb772-a39d…`, 09:12Z) | a real edit to the recurring `💛 SG HK TW Ambassador Quarterly` occurrence on 5 Aug | `skipped: no-meeting-note-for-event` — correct; that meeting has not happened, so it has no note |
 
-That last row settles the design's central premise with production evidence rather than inference: the trigger delivered `id: d839afd543fc469494cd72dfc5beacd4_20260805T050000Z` — the **per-occurrence** id — for a recurring instance with `expand_recurring: false`. So a single-occurrence edit really does arrive keyed the way the table is keyed. (Its `iCalUID` was the bare `d839afd543fc469494cd72dfc5beacd4@google.com`, another example of a recurring series whose UID looks exactly like a one-off's.)
+**Hand-off path (2026-10-15).** Before merge, `run-durable` was given a classic-handoff payload for the real row `v2c1j276h2o0t27pm4909443mc` with unchanged times written in `+08:00` (the Table stores `Z`). The result was `skipped: times-unchanged` (run `01a13c97-835f-…`), so the envelope maps onto the lookup correctly and nothing was written. An offline harness also covered `{}`, `null`, `""`, a wrapper-only body, an unrelated object, `{"data":{}}` and `{"data":{"id":""}}`: the four empty shapes skip and the rest throw. A hand-off with no `event_id` throws instead of falling back to the composite `id`. Cancelled and all-day hand-offs skip, and a raw Google event replay still works.
+
+That last row of the table above settles the design's central premise with production evidence rather than inference: the trigger delivered `id: d839afd543fc469494cd72dfc5beacd4_20260805T050000Z` — the **per-occurrence** id — for a recurring instance with `expand_recurring: false`. So a single-occurrence edit really does arrive keyed the way the table is keyed. (Its `iCalUID` was the bare `d839afd543fc469494cd72dfc5beacd4@google.com`, another example of a recurring series whose UID looks exactly like a one-off's.)
 
 ## Maintainer notes
 
 - **Upstream dependency:** the `Event ID` column must hold the occurrence id. The Notion Worker at [`notion-workers/workers/meeting-note-db-updates`](https://github.com/work-flowers/notion-worker-meeting-note-db-updates) writes that column when it enriches a new note — if it ever reverts to writing the iCalUID, this workflow goes silently dead again. That is the single most important thing to know before touching either side.
-- **Cutover:** the classic Zap must be turned off in the Zapier UI. Note that the re-keying migration *also* repaired the classic Zap's lookup, so until it is disabled both it and this workflow will fire on the same event and write the same value twice.
+- **Hand-off cutover (2026-10):** merge the PR, wait for the publish job to write `trigger.webhook_url` into `zap.json`, then build the classic Zap above. Reschedules between the merge and the classic Zap going live are lost, but they are already lost today.
+- **Original cutover:** the classic Zap must be turned off in the Zapier UI. Note that the re-keying migration *also* repaired the classic Zap's lookup, so until it is disabled both it and this workflow will fire on the same event and write the same value twice.
 - The table's `Archived` (f7) column is now meaningful: `true` means the linked Notion note no longer exists.
-- **This trigger fires far more often than it "should," and that's expected — verified against `list_workflow_runs` on 2026-08-05.** A 200-run sample (2026-08-02 to 2026-08-05, ~60 runs/day average) was dominated by a handful of bursts, not a steady trickle: 78 runs (39%) were `status: cancelled` tombstones with no `updated` field at all, and single bursts of 39–41 runs landed at the identical millisecond for one long-running daily/weekly series. Two Google-side behaviors cause this, and `expand_recurring: false` does not suppress either one (it only stops Zapier from *proactively generating* synthetic future-occurrence triggers for a still-open series):
+- **Historical (native `event_updated` trigger, before the hand-off).** The classic Zap's pre-filter now absorbs this noise for free. **The native trigger fired far more often than it "should," and that's expected — verified against `list_workflow_runs` on 2026-08-05.** A 200-run sample (2026-08-02 to 2026-08-05, ~60 runs/day average) was dominated by a handful of bursts, not a steady trickle: 78 runs (39%) were `status: cancelled` tombstones with no `updated` field at all, and single bursts of 39–41 runs landed at the identical millisecond for one long-running daily/weekly series. Two Google-side behaviors cause this, and `expand_recurring: false` does not suppress either one (it only stops Zapier from *proactively generating* synthetic future-occurrence triggers for a still-open series):
   - **"Edit this and following" series splits.** Changing a recurring meeting's guests/settings for "this and following" ends the old recurrence and cancels *every remaining already-materialized instance* under the old `recurringEventId`, replacing them with a new `_R<timestamp>` id. Each cancelled instance is its own separate `event_updated` delivery — one edit produced 41 runs in a day across three successive revision splits of one series.
   - **Bulk metadata touches.** Gemini auto-attaching "Notes by Gemini"/recording links after a meeting concludes (or a guest-list sync) bumps the `updated` field on every already-created occurrence of a series at once, including occurrences months in the past — one such touch produced 39 runs sharing one timestamp for a daily standup series.
   - **None of this costs anything.** Every sampled run from every burst type hit a zero-task early exit (`event-cancelled`, `no-meeting-note-for-event`, or `times-unchanged`) before the one paid Notion step; no errors, no spurious writes. If this shows up again as "why is this Zap running so much," it's upstream trigger noise from actively-edited recurring meetings, not a bug here — check `list_workflow_runs` for burst patterns (many runs sharing one `input.updated` timestamp, or `status: cancelled` inputs with no `updated` field) before assuming otherwise.

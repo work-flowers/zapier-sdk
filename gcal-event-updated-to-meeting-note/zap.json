@@ -6,16 +6,12 @@
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "GoogleCalendarCLIAPI@1.15.0",
-    "action": "event_updated",
-    "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
-    "params": {
-      "calendarid": "dennis@work.flowers",
-      "expand_recurring": false
-    },
-    "status": "active",
-    "authentication_note": "Google Calendar connection 'Google Calendar dennis@work.flowers'. The Google credential lives HERE, on the trigger — the workflow never calls Google back, so it is not in --connections.",
-    "trigger_note": "Polling trigger. `expand_recurring: false` matches the classic Zap it replaces: a single-occurrence edit (the common case, and the one that was failing) arrives with its own occurrence id, while a whole-series edit arrives as the master event and matches no note. See the README's 'What it deliberately does not do'."
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook fed by the classic hand-off Zap (see handoff + README). `webhook_url` is filled by the publish pipeline on merge; it is the URL the classic Zap POSTs to. `trigger_url` is Zapier-internal. The Google credential now lives on the classic Zap, not here."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
@@ -31,5 +27,34 @@
   "created_at": "2026-07-31T09:10:03.422Z",
   "version_created_at": "2026-07-31T09:10:17.098Z",
   "replaces_classic_zap": "Updated Meeting -> Update Meeting Note in Notion",
-  "description": "Google Calendar event updated -> update the Date on its Notion meeting note. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates."
+  "description": "Classic hand-off Zap (Google Calendar reschedule of a meeting with a note) -> catch hook -> update the Date on its Notion meeting note. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates.",
+  "handoff": {
+    "why": "Durables dedupe trigger deliveries on the raw record id (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08). The native event_updated trigger sends the bare Google occurrence id, so it fired only on first sighting (300 runs, 300 distinct ids, 2026-09-07 → 2026-10-14) and a reschedule never reached this update-only Zap. A classic Zap (which dedupes on id + updated) forwards real reschedules here.",
+    "classic_zap": "Updated Meeting → hand off to durable",
+    "classic_trigger": "Google Calendar New or Updated Event · calendar dennis@work.flowers · Expand Recurring Events: No · connection 02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "classic_prefilter": "Zapier Tables Find Record ([Table] Meeting Note IDs, Event ID = occurrence id) + Filter (found, not cancelled, timed, start or end differs). Both free, so only real reschedules of events that have a meeting note cost the 1-task POST — the raw trigger fires ~60 times a day.",
+    "payload": {
+      "source": "classic-handoff",
+      "id": "<event id>_<updated> (dedupe key, MUST change per edit: the catch hook also drops a repeated top-level id)",
+      "event_id": "<event id>",
+      "updated": "<updated>",
+      "iCalUID": "<iCalUID>",
+      "summary": "<summary>",
+      "status": "<status>",
+      "start_dateTime": "<start.dateTime>",
+      "end_dateTime": "<end.dateTime>"
+    },
+    "classic_zap_enabled": null,
+    "classic_zap_enabled_note": "Set to the date once Dennis confirms the classic Zap is built and on. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
+    "previous_trigger": {
+      "selected_api": "GoogleCalendarCLIAPI@1.15.0",
+      "action": "event_updated",
+      "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+      "params": {
+        "calendarid": "dennis@work.flowers",
+        "expand_recurring": false
+      },
+      "retired": "2026-10 — restore it here once Zapier ships the W6ZE93-VMEWP fix and two reschedules of one event both fire"
+    }
+  }
 }

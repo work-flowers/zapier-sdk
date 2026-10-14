@@ -13,15 +13,12 @@
     "enable_on_publish_note": "Parked at first publish so it could not double-write alongside the then-live classic Zap. Cutover done 2026-08-22; kept as the record of why v1 shipped disabled. A republish carries the CURRENT enabled state forward (read off Zapier), so this no longer affects anything."
   },
   "trigger": {
-    "selected_api": "NotionCLIAPI@2.39.1",
-    "action": "updated_data_source_item_properties",
-    "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "params": {
-      "datasource": "21991b07-11ac-80b0-b787-000b3d3995f6",
-      "watched_properties": ["title"]
-    },
-    "status": "pending-first-publish",
-    "trigger_note": "Notion POLLING trigger on Companies watching the title property (Company Name), same as the classic Zap. `title` is a real choice key for that data source — verified with `list-trigger-input-field-choices`. Durable triggers have no polling-interval field, so it polls at the account default — matching the classic Zap's polling_interval_override of 0. No external URL to cut over."
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook fed by the classic hand-off Zap (see handoff + README). `webhook_url` is filled by the publish pipeline on merge; it is the URL the classic Zap POSTs to. `trigger_url` is Zapier-internal."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
@@ -64,5 +61,30 @@
     "The four writes run as independent steps under Promise.allSettled, preserving the classic Zap's four-parallel-paths behaviour: a Xero failure no longer stops the Harvest, Drive and Table renames. Any failure still fails the run loudly, with a message naming which targets succeeded and which did not.",
     "A blank Company Name now skips instead of propagating: renaming a Xero contact, Harvest client or Drive folder to \"\" is destructive, and a blank title is a real state for a freshly created row."
   ],
-  "description": "Notion Companies polling trigger (Company Name changed) -> rename that company in Xero, Harvest, Google Drive and [Table] Company IDs, each only where that system's id is recorded on the page."
+  "description": "Classic hand-off Zap (Notion Company Name changed) -> catch hook -> rename that company in Xero, Harvest, Google Drive and [Table] Company IDs, each only where that system's id is recorded on the page.",
+  "handoff": {
+    "why": "Durables dedupe trigger deliveries on the raw record id (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08). The native Notion updated_data_source_item_properties trigger sends the bare page id, so it fired once per company, ever: 48 of 49 runs fired on the company's creation day and real renames never arrived. A classic Zap (which dedupes on id + edit time) forwards each rename here.",
+    "classic_zap": "Company Renamed → hand off to durable",
+    "classic_trigger": "Notion Updated Data Source Item · Companies (21991b07-11ac-80b0-b787-000b3d3995f6) · watching Company Name · work.flowers Notion connection",
+    "payload": {
+      "source": "classic-handoff",
+      "id": "<page id>_<last edited time> (dedupe key, MUST change per edit: the catch hook also drops a repeated top-level id)",
+      "page_id": "<page id>",
+      "last_edited_time": "<last edited time>"
+    },
+    "classic_zap_enabled": null,
+    "classic_zap_enabled_note": "Set to the date once Dennis confirms the classic Zap is built and on. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
+    "previous_trigger": {
+      "selected_api": "NotionCLIAPI@2.39.1",
+      "action": "updated_data_source_item_properties",
+      "authentication_id": "02b73654-15c8-85c3-b16a-07304d2beb17",
+      "params": {
+        "datasource": "21991b07-11ac-80b0-b787-000b3d3995f6",
+        "watched_properties": [
+          "title"
+        ]
+      },
+      "retired": "2026-10 — restore it here once Zapier ships the W6ZE93-VMEWP fix and two renames of one company both fire"
+    }
+  }
 }
