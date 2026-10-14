@@ -10,7 +10,7 @@ const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
 // Primary enrichment, used when the contact has a LinkedIn URL: HarvestAPI.
 // `find_profile` (a search) looks the profile up by its URL and answers
-// SYNCHRONOUSLY (~17s, verified live 2026-10-07) with the profile — name,
+// SYNCHRONOUSLY (usually 6–25s; see isActionTimeout) with the profile — name,
 // headline, about, current title + company, parsed location — and, with
 // `findEmail`, an SMTP-checked `emails[]`. An unknown URL answers with an empty
 // `data` array, not an error. The booleans are the strings "true" / "false".
@@ -493,6 +493,18 @@ const COUNTRY_ALIASES: Record<string, string> = {
 function countryName(raw: string | null): string {
   const v = (raw ?? "").trim();
   return COUNTRY_ALIASES[v.toLowerCase()] ?? v;
+}
+
+/** True when a runAction error is the platform killing the action at its 30s
+ *  execution limit ("Action execution failed: RequestId: … Error: Task timed
+ *  out after 30.00 seconds"). `find_profile` with the SMTP check usually
+ *  answers in 6–25s but has overrun twice (2026-10-08, 2026-10-14); a retry a
+ *  minute later answered in ~6s, so HarvestAPI evidently caches the lookup.
+ *  Matched narrowly so every other HarvestAPI error still falls straight
+ *  through to BetterContact. */
+function isActionTimeout(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err);
+  return /\bTask timed out after \d+(\.\d+)? seconds\b/.test(msg);
 }
 
 /** True when the row is a real profile (an unknown URL returns no row). */
@@ -1670,17 +1682,28 @@ const workflow = defineDurable(
     } else {
       const found = await ctx.step("harvestapi-find-profile", async () => {
         try {
-          const res = await sdk.runAction({
-            appKey: HARVESTAPI_APP_KEY,
-            actionType: "search",
-            actionKey: "find_profile",
-            connection: HARVESTAPI_CONNECTION,
-            inputs: {
-              url: asciiUrl(contact.linkedinUrl),
-              findEmail: "true",
-              skipSmtp: "false",
-            },
-          });
+          const findProfile = () =>
+            sdk.runAction({
+              appKey: HARVESTAPI_APP_KEY,
+              actionType: "search",
+              actionKey: "find_profile",
+              connection: HARVESTAPI_CONNECTION,
+              inputs: {
+                url: asciiUrl(contact.linkedinUrl),
+                findEmail: "true",
+                skipSmtp: "false",
+              },
+            });
+          let res: unknown;
+          try {
+            res = await findProfile();
+          } catch (err) {
+            // One retry, on the platform's 30s action timeout only: the lookup
+            // is a read, and HarvestAPI answers a repeat of a slow lookup fast.
+            if (!isActionTimeout(err)) throw err;
+            console.log(`HarvestAPI timed out for ${contact.pageId}; retrying once`);
+            res = await findProfile();
+          }
           const row = firstResult(res);
           if (!harvestRowUsable(row)) {
             return { enriched: null as EnrichedData | null, unwritable: "", error: null as string | null };

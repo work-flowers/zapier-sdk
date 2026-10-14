@@ -29,7 +29,7 @@ src = src
     "const createZapierSdk = () => (globalThis as any).__sdkStub;",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { matchName, asciiUrl, isHeaderSafe, extractContactData };\n";
+src += "\nexport const __test = { matchName, asciiUrl, isHeaderSafe, extractContactData, isActionTimeout };\n";
 
 const tmpTs = join(dir, ".names-under-test.ts");
 const outDir = join(dir, ".names-under-test-out");
@@ -51,7 +51,7 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { matchName, asciiUrl, isHeaderSafe, extractContactData } = mod.__test;
+const { matchName, asciiUrl, isHeaderSafe, extractContactData, isActionTimeout } = mod.__test;
 const workflow = mod.default;
 
 let failures = 0;
@@ -121,10 +121,12 @@ check("match name rendered for the request", [c.matchFirstName, c.matchLastName]
 // The fake rejects any header-unsafe string input with the platform's own
 // message, the way the real integration fails before sending.
 const PLATFORM_HEADER_ERROR = (v) => `Action execution failed: ${v} is not a legal HTTP header value`;
-function fakeSdk(log, { harvest, bcRow, upload } = {}) {
+function fakeSdk(log, { harvest, harvestErrors = [], bcRow, upload } = {}) {
+  const pendingHarvestErrors = [...harvestErrors];
   sdkStub.runAction = async ({ actionKey, inputs }) => {
     log.push({ actionKey, inputs });
     if (actionKey === "find_profile") {
+      if (pendingHarvestErrors.length) throw new Error(pendingHarvestErrors.shift());
       if (harvest === undefined) throw new Error("unexpected action find_profile");
       return { data: harvest ? [harvest] : [] };
     }
@@ -318,6 +320,26 @@ const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shr
 {
   const { log } = await run(payload(), { bcRow });
   check("a BetterContact-only run never touches the icon", log.some((e) => /file_uploads/.test(e.fetch ?? "")), false);
+}
+
+// --- HarvestAPI's 30s action timeout: one retry, then BetterContact ----------
+// The message is verbatim from the 2026-10-14 run (Meighan O'Toole).
+const TIMEOUT = "Action execution failed: RequestId: 71d22aa1-2031-4793-b26f-036ffbaa59e9 Error: Task timed out after 30.00 seconds";
+check("the platform timeout is recognised", isActionTimeout(new Error(TIMEOUT)), true);
+check("another HarvestAPI error is not", isActionTimeout(new Error("Action execution failed: 502 Bad Gateway")), false);
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT], bcRow });
+  check("a timeout is retried once", log.filter((e) => e.actionKey === "find_profile").length, 2);
+  check("…and the retry's profile is used, BetterContact skipped", [out.source, log.some((e) => e.actionKey === "enrich_contact")], ["harvestapi", false]);
+}
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT, TIMEOUT], bcRow });
+  check("a second timeout is not retried again", log.filter((e) => e.actionKey === "find_profile").length, 2);
+  check("…and falls back to BetterContact", [out.source, /harvestapi error: .*timed out/.test(out.reasons.join(" "))], ["bettercontact", true]);
+}
+{
+  const { log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: ["Action execution failed: 502 Bad Gateway"], bcRow });
+  check("a non-timeout error is not retried", log.filter((e) => e.actionKey === "find_profile").length, 1);
 }
 
 console.log(`\n${count - failures}/${count} passed`);
