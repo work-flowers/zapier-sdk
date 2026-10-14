@@ -287,6 +287,35 @@ export function isBridgeChannelName(name: unknown): boolean {
   return s != null && s.toLowerCase().startsWith(CHANNEL_PREFIX);
 }
 
+/**
+ * Slack's raw message `text` (mrkdwn) -> what a WhatsApp reader should see.
+ *
+ * Slack wraps every link in angle brackets — `<https://x|https://x>` for a
+ * pasted URL, `<https://x|label>` for a named link, `<mailto:a@b|a@b>` — and
+ * HTML-escapes `&`, `<` and `>`. WhatsApp renders none of that, so a pasted
+ * URL arrived as unclickable bracket soup. Bold/italic/strike/code markers
+ * are the same in both and pass through untouched.
+ */
+export function slackToWhatsAppText(text: string): string {
+  const converted = text.replace(/<([^<>]+)>/g, (_whole, inner: string) => {
+    const bar = inner.indexOf("|");
+    const target = bar === -1 ? inner : inner.slice(0, bar);
+    const label = bar === -1 ? null : inner.slice(bar + 1);
+    if (target.startsWith("@")) return `@${label ?? "someone"}`;
+    if (target.startsWith("#")) return label ? `#${label}` : "#channel";
+    if (target.startsWith("!")) {
+      // <!here>, <!channel>, <!subteam^ID|@team>, <!date^…|fallback>
+      if (label) return label;
+      const special = target.slice(1).split("^")[0];
+      return `@${special}`;
+    }
+    const url = target.startsWith("mailto:") ? target.slice("mailto:".length) : target;
+    if (!label || label === url || label === target) return url;
+    return `${label} (${url})`;
+  });
+  return converted.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 /** Map a Slack file's mimetype onto a WhatsApp `media_type`. */
 export function mediaTypeFor(mimetype: unknown, filetype: unknown): string {
   const mt = (firstString(mimetype) ?? "").toLowerCase();

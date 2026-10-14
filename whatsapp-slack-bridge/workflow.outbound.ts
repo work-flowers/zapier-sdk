@@ -24,6 +24,7 @@ import {
   sentMessageId,
   sendWhatsAppMedia,
   sendWhatsAppText,
+  slackToWhatsAppText,
   upsertMessageLog,
 } from "./shared.ts";
 
@@ -120,9 +121,10 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       };
     }
 
-    // Sent as typed. The classic Zap appended "(from <first name>)" via the
-    // Internal User IDs Table; dropped, since only Dennis replies from Slack.
-    const body = text;
+    // Sent as typed, minus Slack's mrkdwn link wrapping. The classic Zap
+    // appended "(from <first name>)" via the Internal User IDs Table; dropped,
+    // since only Dennis replies from Slack.
+    const body = text == null ? null : slackToWhatsAppText(text);
 
     // --- Quote the WhatsApp message this Slack thread belongs to ----------
     let contextMessageId: string | null = null;
