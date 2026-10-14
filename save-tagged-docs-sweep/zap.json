@@ -1,0 +1,42 @@
+{
+  "name": "save-tagged-docs-sweep",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": true,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "Save Tagged Docs in Notion — daily sweep",
+    "description": "Daily backstop for save-tagged-docs-to-notion. Lists the newest 100 Readwise Reader documents tagged `sendtonotion` (via the work.flowers 'Readwise Reader (Unofficial)' app's new_tagged_document read) and creates an 'Article Share' Social Content page for any tagged since 2026-08-29 that the shared dedup Table is missing. Exists because Zapier bug W6ZE93-VMEWP makes the trigger Zap fire once per document, ever, so a tag added after Reader's auto-tagging is dropped. Retire once Zapier ships the fix.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyDay",
+    "authentication_id": null,
+    "params": {
+      "hod": "8:00 AM",
+      "weekends": "yes"
+    },
+    "trigger_note": "Daily at 8:00 AM account time, weekends included. The tick payload is ignored; the clock comes from a ctx.step. Schedule by Zapier needs no connection (same as spot-accepted-sweep-to-notion and gcal-block-sweep).",
+    "params_note": "`everyDay` params: `hod` (required) + optional `weekends`/`timezone_override` — NOT `moh` (that is everyHour's).",
+    "manual_run_note": "trigger-workflow <id> --input '{\"dryRun\":true}' lists and classifies without writing anything."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "reader": "020f6651-c193-81d4-9153-e2cf42a5dfeb"
+  },
+  "connections_note": "`notion_wf` is the work.flowers Notion connection (never the Knoxx one). `reader` is the 'Readwise Reader (1.0.0) #6' connection on App233250CLIAPI, the private work.flowers-built Readwise Reader app — NOT the official Readwise app (App228555CLIAPI) the trigger Zap uses, which has no list/search action and whose credentials Zapier's relay won't attach to sdk.fetch. new_tagged_document was verified through the MCP connector on 2026-10-14: it returned the newest 100 sendtonotion documents, each with tags.sendtonotion.created.",
+  "tables": {
+    "01KKNC03EA4Z5Y0KR8H6TP2A8K": "Readwise Reader Documents — the dedup ledger OWNED by save-tagged-docs-to-notion (Reader document id -> Notion page id). Read here to skip documents already turned into pages, and written with a row for each page this sweep creates, so the two Zaps are safe side by side."
+  },
+  "notion_data_sources": {
+    "14591b07-11ac-8187-934a-000b1a3a474d": "Social Content — 'Article Share' idea pages, same properties as save-tagged-docs-to-notion."
+  },
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  }
+}
