@@ -15,7 +15,7 @@ The durable runtime dedupes every trigger delivery on the record id (Zapier bug 
 
 **A catch hook does not escape it (tested 2026-10-01).** The trigger was briefly switched to a raw `WebHookCLIAPI` catch hook. Two identical POSTs with top-level `id: dedupe-probe-20261001` produced one run: the second was accepted (`status: success`) and never ran. A control with a different id ran within seconds. The durable dedupe keys catch-hook payloads on their top-level `id`, and Readwise puts the document id there, so the native trigger was restored as simpler and no worse.
 
-**Why there is no automated backstop.** A scheduled sweep (list Reader documents tagged `sendtonotion`, create any missing from the dedup Table) would fix this, but it needs a Readwise access token: Zapier's relay refuses to attach the Reader connection's credentials (`This authentication does not specify a domain filter`). Dennis chose not to store a token (2026-10-01). Revisit if Zapier ships the fix or a token store becomes acceptable.
+**Automated backstop:** [`save-tagged-docs-sweep`](../save-tagged-docs-sweep/) runs daily, lists the newest 100 `sendtonotion` documents through the private Readwise Reader (Unofficial) app, and creates whatever this Zap's dedup Table is missing. It needs no stored token: an earlier plan assumed one because the official Readwise app has no list action and Zapier's relay won't attach its credentials to `sdk.fetch`.
 
 ## What it writes
 
@@ -57,5 +57,5 @@ flowchart TD
 ## Maintenance notes
 
 - **Unrecognized-payload posture: throw** (repo default). A payload with real content but no extractable document id is treated as a vendor schema change and raises, producing a red run and an alert. An empty/test tick skips silently.
-- **Missed tags:** see the ⚠️ section above. Until Zapier fixes W6ZE93-VMEWP, run the backfill below every so often.
-- **Backfill:** documents tagged `sendtonotion` during a downtime (or dropped by the dedupe bug) can be reconciled by comparing Reader (filter by tag) against the dedup Table and creating any missing pages + ledger rows. A backfill for the 2026-08-29 → migration gap was run when this Zap was migrated, and another on 2026-10-01 for the five documents the dedupe bug dropped. Watch for: a paywalled article's Reader `source_url` can carry a personal access token in its query string (Stratechery did); strip it before writing it to Notion.
+- **Missed tags:** see the ⚠️ section above. Until Zapier fixes W6ZE93-VMEWP, [`save-tagged-docs-sweep`](../save-tagged-docs-sweep/) catches them daily; the manual backfill below is only needed for tags older than its 2026-08-29 floor.
+- **Backfill:** documents tagged `sendtonotion` during a downtime (or dropped by the dedupe bug) can be reconciled by comparing Reader (filter by tag) against the dedup Table and creating any missing pages + ledger rows. A backfill for the 2026-08-29 → migration gap was run when this Zap was migrated, another on 2026-10-01 for the five documents the dedupe bug dropped, and one on 2026-10-14 for one more. Watch for: a paywalled article's Reader `source_url` can carry a personal access token in its query string (Stratechery did); strip it before writing it to Notion.

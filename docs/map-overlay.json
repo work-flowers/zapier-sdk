@@ -27,6 +27,7 @@
         "goodreads-reviews-to-notion",
         "notion-newsletter-to-buttondown",
         "save-tagged-docs-to-notion",
+        "save-tagged-docs-sweep",
         "update-notion-when-rescheduled-in-buttondown"
       ]
     },
@@ -1791,6 +1792,26 @@
     },
     {
       "from": "save-tagged-docs-to-notion",
+      "to": "ds:social-content",
+      "kind": "write"
+    },
+    {
+      "from": "app:readwise",
+      "to": "save-tagged-docs-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "table:readwise-reader-docs",
+      "to": "save-tagged-docs-sweep",
+      "kind": "read"
+    },
+    {
+      "from": "save-tagged-docs-sweep",
+      "to": "table:readwise-reader-docs",
+      "kind": "write"
+    },
+    {
+      "from": "save-tagged-docs-sweep",
       "to": "ds:social-content",
       "kind": "write"
     },
