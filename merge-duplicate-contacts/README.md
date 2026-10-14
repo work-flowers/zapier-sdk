@@ -110,23 +110,39 @@ What does **not** change: a LinkedIn conflict is still a hard decline that Jev n
 
 **Cost:** one extra call, only on the name-mismatch path — so a Zapier task plus a fraction of a cent of TypeSafe usage, a handful of times a month at most.
 
-### Verified offline (2026-10-03, `jev-1.13.0`)
+### Criteria revised (2026-10-14)
 
-The six real `Duplicate of` requests in run history, replayed from live Notion reads through the real `corroborate` / `contactSummary` / `jevVerdict` code (read-only), plus four constructed negatives:
+The first questions declined **"Appireddy Pamulapati" → "Appi Pamulapati"** (0.67, 1.8): a shortened given name, the same mailbox `appi@` at two Knoxx group domains (`knoxxinnovations.com`, `knoxxfoods.com`), and a LinkedIn handle `appi-reddy` on the target. They counted only a personal address or a note as a strong identifier. The criteria now:
 
-| Pair | Truth | Before | Now |
+- require **compatible names** — same surname, given names that are the same or forms of one another (shortened/extended, nickname, honorific, word order), or a placeholder;
+- name the **specific identifiers**: the same personal address, the same mailbox name at related company domains, a LinkedIn handle spelling the other record's name, a note naming the other record;
+- rule out conflicting given names and a shared surname, company or role address on their own.
+
+Thresholds are unchanged. Lowering them instead would not have worked: under the old questions a constructed one-shared-address negative scored 0.67 / 2.0, level with Appi.
+
+### Verified offline (`jev-1.13.0`)
+
+`node replay-jev.mjs` replays [`jev-cases.json`](jev-cases.json) through the real `corroborate` / `contactSummary` / `jevVerdict` code and `JEV_QUESTIONS` against the live Jev API — read-only, one Zapier task per case. Pass a questions JSON as the second argument to try a rewording before editing `workflow.ts`. Real pairs are read live from Notion where the pages still exist; the rest are literal summaries. Scores below are the median of three runs on 2026-10-14 (spread ≤ 0.03):
+
+| Pair | Truth | Questions of 2026-10-03 | Now |
 | --- | --- | --- | --- |
-| Ustaz Syakir → Syakir Samsaimon | same | declined | **merge** (0.97, 2.5) |
-| New Contact → Alasdair Bell | same | declined | **merge** (0.89, 2.0) |
-| ZZ fixtures, different LinkedIn | different | declined | declined (rules, unchanged) |
-| ZZ fixtures, equivalent names; Brett Ritchie, Marcus Cheu (same LinkedIn) | same | merged | merged (rules, unchanged)¹ |
-| One shared address, different names (Sachin/Lionel shape) | different | declined | declined (0.07, 1.0) |
-| Two colleagues on one work domain | different | declined | declined (0.02, 1.0) |
-| Two Grace Tangs, different employers | different | declined | declined (0.35, 1.0) |
+| Appireddy Pamulapati → Appi Pamulapati | same | **declined** (0.69, 1.9) | **merge** (0.89, 2.4) |
+| Ustaz Syakir → Syakir Samsaimon | same | merge (0.96, 2.4) | merge (0.97, 2.3) |
+| New Contact → Alasdair Bell¹ | same | merge (0.88, 2.0)² | merge (0.97, 2.0) |
+| One shared address, different names (Sachin/Lionel shape) | different | declined (0.67, 2.0) | declined (0.66, 1.7) |
+| Same first-name mailbox at sibling domains, different surnames | different | — | declined (0.75, 1.9) |
+| Chris Wong / Christine Wong, same company | different | declined (0.44, 1.1) | declined (0.64, 1.4) |
+| Two Grace Tangs, different employers | different | declined (0.24, 1.0) | declined (0.30, 1.2) |
+| Same surname, sibling domains, different given names | different | declined (0.23, 1.0) | declined (0.25, 1.1) |
+| Sam Lee / Samantha Lee, unrelated companies | different | declined (0.20, 1.0) | declined (0.26, 1.0) |
+| Two colleagues on one work domain | different | declined (0.03, 1.0) | declined (0.02, 0.7) |
+| Role mailbox (`sales@`) at sibling domains | different | — | declined (0.05, 0.3) |
 
-¹ Their source pages have since been deleted, so a replay reads them as empty; the live workflow stops on a deleted page before corroboration. Jev scored those empty-vs-real pairs at ≤ 0.15, the safe direction.
+¹ The source page has since been deleted, so the case is a literal summary of what it held. ² Scored 2026-10-03.
 
-The thresholds were chosen on these few cases. Re-run them (and any new real declines) before moving `JEV_SAME_PERSON_MIN` or `JEV_EVIDENCE_MIN`. `npm test` runs 17 offline assertions over the corroboration rules, the summary and the decision, including the real scores above.
+Rule-only cases (different LinkedIn = hard decline; equivalent names or the same LinkedIn = merge) make no Jev call and are covered by `npm test`.
+
+The thresholds were chosen on these few cases, and Appi clears the 0.85 bar by only 0.04. Add every new real decline to `jev-cases.json` and re-run before moving `JEV_SAME_PERSON_MIN` or `JEV_EVIDENCE_MIN` or rewording a question. `npm test` runs offline assertions over the corroboration rules, the summary and the decision, including the real scores above.
 
 ## Copy rules
 

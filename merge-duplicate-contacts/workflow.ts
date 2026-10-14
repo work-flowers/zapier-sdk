@@ -537,6 +537,13 @@ function corroborate(source: PageState, target: PageState): Verdict {
 // placeholder name on a record with the identical personal-domain address).
 // A person had already set `Duplicate of` both times.
 //
+// The first questions still declined a third (2026-10-14): "Appireddy
+// Pamulapati" vs "Appi Pamulapati" — a shortened given name, the same mailbox
+// `appi@` at two Knoxx group domains, and a LinkedIn handle `appi-reddy`. They
+// only counted a personal address or a note as strong, so it scored 0.67 / 1.8.
+// The criteria now name those identifiers, and require compatible names, which
+// also pushed the one-shared-address negative further from the bar.
+//
 // So when — and only when — the rules decline on names, Jev is asked whether
 // the two records are one person and how strong the linking evidence is. Both
 // must clear their bar to merge. Everything else stands as it was: a LinkedIn
@@ -611,19 +618,19 @@ const JEV_QUESTIONS = {
     type: "noul",
     instructions: "Do `record_a` and `record_b` describe the same real person?",
     criteria: {
-      true: "The evidence ties both records to one individual: compatible names allowing for honorifics, nicknames, word order or a placeholder name, plus a strong shared identifier such as the same personal email address or a note linking them.",
+      true: "The names are compatible AND a specific identifier ties the records together. Compatible names: the same surname with given names that are the same or forms of one another (a shortened or extended given name, a nickname, an honorific, different word order), or one record carries a placeholder name. Specific identifiers: the same personal email address; the same mailbox name (the part before @) at the domains of related companies; a LinkedIn handle that spells the other record's name; a note that names the other record.",
       false:
-        "They are different people, or nothing beyond a shared company, a shared common name, or a shared generic/role address connects them.",
+        "The given names are different names rather than forms of one another, or nothing specific links them: only a shared company, a shared surname, a shared common full name, or a shared generic/role address.",
     },
   },
   evidence: {
     type: "score",
     instructions: "How strong is the identifying evidence that links `record_a` and `record_b` to one person?",
     criteria: [
-      "Nothing links them beyond coincidence",
-      "Only weak signals such as a common name or the same employer",
-      "One strong identifier, such as an identical personal email address or an explicit note",
-      "Several independent strong identifiers agree",
+      "Nothing links them beyond coincidence, or their given names conflict",
+      "Only weak signals such as a shared surname, a common name, or the same employer",
+      "One specific identifier with compatible names, such as an identical personal email address, the same mailbox name at related company domains, a LinkedIn handle spelling the other's name, or an explicit note",
+      "Several independent specific identifiers agree",
     ],
   },
 };
