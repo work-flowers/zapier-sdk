@@ -1,12 +1,12 @@
 {
   "name": "save-tagged-docs-sweep",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a13a8f-c173-7323-8660-3445e913e7fb",
+  "current_version_id": "01a13a8f-f763-7136-b8bc-bedb5547bc90",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXLWkMNOpWgLixI41TTyeA",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "Save Tagged Docs in Notion — daily sweep",
     "description": "Daily backstop for save-tagged-docs-to-notion. Lists the newest 100 Readwise Reader documents tagged `sendtonotion` (via the work.flowers 'Readwise Reader (Unofficial)' app's new_tagged_document read) and creates an 'Article Share' Social Content page for any tagged since 2026-08-29 that the shared dedup Table is missing. Exists because Zapier bug W6ZE93-VMEWP makes the trigger Zap fire once per document, ever, so a tag added after Reader's auto-tagging is dropped. Retire once Zapier ships the fix.",
     "enable_on_publish": true
