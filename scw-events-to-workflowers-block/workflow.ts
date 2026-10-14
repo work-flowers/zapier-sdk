@@ -3,7 +3,7 @@
 // One half of the two-way calendar-blocking pair (the other half is
 // workflowers-events-to-scw-busy; gcal-block-sweep is the shared horizon
 // backstop). Triggers on `event_updated` for dchiuten@securecodewarrior.com
-// and mirrors each timed, busy, non-declined occurrence onto the
+// and mirrors each timed, busy, accepted-or-tentative occurrence onto the
 // dennis@work.flowers calendar WITH ITS FULL TITLE, so SCW meetings block
 // work.flowers time visibly. Updates move/rename the mirror; cancellations
 // delete it. The GCal Sync Map table is both the loop guard and the
@@ -293,10 +293,15 @@ const workflow = defineDurable<Input, unknown>(
 
     // Delete the mirror when the source is gone or stops deserving a block:
     // cancelled, turned all-day (start.date instead of dateTime), marked Free,
-    // or declined by Dennis after previously being mirrored.
-    const selfDeclined = (event.attendees ?? []).some(
-      (a) => a?.self === true && firstString(a.responseStatus) === "declined",
+    // or declined by Dennis after previously being mirrored. An invite Dennis
+    // has not answered yet (needsAction) is not mirrored either; only accepted
+    // and tentative ("maybe") invites block time. An event with no self
+    // attendee (his own event, no guests) has no RSVP and is mirrored.
+    const selfStatus = firstString(
+      (event.attendees ?? []).find((a) => a?.self === true)?.responseStatus,
     );
+    const selfDeclined = selfStatus === "declined";
+    const selfUnanswered = selfStatus === "needsAction";
     const transparent = firstString(event.transparency) === "transparent";
     const notTimed = !startDateTime || !endDateTime;
     const skipReason = cancelled
@@ -307,7 +312,9 @@ const workflow = defineDurable<Input, unknown>(
           ? "event-is-free"
           : selfDeclined
             ? "declined-by-self"
-            : null;
+            : selfUnanswered
+              ? "unanswered-by-self"
+              : null;
 
     if (skipReason) {
       if (!activeMirrorId) {

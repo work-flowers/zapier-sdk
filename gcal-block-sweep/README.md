@@ -16,7 +16,7 @@ flowchart TD
     T[Trigger: Schedule everyDay 7:00 AM\ntick id = RFC 3339 fire time = 'now'] --> W[search plan = create window now+23d..30d\n∪ reconcile window now..now+7d\nor manual from_days/to_days/reconcile_days\nmerged, sliced into 7-day chunks]
     W --> D1[direction scw_to_wf:\nevent_v2 search on SCW calendar]
     W --> D2[direction wf_to_scw:\nevent_v2 search on wf calendar]
-    D1 --> F{per event: cancelled / all-day / free /\ndeclined / sync artifact / 'Busy'?}
+    D1 --> F{per event: cancelled / all-day / free /\ndeclined / unanswered / sync artifact / 'Busy'?}
     D2 --> F
     F -- yes --> SK[skip, counted]
     F -- no --> M{{Table: created-by-sync,\nor row already ACTIVE?}}
@@ -30,7 +30,7 @@ flowchart TD
     LK -- "not found / cancelled" --> DEL[delete_event orphaned mirror\n'not found' caught as already-gone] --> RD[(row: Status=deleted)]
     LK -- "confirmed, e.g. moved\nbeyond the window" --> B
     O -- cancelled --> DEL
-    O -- yes --> B{still block-worthy?\nnot declined / Free / all-day}
+    O -- yes --> B{still block-worthy?\nnot declined / unanswered / Free / all-day}
     B -- no --> DEL
     B -- yes --> C{Start, End or title\ndiffer from the row?}
     C -- no --> SK3[leave it]
