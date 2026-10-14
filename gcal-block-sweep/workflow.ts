@@ -28,7 +28,7 @@
 // Each run therefore compares every ACTIVE mapping row whose Start falls in
 // the reconcile window against the source events the searches actually
 // returned: source gone or cancelled -> delete the mirror, mark the row
-// deleted; source no longer block-worthy (declined, Free, all-day) -> same;
+// deleted; source no longer block-worthy (declined, unanswered, Free, all-day) -> same;
 // source moved or renamed -> update the mirror and refresh the row. A row
 // previously marked deleted whose source is block-worthy again is revived by
 // the create pass. Cost: one extra search per direction per day, plus one
@@ -361,10 +361,14 @@ function classifySkip(event: FoundEvent, mode: "title" | "busy"): string | null 
   if (firstString(event.status) === "cancelled") return "cancelled";
   if (!firstString(event.start?.dateTime) || !firstString(event.end?.dateTime)) return "not-timed";
   if (firstString(event.transparency) === "transparent") return "free";
-  const declined = (event.attendees ?? []).some(
-    (a) => a?.self === true && firstString(a.responseStatus) === "declined",
+  // Only accepted and tentative ("maybe") invites block time; a declined or
+  // not-yet-answered (needsAction) one does not. No self attendee means
+  // Dennis's own event with no guests, which is mirrored.
+  const selfStatus = firstString(
+    (event.attendees ?? []).find((a) => a?.self === true)?.responseStatus,
   );
-  if (declined) return "declined";
+  if (selfStatus === "declined") return "declined";
+  if (selfStatus === "needsAction") return "unanswered";
   const description = firstString(event.description);
   if (description && (description.includes(SYNC_MARKER) || description.includes("Event blocked with"))) {
     return "sync-artifact";

@@ -1,6 +1,6 @@
 # workflowers-events-to-scw-busy
 
-One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, non-declined occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. **In practice this Zap only ever sees an occurrence once** — `event_updated` does not re-fire for an occurrence it has already delivered (proven across this repo's three `event_updated` Zaps on 2026-09-08 and confirmed as a durables bug by Zapier Product Escalations, ticket W6ZE93-VMEWP; see [`gcal-block-sweep`](../gcal-block-sweep/)), so the move/delete branches below are dead code kept as a belt and every later move, decline or Free/all-day switch is propagated by the sweep's daily reconcile pass instead. **Cancellations do NOT reach this trigger either** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31, when a deleted 9 AM work.flowers event left its SCW block standing), so deletion propagation lives in [`workflowers-cancellations-to-scw-unblock`](../workflowers-cancellations-to-scw-unblock/); the cancel branch here is kept as a belt.
+One half of the two-way calendar-blocking pair between Dennis's two Google Calendars. Watches **dennis@work.flowers** (`event_updated`, per-occurrence via `expand_recurring: true`) and mirrors every timed, busy, accepted-or-tentative occurrence onto **dchiuten@securecodewarrior.com** as a **private, bare "Busy" block** — no title, description, location or attendees leak into the SCW workspace; only the time span crosses. **In practice this Zap only ever sees an occurrence once** — `event_updated` does not re-fire for an occurrence it has already delivered (proven across this repo's three `event_updated` Zaps on 2026-09-08 and confirmed as a durables bug by Zapier Product Escalations, ticket W6ZE93-VMEWP; see [`gcal-block-sweep`](../gcal-block-sweep/)), so the move/delete branches below are dead code kept as a belt and every later move, decline or Free/all-day switch is propagated by the sweep's daily reconcile pass instead. **Cancellations do NOT reach this trigger either** — `event_updated` with `expand_recurring: true` silently drops them (proven 2026-08-31, when a deleted 9 AM work.flowers event left its SCW block standing), so deletion propagation lives in [`workflowers-cancellations-to-scw-unblock`](../workflowers-cancellations-to-scw-unblock/); the cancel branch here is kept as a belt.
 
 Replaces **Notion Calendar's built-in event blocking**, which SCW IT cut off on 2026-08-28 (its old frozen blocks are cleaned up by the sweep's `cleanup_notion_blocks` mode).
 
@@ -15,7 +15,7 @@ flowchart TD
     G1 -- no --> G2{{Table: id found as\nMirror Event ID?}}
     G2 -- yes --> S2[skip: created-by-sync]
     G2 -- no --> L{{Table: mapping row for\nid + wf_to_scw?}}
-    L --> C{cancelled / all-day /\nfree / declined?}
+    L --> C{cancelled / all-day /\nfree / declined / unanswered?}
     C -- "yes, active mirror" --> D[delete_event block on\ndchiuten@securecodewarrior.com] --> DR[(row: Status=deleted)]
     C -- "yes, no mirror" --> S3[skip]
     C -- no --> H{no mirror yet and start\n> 30d after updated?}
@@ -39,6 +39,7 @@ Same three layers as the sibling — structural (one direction per Zap), the sha
 - **The horizon guard is load-bearing** — see the sibling README; keep `HORIZON_DAYS` (30) in lockstep across all three workflows.
 - Task cost: 0 for every skip path, 1 per create (and, if the trigger ever does re-fire, per move/delete). Renames and description edits on the source change nothing on a bare Busy block, so the sweep's reconcile pass compares times only in this direction.
 - Skip-worthy transitions (declined later, changed to all-day, changed to Free) delete an existing block.
+- **RSVP filter (2026-10-14):** only invites Dennis has accepted or marked tentative ("maybe") are mirrored. A declined or not-yet-answered (`needsAction`) invite is skipped, and an existing mirror is deleted. An event with no self attendee (his own event, no guests) has no RSVP and is mirrored. Because `event_updated` never re-fires, accepting an invite after it first arrives is picked up by `gcal-block-sweep`'s daily reconcile, not here.
 - This Zap polls the same calendar as [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/); they coexist (separate workflows, separate dedupe).
 
 ## Verified cases (run-durable, 2026-08-28, pre-publish)
