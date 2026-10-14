@@ -42,11 +42,13 @@ BetterContact alone replaced the Apollo → Lusha → NinjaPear cascade on
 3. **Enrich via HarvestAPI** — only when the `Linkedin` property is set.
    `find_profile` (search) is called with the URL (non-ASCII runs
    percent-encoded), `findEmail: "true"` and `skipSmtp: "false"`, and answers
-   **synchronously** (~17 s) with the profile: name, `currentJobTitle`, `about`,
+   **synchronously** (usually 6–25 s) with the profile: name, `currentJobTitle`, `about`,
    parsed city + country, the current employer's website, and `emails[]`. An
    address is written only when HarvestAPI marks it `deliverable: true` and
    `status: "valid"`. An unknown URL returns an empty result, not an error.
    Errors are caught inside the step and become a reason, like BetterContact's.
+   A lookup killed by Zapier's **30 s action limit is retried once** first; see
+   [The 30-second action limit](#the-30-second-action-limit). (Added 2026-10-15.)
    **If this produced a verified address, BetterContact is not called.**
 4. **Fallback: enrich via BetterContact** — when HarvestAPI was not tried, found
    no profile, errored, or found the profile **without** a verified address. In
@@ -146,7 +148,7 @@ flowchart TD
     P -- yes --> PS(["Log and skip<br/>(no error raised)"])
     P -- no --> B["Extract contact page + optional<br/>triggering user's Notion ID<br/>(name falls back to page title;<br/>domain falls back to email host)"]
     B --> L{"LinkedIn URL set?"}
-    L -- yes --> H["HarvestAPI find_profile<br/>(sync, findEmail on)"]
+    L -- yes --> H["HarvestAPI find_profile<br/>(sync, findEmail on;<br/>one retry on the 30s timeout)"]
     H -- "profile + deliverable,<br/>valid email" --> E
     H -- "profile, no verified email<br/>(kept; email from fallback)" --> N
     H -- "no profile / error" --> N
@@ -219,6 +221,24 @@ row in ~17 s with `emails[0]` = `{ deliverable: true, status: "valid", … }`; a
 non-existent URL returned `data: []`; a throwaway `run-durable` bound the
 `harvestapi` connection (a *private* connection, owned by Dennis) and ran the
 lookup from the durable sandbox.
+
+### The 30-second action limit
+
+Zapier kills any single app action at **30 s**, and `find_profile` with the
+SMTP check does not always fit: it took 6–25 s on most runs but hit the limit
+on 2 of the 5 timed between 2026-10-07 and 2026-10-14 (Alan Liang 2026-10-08,
+Meighan O'Toole 2026-10-14). The error reads `Action execution failed:
+RequestId: … Error: Task timed out after 30.00 seconds`. Before the retry, a
+timeout went straight to BetterContact, losing HarvestAPI's photo, bio, title
+and location and spending a BetterContact credit. When Alan Liang's run was
+re-triggered a minute after its timeout, the same lookup answered in ~6 s,
+evidently from HarvestAPI's cache.
+
+So `isActionTimeout` matches **that message only**, and the step calls
+`find_profile` once more, inside the same `ctx.step`. A second timeout, or any
+other error, falls through to BetterContact as before. The lookup is a read,
+so a repeat cannot double-write. The cost is one extra HarvestAPI call on a
+timed-out run.
 
 ## Names sent to BetterContact
 
