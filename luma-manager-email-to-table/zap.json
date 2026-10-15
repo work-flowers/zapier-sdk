@@ -1,12 +1,12 @@
 {
   "name": "luma-manager-email-to-table",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a13f9f-e3ba-7f22-8694-e47f38396f7a",
+  "current_version_id": "01a13f9f-fa5e-7c56-a420-ee24055df866",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATCu_xc8dvAV5KU0rZZl_g",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "luma-manager-email-to-table",
     "description": "Luma email making Dennis a manager of an event (\"Please join me as a host for ...\" or \"... is live on Luma\") -> record the evt- id from its manage link in the Luma Managed Events Table -> if the event is on the Notion Singapore calendar, backfill it: fire luma-hosted-event-to-notion with the event, then luma-hosted-guest-to-event-attendance once per non-invited guest, since the polling triggers already delivered (and skipped) them before Dennis was a manager.",
     "enable_on_publish": true

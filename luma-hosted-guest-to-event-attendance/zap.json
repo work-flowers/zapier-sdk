@@ -1,12 +1,12 @@
 {
   "name": "luma-hosted-guest-to-event-attendance",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a13f9f-bccf-7f00-8a77-f9d3818eb3a4",
+  "current_version_id": "01a13f9f-d211-7e08-b466-57df19ed9971",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AY8mxLdOae4zW4MXGY76lw",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "luma-hosted-guest-to-event-attendance",
     "description": "Luma guest on the Notion Singapore calendar (private Luma Calendar API integration, new_or_updated_guest) -> skip invited-only guests and events not in the Luma Managed Events Table -> resolve/create the Event, upsert the Contact (Work Email registration answer becomes Primary Email, new contacts flagged Possible duplicate of name matches) and upsert Event Attendance (Approval Status, Checked In). Sole creator and updater; no Buttondown opt-in. Also fired by luma-manager-email-to-table's backfill.",
     "enable_on_publish": true

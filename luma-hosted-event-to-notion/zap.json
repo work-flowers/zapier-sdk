@@ -1,12 +1,12 @@
 {
   "name": "luma-hosted-event-to-notion",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a13f9f-77c7-7cdc-b36d-657f94ab312b",
+  "current_version_id": "01a13f9f-ab8c-7a36-b576-854db30f9beb",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVoeShEzPTxOUa4HwAg-NA",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "luma-hosted-event-to-notion",
     "description": "Luma event on the Notion Singapore calendar (private Luma Calendar API integration, new_event) -> skip unless it is in the Luma Managed Events Table -> upsert the Notion Events record keyed on Luma ID (properties + cover) and index it in the Luma Event ID -> Page ID Table. Also fired by luma-manager-email-to-table's backfill.",
     "enable_on_publish": true
