@@ -55,10 +55,48 @@ function normalizeInput(rawInput: unknown): unknown {
   return v;
 }
 
+/**
+ * A touch of the public catch URL with nothing in it — a browser visit, a curl
+ * to check it is live, a "test" from the classic Zap's editor before it has
+ * sample data. Skipped, never thrown (shared rules: webhook-trigger durables).
+ */
+function isEmptyPing(raw: unknown): boolean {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "object") return false;
+  const WRAPPER_KEYS = new Set(["querystring", "headers", "params", "body", "query"]);
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!WRAPPER_KEYS.has(key)) return false;
+    if (value === null || value === undefined || value === "") continue;
+    if (typeof value === "object" && Object.keys(value as object).length === 0) continue;
+    return false; // a wrapper with something in it — treat as a real event
+  }
+  return true;
+}
+
+/**
+ * The classic hand-off Zap's payload. Its top-level `id` is
+ * `<page id>_<last_edited_time>` — NOT the page id — because the durable
+ * runtime drops any catch-hook POST whose top-level `id` it has already seen
+ * (Zapier bug W6ZE93-VMEWP). Forwarding the bare page id would bring back the
+ * exact bug the hand-off exists to route around. The page id itself travels
+ * in `page_id`.
+ */
+const HANDOFF_SOURCE = "classic-handoff";
+
 function extractPageId(raw: unknown): string {
   if (!raw) throw new Error("No input provided to workflow.");
   if (typeof raw === "string") return raw.trim();
   const o = raw as Record<string, any>;
+  if (o.source === HANDOFF_SOURCE) {
+    // Never fall back to `id` here: on this path it is the dedupe key.
+    const pageId = typeof o.page_id === "string" ? o.page_id.trim() : "";
+    if (!pageId) {
+      throw new Error(
+        `Classic hand-off payload has no page_id: ${JSON.stringify(raw).slice(0, 300)}`,
+      );
+    }
+    return pageId;
+  }
   const candidate =
     o.page_id ||
     o.pageId ||
@@ -118,10 +156,21 @@ const workflow = defineDurable({
     "When a Notion Companies record is renamed, push the new name to its Xero contact, Harvest client, Google Drive client folder and its [Table] Company IDs row — each only if that system's id is on the page.",
   inputSchema: InputSchema,
   run: async (ctx, rawInput) => {
-    const pageId = dashUuid(extractPageId(normalizeInput(rawInput)));
+    const payload = normalizeInput(rawInput);
+    if (isEmptyPing(payload)) {
+      console.log("empty payload — treating as a ping of the catch URL, not an event");
+      return { skipped: "empty-payload" };
+    }
+    // Anything non-empty without a usable page id throws in extractPageId —
+    // an unrecognised shape is a real event we failed to read, never a skip.
+    const pageId = dashUuid(extractPageId(payload));
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(pageId)) {
+      throw new Error(`Not a Notion page id: ${JSON.stringify(pageId).slice(0, 120)}`);
+    }
 
     // 1. Read the page's CURRENT state rather than trusting the trigger payload:
-    //    the polling trigger can lag, and every downstream write is a rename.
+    //    the hand-off can lag, two renames can arrive out of order, and every
+    //    downstream write is a rename — so the latest name always wins.
     const company = await ctx.step("fetch-notion-company", () => fetchCompany(pageId));
 
     if (!company.name) {

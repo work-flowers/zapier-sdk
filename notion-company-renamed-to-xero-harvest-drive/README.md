@@ -1,6 +1,6 @@
 # notion-company-renamed-to-xero-harvest-drive
 
-Notion Companies polling trigger (**Company Name** changed) → rename that
+Notion **Company Name** changed → rename that
 company in **Xero**, **Harvest**, **Google Drive** and **[Table] Company IDs** —
 each only where that system's id is recorded on the page.
 
@@ -8,18 +8,25 @@ Migration of the classic Zap **"Sync Company Name Updates to Xero, Harvest, and
 Zapier Table"**.
 
 - **Workflow ID:** `01a028c7-92f0-747d-939f-2b147b4b3e18` (account-visible)
-- **Trigger:** Notion `updated_data_source_item_properties` on Companies
-  (`21991b07-11ac-80b0-b787-000b3d3995f6`), watching `title` (Company Name) — a
-  polling trigger, no external URL to cut over. Durable triggers have no
-  polling-interval field; the classic Zap ran at the account default too
-  (`polling_interval_override: 0`).
+- **Trigger:** a `WebHookCLIAPI` catch hook, fed by the **classic hand-off Zap**
+  *"Company Renamed → hand off to durable"* (see [Classic hand-off](#classic-hand-off)).
+  Until 2026-10 this durable polled Notion `updated_data_source_item_properties`
+  itself, but that trigger fires **once per company, ever** on durables, so a
+  real rename of an existing company never arrived.
+- **Catch URL:** filled into `zap.json` `trigger.webhook_url` by the publish
+  pipeline on merge.
 - **Editor:** <https://zapier.com/durables-editor/01a028c7-92f0-747d-939f-2b147b4b3e18>
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    A["Notion polling trigger:<br/>Companies · Company Name changed"] --> B["Re-fetch company page<br/>(never trust the payload)"]
+    N["Classic Zap: Notion Updated Data Source Item<br/>Companies · Company Name"] -- "POST source, id = page_id_lastEdited, page_id" --> A["Catch hook"]
+    A --> P{"Empty ping?"}
+    P -- yes --> S0(["Skip — empty-payload"])
+    P -- no --> Q{"page_id readable?"}
+    Q -- no --> E0(["Throw — unrecognised payload"])
+    Q -- yes --> B["Re-fetch company page<br/>(never trust the payload)"]
     B --> C{"Company Name<br/>non-empty?"}
     C -- no --> S1(["Skip — nothing safe to propagate"])
     C -- yes --> D["Fan out (Promise.allSettled)"]
@@ -60,6 +67,57 @@ flowchart TD
   Xero Zaps here. The classic Zap pulled it from a Zap component variable, which
   has no durable equivalent.
 
+## Classic hand-off
+
+**Why it exists:** durables add a dedupe layer keyed on the trigger record's raw
+`id` (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA). Notion's trigger
+sends the bare page id, so this Zap fired once per company and then never again:
+**48 of its 49 runs (2026-08-24 → 2026-10-14) fired on the day the company was
+created**, so renames of established companies never reached Xero, Harvest or
+Drive. Classic Zaps dedupe on a record's id *and* its edit time, so a thin
+classic Zap watches Notion and forwards each rename here. Zapier Support
+recommended this workaround on 2026-09-08 and again on 2026-10-14.
+
+**The catch hook dedupes too.** A raw catch hook drops a second POST whose
+top-level `id` it has already seen (proven 2026-10-01 on
+[`save-tagged-docs-to-notion`](../save-tagged-docs-to-notion/)). So the hand-off
+must **not** send the page id as `id`. It sends `<page id>_<last edited time>`,
+and the page id goes in `page_id`. On this path the workflow never reads `id`.
+
+**Payload contract** (Webhooks by Zapier POST, Payload Type `json`):
+
+| Key | Value mapped in the classic Zap |
+| --- | --- |
+| `source` | `classic-handoff` (literal) |
+| `id` | `{{ID}}_{{Last Edited Time}}`: the dedupe key, which must change on every edit |
+| `page_id` | `{{ID}}` |
+| `last_edited_time` | `{{Last Edited Time}}` (logged only) |
+
+**Setup (Zapier UI; the CLI and MCP can't create classic Zaps):**
+
+1. Start from the disabled classic Zap *"Sync Company Name Updates to Xero,
+   Harvest, and Zapier Table"* (duplicate it) or a new Zap. Name it **"Company
+   Renamed → hand off to durable"**.
+2. **Trigger:** Notion → *Updated Data Source Item*. Connection: the
+   work.flowers Notion account (never Knoxx). Data source **Companies**. Watch
+   only **Company Name**.
+3. **Delete every other step.** The durable does the renaming.
+4. **Action:** Webhooks by Zapier → *POST*. URL = this Zap's catch URL from
+   `zap.json` `trigger.webhook_url`. Payload Type `json`. Data = the table above.
+   Leave *Wrap Request in Array* and *Unflatten* at **No**.
+5. Test it by renaming a scratch company in Notion (rename it back afterwards),
+   then check `list-workflow-runs` for a run with `renamed: [...]`. Rename the
+   same company a second time and confirm a **second** run appears. That second
+   run is the whole point of the hand-off.
+6. Turn the classic Zap on.
+
+**Cost:** 1 classic task per rename (the POST), plus the durable's usual tasks.
+Renames are rare.
+
+**When Zapier fixes W6ZE93-VMEWP:** switch this durable back to the native Notion
+trigger in `zap.json`, re-verify with two renames of the same company, then turn
+the classic Zap off. The hand-off branch can stay. A raw page id still works.
+
 ## Maintainer notes
 
 - Connections: `notion_wf` = `02b73654-15c8-85c3-b16a-07304d2beb17` (work.flowers
@@ -81,7 +139,12 @@ flowchart TD
 
 ## Cutover
 
-**Complete as of 2026-08-22.** The classic Zap **"Sync Company Name Updates to
+**Hand-off cutover (2026-10):** merge the PR, wait for the publish job to write
+`trigger.webhook_url` into `zap.json`, then build the classic Zap above. Renames
+between the merge and the classic Zap going live are lost, but they are already
+lost today. Rename any company changed in that window by hand.
+
+**Original migration: complete as of 2026-08-22.** The classic Zap **"Sync Company Name Updates to
 Xero, Harvest, and Zapier Table"** was disabled and this durable enabled the
 same day. The disable is **not machine-verifiable** — classic Zaps are exposed
 by neither the SDK CLI nor the MCP connector — so it rests on Dennis's
@@ -98,3 +161,19 @@ Verified read-only instead: both custom actions' input fields
 connections, the Drive `update_file_name` fields, and that `title` is a real
 `watched_properties` choice for the Companies data source. **Watch the first
 live run after cutover.**
+
+**Hand-off path (2026-10-15), offline only.** A harness with a fake `ctx` covered
+`{}`, `null`, `""`, a wrapper-only body, an unrelated object, `{"data":{}}` and
+`{"data":{"id":""}}`: the four empty shapes skip and the rest throw. A hand-off
+with a `page_id` reaches the page fetch. A hand-off **without** one throws
+instead of falling back to the composite `id`, and so does a non-UUID `page_id`.
+A raw trigger page and a bare page-id string still work for replays. No
+`run-durable` test: every path past the fetch is a production rename. **The
+first real proof is the setup test in [Classic hand-off](#classic-hand-off):
+rename one company twice and check that both renames produce a run.**
+
+`tsc` reports two errors in this file (`TS2589`/`TS2322` on the
+`defineDurable({ … inputSchema: z.unknown() })` object form). Both are
+pre-existing and identical on the unmodified file. They come from
+`@zapier/zapier-durable` bundling its own copy of zod. The deployed version runs,
+and the analyzer accepts this form (probed 2026-10-15 with `validate-workflow`).
