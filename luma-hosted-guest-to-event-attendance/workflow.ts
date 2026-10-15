@@ -34,6 +34,11 @@ const LUMA_EVENT_TABLE = "01KY6MEV55JF723XYDEE4EP0T6";
 // Mirror of Event Attendance: "<eventPageId>::<contactPageId>" -> attendance
 // page id (+ the related Event/Contact page ids).
 const ATTENDANCE_TABLE = "01KY6NDTW05196F1A3G3XY3ESY";
+// Contacts `Lead Source` (select) for a contact this workflow creates. Set on
+// CREATE only: Lead Source records how we first met someone, so an existing
+// contact's value is never overwritten (same convention as
+// contact-us-form-to-notion-contact and spot-project-request-to-notion).
+const CONTACT_LEAD_SOURCE = "Event";
 // Events Dennis manages. Written by luma-manager-email-to-table. A guest of an
 // event not listed here is skipped: the trigger emits the guests of EVERY event
 // on the Notion Singapore calendar, because Luma's API does not list hidden hosts.
@@ -823,6 +828,7 @@ const workflow = defineDurable(
         datasource: CONTACTS_DS,
         "properties|||Name|||title": fullName,
         "properties|||Primary Email|||email": guest.primaryEmail,
+        "properties|||Lead Source|||select": CONTACT_LEAD_SOURCE,
       };
       if (workEmail) {
         createContactInputs["properties|||Secondary Email|||multi_select"] = [guest.accountEmail];
