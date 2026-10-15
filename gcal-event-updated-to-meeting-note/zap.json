@@ -44,8 +44,7 @@
       "start_dateTime": "<start.dateTime>",
       "end_dateTime": "<end.dateTime>"
     },
-    "classic_zap_enabled": null,
-    "classic_zap_enabled_note": "Set to the date once Dennis confirms the classic Zap is built and on. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
+    "classic_zap_enabled": "2026-10-15 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
     "previous_trigger": {
       "selected_api": "GoogleCalendarCLIAPI@1.15.0",
       "action": "event_updated",
@@ -55,6 +54,7 @@
         "expand_recurring": false
       },
       "retired": "2026-10 — restore it here once Zapier ships the W6ZE93-VMEWP fix and two reschedules of one event both fire"
-    }
+    },
+    "verified": "2026-10-15: the Busy note (event 3c7cdd60bd6456b59d6220681b56f0b6) moved 11:00 -> 11:30 -> 11:00 SGT on 16 Oct produced two durable runs, 01a13d16-2759 (01:03Z) and 01a13d19-4987 (01:07Z), both updated: true."
   }
 }

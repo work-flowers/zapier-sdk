@@ -72,8 +72,7 @@
       "page_id": "<page id>",
       "last_edited_time": "<last edited time>"
     },
-    "classic_zap_enabled": null,
-    "classic_zap_enabled_note": "Set to the date once Dennis confirms the classic Zap is built and on. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
+    "classic_zap_enabled": "2026-10-15 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor MCP.",
     "previous_trigger": {
       "selected_api": "NotionCLIAPI@2.39.1",
       "action": "updated_data_source_item_properties",
@@ -85,6 +84,7 @@
         ]
       },
       "retired": "2026-10 — restore it here once Zapier ships the W6ZE93-VMEWP fix and two renames of one company both fire"
-    }
+    },
+    "verified": "2026-10-15: two renames of 3 Cricket produced two durable runs — 00:36Z (3 Cricket; Xero first attempt hit the 180s action limit, retry succeeded) and 00:40Z (3Cricket). Both renamed table, xero, harvest, drive."
   }
 }

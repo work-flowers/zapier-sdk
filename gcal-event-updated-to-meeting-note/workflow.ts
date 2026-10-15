@@ -10,11 +10,12 @@ const sdk = createZapierSdk();
 // not here: this workflow never calls Google, it only consumes the event the
 // hand-off forwards. (It used to poll `event_updated` itself; that trigger
 // never re-fires on durables — see the README.)
-const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
+const NOTION_API = "https://api.notion.com/v1";
+const NOTION_VERSION = "2026-03-11";
 
-/** Notion Meeting Notes data source (in the "Meetings and Emails" database). */
-const MEETING_NOTES_DS = "19891b07-11ac-8137-9d62-000b75fab86e";
+/** The meeting note's date property. The title property is found by type. */
+const DATE_PROP = "Date";
 
 /**
  * `[Table] Meeting Note IDs` — the Notion-page <-> calendar-event map.
@@ -269,6 +270,62 @@ function extractRow(result: unknown): MappingRow | null {
   };
 }
 
+// --- Title date mention ----------------------------------------------------
+//
+// The Notion Worker titles a note "<meeting> @<start>", where @<start> is a
+// Notion DATE MENTION inside the title's rich text, not plain text. Moving the
+// `Date` property leaves it showing the old time, so on a reschedule the
+// mention is rewritten too.
+
+/**
+ * Rewrites the title's date mentions that point at the meeting's PREVIOUS
+ * start, so a hand-typed date elsewhere in a title is left alone. A mention
+ * with an end gets the new end only when that end matched the previous end.
+ *
+ * Returns the rich text to write (rebuilt in request shape) and how many
+ * mentions moved, or `null` when nothing in the title needs to change — a
+ * hand-edited title, a note with no time in it, or a step retry after the
+ * write already landed (the mention then already shows the new start).
+ *
+ * Pure, and exported so the one comparison that decides what gets written to
+ * a title is testable without Notion.
+ */
+export function rewriteTitleDateMentions(
+  title: unknown,
+  previous: { start: string | null; end: string | null },
+  next: { start: string; end: string },
+): { richText: Array<Record<string, unknown>>; moved: number } | null {
+  const items = Array.isArray(title) ? (title as Array<Record<string, any>>) : [];
+  let moved = 0;
+
+  const richText = items.map((item) => {
+    const annotations = item.annotations;
+    if (item.type === "mention" && item.mention?.type === "date" && item.mention.date) {
+      const date = item.mention.date as { start?: unknown; end?: unknown; time_zone?: unknown };
+      if (previous.start && sameInstant(date.start, previous.start)) {
+        moved++;
+        const end =
+          date.end == null
+            ? null
+            : previous.end && sameInstant(date.end, previous.end)
+              ? next.end
+              : date.end;
+        return {
+          type: "mention",
+          mention: { type: "date", date: { start: next.start, end, time_zone: date.time_zone ?? null } },
+          ...(annotations ? { annotations } : {}),
+        };
+      }
+    }
+    // Everything else goes back as it came, in request shape: the response's
+    // `plain_text`/`href` are read-only and are dropped.
+    const type = String(item.type);
+    return { type, [type]: item[type], ...(annotations ? { annotations } : {}) };
+  });
+
+  return moved > 0 ? { richText, moved } : null;
+}
+
 // --- Workflow --------------------------------------------------------------
 
 const workflow = defineDurable<Input, unknown>(
@@ -352,31 +409,59 @@ const workflow = defineDurable<Input, unknown>(
       };
     }
 
-    // The one task this workflow spends.
+    // The only paid work: read the note, then write `Date` and (when its date
+    // mention points at the old start) the title, in one PATCH. Read and write
+    // share a step so a retry re-reads rather than writing a stale title.
     const update = await ctx.step("update-meeting-note-date", async () => {
-      try {
-        return await sdk.runAction({
-          appKey: NOTION_APP_KEY,
-          actionType: "write",
-          actionKey: "update_database_item",
-          connection: NOTION_CONNECTION,
-          inputs: {
-            datasource: MEETING_NOTES_DS,
-            page: row.pageId,
-            use_zapier_datetime_fields: true,
-            "properties|||Date|||date__start": startDateTime,
-            "properties|||Date|||date__end": endDateTime,
-          },
-        });
-      } catch (error) {
-        // Caught INSIDE the step so a dead page does not spin the retry loop.
-        // Anything else rethrows and gets the step's normal retries.
-        const message = error instanceof Error ? error.message : String(error);
-        if (PAGE_GONE_PATTERN.test(message)) {
-          return { pageGone: true, message };
-        }
-        throw error;
+      const headers = { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" };
+
+      const got = await sdk.fetch(`${NOTION_API}/pages/${row.pageId}`, {
+        connection: NOTION_CONNECTION,
+        headers,
+      });
+      const gotText = await got.text();
+      // A dead page is answered, not retried: caught INSIDE the step so it does
+      // not spin the retry loop. Anything else throws and gets normal retries.
+      // Only an ERROR body is matched: a live page's JSON can contain any of
+      // these words in its own title.
+      if (got.status === 404 || (!got.ok && PAGE_GONE_PATTERN.test(gotText))) {
+        return { pageGone: true, message: gotText.slice(0, 300) };
       }
+      if (!got.ok) {
+        throw new Error(`Notion get page ${row.pageId} failed (${got.status}): ${gotText.slice(0, 300)}`);
+      }
+      const page = JSON.parse(gotText) as { in_trash?: boolean; archived?: boolean; properties?: Record<string, any> };
+      if (page.in_trash || page.archived) {
+        return { pageGone: true, message: "page is in the trash" };
+      }
+
+      const properties: Record<string, unknown> = {
+        [DATE_PROP]: { date: { start: startDateTime, end: endDateTime } },
+      };
+      const titleEntry = Object.entries(page.properties ?? {}).find(([, p]) => p?.type === "title");
+      const rewrite = titleEntry
+        ? rewriteTitleDateMentions(
+            titleEntry[1].title,
+            { start: row.start, end: row.end },
+            { start: startDateTime, end: endDateTime },
+          )
+        : null;
+      if (titleEntry && rewrite) {
+        properties[titleEntry[0]] = { title: rewrite.richText };
+      }
+
+      const patched = await sdk.fetch(`${NOTION_API}/pages/${row.pageId}`, {
+        connection: NOTION_CONNECTION,
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({ properties }),
+      });
+      if (!patched.ok) {
+        const text = await patched.text();
+        if (PAGE_GONE_PATTERN.test(text)) return { pageGone: true, message: text.slice(0, 300) };
+        throw new Error(`Notion update page ${row.pageId} failed (${patched.status}): ${text.slice(0, 300)}`);
+      }
+      return { pageGone: false, titleMentionsMoved: rewrite?.moved ?? 0 };
     });
 
     if ((update as { pageGone?: boolean })?.pageGone) {
@@ -421,6 +506,7 @@ const workflow = defineDurable<Input, unknown>(
 
     return {
       updated: true,
+      titleMentionsMoved: (update as { titleMentionsMoved?: number }).titleMentionsMoved ?? 0,
       eventId,
       iCalUID,
       pageId: row.pageId,
