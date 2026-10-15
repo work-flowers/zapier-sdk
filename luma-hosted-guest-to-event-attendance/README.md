@@ -17,6 +17,8 @@ The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest
 5. **Contact**: unchanged from the retired registered workflow. It looks up the work-email answer and the Luma account email in the email Table. If neither is found it creates the contact with the Contacts default template, indexes every address, and flags `Possible duplicate of` against name-equivalent contacts. A work-email answer is promoted to `Primary Email` and whatever it displaces is kept as a Secondary. A cross-contact collision gets a review flag.
 6. **Attendance**: the Match Key Table, then a Notion search on Event + Contact, then a create (`Approval Status`, `Checked In`, `Registration Date`) or an update (`Approval Status`, and `Checked In` only ever ticked). `Attended` wins over the approval status once the guest has checked in (`resolveAttendanceStatus`, unchanged).
 
+7. **Event-link guard.** `Event Attendance.Event` is a two-way relation, so every create also appends to the Event page's own list, and Notion drops links when several land on one Event page in the same second. That includes rows that already existed. Before creating a row the workflow waits 5–44 s, derived from the guest id (`staggerSeconds`), so guests from one poll are spread out. On every run it then waits 60 s, re-reads its own row, and re-adds the Event link if it was dropped (`eventLink.repaired` in the output). A failed repair throws.
+
 **Not ported:** the Buttondown newsletter opt-in. These are Notion community events, not workFlowers newsletter sign-ups. *(Dennis, 2026-10-15.)*
 
 ### Trigger mapping
@@ -56,10 +58,11 @@ flowchart TD
     CC --> AT
     CR --> AT
     CD --> AT
-    AT{"Attendance via Match Key Table / Notion"} -->|"miss"| AC["Create Attendance<br/>status, Checked In, Registration Date"]
+    AT{"Attendance via Match Key Table / Notion"} -->|"miss"| SG["wait 5–44 s (hash of guest id)"] --> AC["Create Attendance<br/>status, Checked In, Registration Date"]
     AT -->|"hit"| AU["Update status; tick Checked In only"]
     AC --> IX["Index Match Key"]
     AU --> IX
+    IX --> EL["wait 60 s, re-read row<br/>re-add Event link if dropped"]
 ```
 
 ## Verified (2026-10-15)
@@ -72,6 +75,10 @@ Parser tests against the real Build Bar guest list (254 guests): all 254 parse, 
 | `{"unrelated": true}` | Throws `Unrecognised Luma guest payload…` |
 | Approved guest, event managed | Event resolved from the Table; Contact `3fa91b07-11ac-8178-…` created; Attendance `3fa91b07-11ac-8122-…` created as Approved |
 | Same guest again | No new Contact; Attendance found through the Match Key Table and updated (idempotent) |
+
+### Incident: dropped Event links on the first backfill (2026-10-15)
+
+The first Build Bar backfill created 23 Attendance rows in two bursts of 10, and only 9 stayed linked to the Event. Each row was created with the link, then lost it when another create rewrote the Event page's relation list. The test row, which was only being *updated*, lost its link too. The 14 rows were re-linked one at a time by hand. The fix is the guard in step 7, plus the backfill now firing guests one at a time, 20 s apart. Verified by clearing one row's link and rerunning its guest: `eventLink.repaired: true`, link restored.
 
 ## First enable
 

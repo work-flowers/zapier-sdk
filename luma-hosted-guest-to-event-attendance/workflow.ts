@@ -573,6 +573,80 @@ function mapApprovalStatus(status: string | null): string {
 function resolveAttendanceStatus(status: string | null, checkedIn: boolean): string {
   return checkedIn ? "Attended" : mapApprovalStatus(status);
 }
+// --- Event-link race guard -------------------------------------------------
+//
+// Event Attendance.Event is a TWO-WAY relation: every Attendance create also
+// appends to the Event page's own relation list. Notion applies that append as
+// a read-modify-write of the Event page, so when several runs link rows to the
+// SAME event in the same second, later writes overwrite earlier ones and the
+// losers' Event link is cleared — including rows that already existed. Seen
+// 2026-10-15 on the first Build Bar backfill: 23 rows created in bursts of 10,
+// only 9 left linked. Durables have no serialization, so the guard is to keep
+// creates for one event apart (a stagger) and then to check the link stuck.
+
+/** Seconds to wait before creating an Attendance row: 5..44, derived from the
+ *  guest id so it is deterministic (no Math.random in the workflow body) and
+ *  spreads guests who arrive in the same poll across ~40 s. */
+export function staggerSeconds(key: string): number {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return 5 + (h % 40);
+}
+
+/** Time for any concurrent burst on the same Event page to finish before the
+ *  link is checked. */
+const LINK_SETTLE_SECONDS = 60;
+
+/** Page ids compare hyphen- and case-insensitively. */
+export function relationHas(relation: unknown, id: string): boolean {
+  const want = id.replace(/-/g, "").toLowerCase();
+  return Array.isArray(relation) &&
+    relation.some((r: any) => typeof r?.id === "string" && r.id.replace(/-/g, "").toLowerCase() === want);
+}
+
+async function staggerBeforeLink(ctx: any, key: string): Promise<void> {
+  await ctx.wait("stagger-before-attendance-create", staggerSeconds(key));
+}
+
+/**
+ * Re-read the Attendance row once things have settled and put the Event link
+ * back if a concurrent write dropped it. Runs on every guest run, so a row
+ * dropped by SOMEONE ELSE's burst also heals the next time its guest changes.
+ * Read and write share one step, so a retry re-reads before writing.
+ */
+async function ensureEventLink(
+  ctx: any,
+  attendancePageId: string,
+  eventPageId: string,
+): Promise<{ linked: boolean; repaired: boolean; error?: string }> {
+  await ctx.wait("settle-before-link-check", LINK_SETTLE_SECONDS);
+  return ctx.step("ensure-event-link", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/pages/${attendancePageId}`, {
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+    if (!res.ok) return { linked: false, repaired: false, error: `read ${res.status}` };
+    const page: any = await res.json();
+    const current = page?.properties?.Event?.relation ?? [];
+    if (relationHas(current, eventPageId)) return { linked: true, repaired: false };
+    const patch = await sdk.fetch(`${NOTION_API}/pages/${attendancePageId}`, {
+      connection: NOTION_CONNECTION,
+      method: "PATCH",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        properties: { Event: { relation: [...current.map((r: any) => ({ id: r.id })), { id: eventPageId }] } },
+      }),
+    });
+    if (!patch.ok) {
+      // A 4xx here is a real fault (permissions, schema): fail loudly rather
+      // than leave an unlinked row behind a green run.
+      throw new Error(`Event link repair failed (${patch.status}): ${(await patch.text()).slice(0, 200)}`);
+    }
+    console.log(`repaired dropped Event link on ${attendancePageId}`);
+    return { linked: true, repaired: true };
+  });
+}
+
 // --- Workflow ----------------------------------------------------------------
 // ONE workflow for every guest change: the integration's `new_or_updated_guest`
 // trigger re-fires whenever a guest's approval status or check-in changes,
@@ -949,6 +1023,7 @@ const workflow = defineDurable(
         createInputs["use_zapier_datetime_fields"] = true;
         createInputs["properties|||Registration Date|||date__start"] = guest.registeredAt;
       }
+      await staggerBeforeLink(ctx, guest.guestId);
       const created = await createItemWithTemplate(ctx, "attendance", ATTENDANCE_DS, createInputs);
       attendancePageId = created.pageId;
       attendanceCreated = true;
@@ -999,6 +1074,11 @@ const workflow = defineDurable(
       });
     }
 
+    // 4. Make sure the Event link survived any concurrent write (see above).
+    const eventLink = attendancePageId
+      ? await ensureEventLink(ctx, attendancePageId, eventPageId as string)
+      : null;
+
     return {
       guestId: guest.guestId,
       email: guest.primaryEmail,
@@ -1019,6 +1099,7 @@ const workflow = defineDurable(
       attendanceFoundViaTable: foundViaTable,
       approvalStatus,
       checkedIn: guest.checkedIn,
+      eventLink,
     };
   },
 );
