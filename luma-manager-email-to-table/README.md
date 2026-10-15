@@ -82,7 +82,9 @@ zapier-sdk --stability experimental trigger-workflow <workflow_id> --input "$(ca
 
 ## First-enable behaviour
 
-Measured 2026-10-15 on a private, log-only probe durable (`luma-hosted-trigger-probe`) bound to `new_or_updated_guest` for Build Bar, which had 254 existing guests. It was published at 12:28 UTC, and the claim read back `active` with no error. **Enabling the trigger did not replay the existing guests**: there were zero trigger-delivered runs after enable, so the first poll seeds the dedupe silently, like a classic Zap. No guest changed during that window, so a run fired *by* a change is still unobserved; the PR records the follow-up.
+Measured 2026-10-15. A private, log-only probe durable bound to `new_or_updated_guest` for Build Bar, which had 254 existing guests, was published at 12:28 UTC. Over the next hour it had **zero** trigger-delivered runs: **enabling the trigger does not replay existing items**, so the first poll seeds the dedupe silently, like a classic Zap. The live `luma-hosted-guest-to-event-attendance` also replayed nothing on enable.
+
+**The trigger does fire on a real change.** At 13:13 UTC a new `pending_approval` registration on another Notion SG event (`evt-wuVfDROUqjtGCQB`) reached the live guest Zap as a `live` run with the versioned id `gst-…_pending_approval_none`, and was correctly skipped as `not-managed`. The probe was deleted afterwards.
 
 Two consequences:
 - **No need to park these Zaps disabled.** Enabling them neither replays the calendar's guests nor costs a run per existing guest. They publish enabled (`enable_on_publish: true`).
