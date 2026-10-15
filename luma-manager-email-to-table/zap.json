@@ -1,7 +1,7 @@
 {
   "name": "luma-manager-email-to-table",
   "workflow_id": "01a13f9f-e3ba-7f22-8694-e47f38396f7a",
-  "current_version_id": "01a13f9f-fa5e-7c56-a420-ee24055df866",
+  "current_version_id": "01a13fb6-5592-7462-87a8-3e77dbb9ebd6",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATCu_xc8dvAV5KU0rZZl_g",
   "enabled": true,
   "is_private": false,
