@@ -21,7 +21,8 @@
     "trigger_note": "Polling. The item id is `<guest id>_<approval_status>_<latest check-in | none>`, so a status change or check-in re-fires despite the durable dedupe on the raw id (W6ZE93-VMEWP). Never key a write on it: Notion writes key on the Luma event id, the guest's email and the Event+Contact pair. A guest returning to a state they were already in (approved -> declined -> approved) does not re-fire."
   },
   "connections": {
-    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "typesafe": "02c36cbc-669d-8c82-9c72-7b7813e5cde0"
   },
   "zapier_durable_version": "0.14.1",
   "dependencies": {
@@ -45,11 +46,25 @@
     "attendance": {
       "id": "01KY6NDTW05196F1A3G3XY3ESY",
       "name": "Event Attendance mirror (Match Key)"
+    },
+    "email_domain_types": {
+      "id": "01M4ZY38AWDS7FTRJ4PW9BY03F",
+      "name": "Email Domain Types",
+      "role": "Jev verdict cache: Domain, Verdict (personal/organisation), P Personal %, Model. Read and written here. Seeded 2026-10-15 with 208 domains."
     }
   },
   "notion": {
     "events_data_source": "65490a1e-aa79-4884-932b-60e88db67042",
     "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
     "attendance_data_source": "a591ecac-259f-4490-8f09-f7fddd556eed"
+  },
+  "connections_note": "notion_wf: work.flowers Notion. typesafe: the `Jev` API-by-Zapier connection holding the TypeSafe key as a Bearer token, called with sdk.fetch (same binding as gmail-attachments-to-drive-by-type and merge-duplicate-contacts).",
+  "ai_model": {
+    "provider": "TypeSafe Jev (jev-latest; thresholds checked on jev-1.13.0)",
+    "via": "sdk.fetch -> https://api.typesafe.ai/v1/systemone, connection `typesafe`",
+    "used_for": "Personal-vs-organisation verdict on an email DOMAIN, to pick a NEW contact's Primary Email. One batched call per new contact whose candidate domains are not yet in the Email Domain Types Table; each domain is judged once, ever.",
+    "threshold": "P(personal) >= 0.35 -> personal",
+    "why_jev": "A typed yes/no probability over a short string fits Jev's question types; Dennis did not want a hard-coded personal-domain list (2026-10-15). Offline run over all 208 real domains: every consumer provider >= 0.38, every organisation <= 0.29 (README).",
+    "cost": "1 Zapier task per Jev call plus ~$0.0001 TypeSafe tokens; cached domains (gmail.com etc.) cost nothing."
   }
 }

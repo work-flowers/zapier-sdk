@@ -14,7 +14,10 @@ The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest
 2. **Skip invited-only guests** (`approval_status: invited` and not checked in). Notion SG events are bulk-invited (231 of 254 on Build Bar), and a Contact per invitee would swamp the CRM. A guest arrives as soon as they register or check in, because that changes the trigger id. *(Dennis, 2026-10-15.)*
 3. **Skip unless the event is in the Luma Managed Events Table**, for the same reason as the event workflow: the integration can't tell which events Dennis hosts. See [`luma-manager-email-to-table`](../luma-manager-email-to-table/).
 4. **Event**: the `Luma Event ID` Table, then a Notion search on `Luma ID`. On a miss it waits 90 s for [`luma-hosted-event-to-notion`](../luma-hosted-event-to-notion/) and checks the Table again, and only then creates a bare page from the six event fields the guest item carries.
-5. **Contact**: unchanged from the retired registered workflow. It looks up the work-email answer and the Luma account email in the email Table. If neither is found it creates the contact with the Contacts default template and **`Lead Source` = `Event`**, indexes every address, and flags `Possible duplicate of` against name-equivalent contacts. A work-email answer is promoted to `Primary Email` and whatever it displaces is kept as a Secondary. A cross-contact collision gets a review flag.
+5. **Contact**: every address the guest gave is a candidate: the Luma account email plus any email typed into a registration answer, except questions about someone else ("your manager's email", "referred by"). Each candidate is looked up in the email Table, and the first hit is the contact. Answers are tried first, "work email" labels ahead of the rest.
+   - **New contact → [Primary Email by domain](#primary-email-by-domain-jev).** Created with the Contacts default template and `Lead Source` = `Event`. The chosen address becomes Primary, the rest become Secondary, and every address is indexed. The contact is flagged `Possible duplicate of` against name-equivalent contacts.
+   - **Existing contact → its Primary is left alone.** Any of the guest's addresses it doesn't carry yet are added to `Secondary Email` and indexed. *(Dennis, 2026-10-15: the domain rule is for new contacts only.)*
+   - **Collision:** if the addresses resolve to different contacts, each other contact is flagged `Possible duplicate of` the first one.
 6. **Attendance**: the Match Key Table, then a Notion search on Event + Contact, then a create (`Approval Status`, `Checked In`, `Registration Date`) or an update (`Approval Status`, and `Checked In` only ever ticked). `Attended` wins over the approval status once the guest has checked in (`resolveAttendanceStatus`, unchanged).
 
    - **Registration answers go in the page body.** Questions differ per event, so instead of mapping them to properties, every question and answer is written into the Attendance page body under `## Registration answers`, in the order Luma asked them (`formatRegistrationAnswers`). A new row gets them on create, in the second call `createItemWithTemplate` makes. An existing row gets them **once, and only if its body is empty**, so notes written on the row are never touched. Answer shapes: text and select are shown as typed, multi-select is comma-joined, company is `Company — Job title`, terms and agree boxes are `Yes`/`No`, LinkedIn becomes a full URL. Markdown a guest typed is escaped, and each answer is capped at 1,800 characters. Q&A pairs are separated by single newlines, so they render as one compact paragraph with each question in bold. Blank lines would each become an empty paragraph block. The 22 existing Build Bar rows with answers were filled by hand on 2026-10-15 using the same formatter (one guest answered nothing). *(Dennis, 2026-10-15; a related Questions database was considered and rejected: one task per answer, and labels differ per event anyway.)*
@@ -67,6 +70,56 @@ flowchart TD
     AU --> IX
     IX --> EL["wait 60 s, re-read row<br/>re-add Event link if dropped"]
 ```
+
+## Primary Email by domain (Jev)
+
+Guests often register on Luma with a personal address while a question asks for their work or Notion email. That was 91 of the 241 email answers across the Notion SG events on 2026-10-15. A new contact's Primary should be the organisation's address. Whether a **domain** is a personal provider or an organisation's own is judged by **Jev**, not a hardcoded list *(Dennis: no maintained list of personal domains)*, and each verdict is cached in the **Email Domain Types** Table (`01M4ZY38AWDS7FTRJ4PW9BY03F`). So `gmail.com` is judged once, ever, and a Jev call (one task, ~$0.0001 in TypeSafe tokens) happens only for a new contact with an answer email whose domain is not cached yet. All unseen domains go in that one call.
+
+`choosePrimaryEmail`, in order:
+1. an answer to a "work email"-style question, at an organisation domain;
+2. else the Luma account address, if its domain is an organisation's (it is already a work address, and other answers can be role addresses such as `manager@…` given as the Notion email);
+3. else the first answer at an organisation domain (e.g. a company address given as the Notion email);
+4. else nothing is an organisation's: the label rule the retired Zaps used, a "work email" answer, else the Luma address.
+
+If Jev is unavailable the run uses step 4 alone, so it never fails or waits on Jev. A 429/5xx is retried by the step.
+
+### The Jev question
+
+| | |
+| --- | --- |
+| Type | `noul` (yes/no probability), one question per unseen domain (`d0`, `d1`, …) in one call |
+| Instructions | ``Is the email domain `dN` a personal (consumer) email provider?`` |
+| True | A consumer mailbox provider: anyone can sign up for a personal address there (a webmail service, an internet service provider or telco's customer mail, or a privacy/forwarding mail service). |
+| False | A domain belonging to one specific organisation that issues addresses to its own people: a company, startup, agency, school or university, government body, non-profit or community group. |
+| Threshold | `P(personal) ≥ 0.35` → personal |
+
+### Offline comparison (2026-10-15, jev-1.13.0)
+
+All **208 distinct domains** used by non-invited guests across the three Notion SG events, classified offline; the verdicts seed the cache Table.
+
+| Band | Domains |
+| --- | --- |
+| ≥ 0.83 | gmail.com, hotmail.com, hotmail.fr, qq.com, 163.com, gmx.de, outlook.com, yahoo.com, msn.com, icloud.com, yahoo.com.sg, me.com, privaterelay.appleid.com (all consumer ✓) |
+| 0.38–0.57 | live.in, gmail.con (a typo), zohomail.com, live.com.sg, asia.com (all consumer ✓; why the bar is 0.35, not 0.5) |
+| ≤ 0.29 | every remaining domain: companies, startups, universities (`tum.de` 0.24, `u.nus.edu`, `e.ntu.edu.sg`) ✓. `kin.net` (0.29) is the one I can't place. |
+
+Applied to all 409 non-invited guests, the rule gives the **same Primary as the label rule for 403** and changes 6, all of them improvements:
+
+| Luma account | Answer | Was | Now |
+| --- | --- | --- | --- |
+| personal (gmail) | `…@ttprofession.com` as *Notion email* | gmail | ttprofession.com |
+| personal (gmail) | `…@moso.haus` as *Notion email* | gmail | moso.haus |
+| personal (gmail) | `…@hihs.edu.sg` as *Notion email* | gmail | hihs.edu.sg |
+| `…@futurelinks.com` | hotmail as *work email* | hotmail | futurelinks.com |
+| `…@skatechain.org` | outlook as *work email* | outlook | skatechain.org |
+| `…@faberandfriends.de` | gmx.de as *work email* | gmx.de | faberandfriends.de |
+
+Live checks (`run-durable`, 2026-10-15):
+- **Existing contact:** a Build Bar guest's *Notion email* answer differs from her Luma address. It was added to `Secondary Email` and indexed, her Primary was untouched, and no Jev call was made.
+- **`classifyDomains`** on `gmail.com`, `proton.me`, `fastmail.com`, `work.flowers`: `gmail.com` came from the cache, and the other three went to Jev in **one** call (personal 0.97, personal 0.95, organisation 0.09) and were written to the cache.
+- **Not run live:** the new-contact path end to end, since every Build Bar guest already has a contact. Its rule is covered by the 409-guest comparison above and by unit tests.
+
+A misjudged domain costs little either way. An organisation read as personal falls back to the label rule; a personal domain read as an organisation only ever wins over other personal addresses (step 3) or a non-work answer.
 
 ## Verified (2026-10-15)
 

@@ -184,6 +184,12 @@
       "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
       "name": "Luma Managed Events"
     },
+    "table:email-domain-types": {
+      "type": "table",
+      "id": "01M4ZY38AWDS7FTRJ4PW9BY03F",
+      "name": "Email Domain Types",
+      "note": "Jev personal/organisation verdict cache per email domain."
+    },
     "table:attendance-map": {
       "type": "table",
       "id": "01KY6NDTW05196F1A3G3XY3ESY",
@@ -921,6 +927,11 @@
       "from": "luma-hosted-guest-to-event-attendance",
       "to": "ds:contacts",
       "kind": "write"
+    },
+    {
+      "from": "luma-hosted-guest-to-event-attendance",
+      "to": "table:email-domain-types",
+      "kind": "own"
     },
     {
       "from": "table:email-contacts",
