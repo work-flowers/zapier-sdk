@@ -1,0 +1,47 @@
+{
+  "name": "luma-manager-email-to-table",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "luma-manager-email-to-table",
+    "description": "Luma email making Dennis a manager of an event (\"Please join me as a host for ...\" or \"... is live on Luma\") -> record the evt- id from its manage link in the Luma Managed Events Table -> if the event is on the Notion Singapore calendar, backfill it: fire luma-hosted-event-to-notion with the event, then luma-hosted-guest-to-event-attendance once per non-invited guest, since the polling triggers already delivered (and skipped) them before Dennis was a manager.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleMailV2CLIAPI@2.14.0",
+    "action": "search",
+    "authentication_id": "02a57b11-742e-8601-a7d4-99004bd654c7",
+    "params": {
+      "query": "from:luma-mail.com subject:(\"Please join me as a host for\" OR \"is live on Luma\")"
+    },
+    "authentication_note": "Gmail dennis@work.flowers (the non-shared connection, same as gmail-attachments-to-drive-by-type and zapier-error-email-to-triage).",
+    "trigger_note": "Polling 'New Email Matching Search', one run per email. The query only narrows the poll; parseManagerEmail() makes the authoritative sender/subject checks and throws if a manager-shaped email has no evt- link (Luma changed the email)."
+  },
+  "connections": {
+    "luma_notionsg": "029a1f8f-fac5-8bc2-a786-741a6593d8e2"
+  },
+  "connections_note": "luma_notionsg is used for the integration's two triggers called as READ actions (new_event, new_or_updated_guest with event_ids), which is how the backfill lists one event and its guests. listWorkflows/triggerWorkflow use the durable's ambient account credentials; no connection.",
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.14.1 (2026-09-29) and @zapier/zapier-sdk 0.115.1 (2026-10-06) were the newest releases at least 24h old at build time. No zod: nothing imports it.",
+  "tables": {
+    "managed_events": {
+      "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
+      "name": "Luma Managed Events",
+      "role": "Written here, one row per evt- id, idempotent. Backfill Status: pending -> `done: N guests fired, M invited skipped` or `not-on-calendar` (an event on another Luma calendar the key cannot see)."
+    }
+  },
+  "seeded": {
+    "on": "2026-10-15",
+    "rows": [
+      "evt-WCXl3pOH3lRap1F (Notion Build Bar Singapore, host invite of 2026-10-08), Backfill Status `pending`"
+    ],
+    "why": "Its email predates this Zap. Run the backfill once after merge: `trigger-workflow` this Zap with that Gmail message as input (README, 'After merge')."
+  }
+}

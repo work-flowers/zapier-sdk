@@ -37,7 +37,10 @@
         "contrast-registrations-to-event-attendance",
         "luma-event-to-notion",
         "luma-guest-registered-to-event-attendance",
-        "luma-guest-updated-to-event-attendance"
+        "luma-guest-updated-to-event-attendance",
+        "luma-hosted-event-to-notion",
+        "luma-hosted-guest-to-event-attendance",
+        "luma-manager-email-to-table"
       ]
     },
     "client-onboarding": {
@@ -175,6 +178,11 @@
       "type": "table",
       "id": "01KY6MEV55JF723XYDEE4EP0T6",
       "name": "Luma Event IDs"
+    },
+    "table:luma-managed-events": {
+      "type": "table",
+      "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
+      "name": "Luma Managed Events"
     },
     "table:attendance-map": {
       "type": "table",
@@ -373,6 +381,10 @@
     "app:luma": {
       "type": "external_app",
       "name": "Luma"
+    },
+    "app:luma-notionsg": {
+      "type": "external_app",
+      "name": "Luma (Notion SG calendar, private integration)"
     },
     "app:readwise": {
       "type": "external_app",
@@ -822,6 +834,91 @@
     },
     {
       "from": "luma-guest-updated-to-event-attendance",
+      "to": "ds:contacts",
+      "kind": "write"
+    },
+    {
+      "from": "app:gmail",
+      "to": "luma-manager-email-to-table",
+      "kind": "trigger"
+    },
+    {
+      "from": "luma-manager-email-to-table",
+      "to": "table:luma-managed-events",
+      "kind": "own"
+    },
+    {
+      "from": "app:luma-notionsg",
+      "to": "luma-manager-email-to-table",
+      "kind": "read"
+    },
+    {
+      "from": "luma-manager-email-to-table",
+      "to": "luma-hosted-event-to-notion",
+      "kind": "http"
+    },
+    {
+      "from": "luma-manager-email-to-table",
+      "to": "luma-hosted-guest-to-event-attendance",
+      "kind": "http"
+    },
+    {
+      "from": "app:luma-notionsg",
+      "to": "luma-hosted-event-to-notion",
+      "kind": "trigger"
+    },
+    {
+      "from": "table:luma-managed-events",
+      "to": "luma-hosted-event-to-notion",
+      "kind": "read"
+    },
+    {
+      "from": "luma-hosted-event-to-notion",
+      "to": "table:luma-events",
+      "kind": "write"
+    },
+    {
+      "from": "luma-hosted-event-to-notion",
+      "to": "ds:events",
+      "kind": "write"
+    },
+    {
+      "from": "app:luma-notionsg",
+      "to": "luma-hosted-guest-to-event-attendance",
+      "kind": "trigger"
+    },
+    {
+      "from": "table:luma-managed-events",
+      "to": "luma-hosted-guest-to-event-attendance",
+      "kind": "read"
+    },
+    {
+      "from": "table:luma-events",
+      "to": "luma-hosted-guest-to-event-attendance",
+      "kind": "read"
+    },
+    {
+      "from": "table:email-contacts",
+      "to": "luma-hosted-guest-to-event-attendance",
+      "kind": "read"
+    },
+    {
+      "from": "luma-hosted-guest-to-event-attendance",
+      "to": "table:attendance-map",
+      "kind": "write"
+    },
+    {
+      "from": "luma-hosted-guest-to-event-attendance",
+      "to": "ds:events",
+      "kind": "write"
+    },
+    {
+      "from": "luma-hosted-guest-to-event-attendance",
+      "to": "ds:event-attendance",
+      "kind": "write"
+    },
+    {
+      "from": "luma-hosted-guest-to-event-attendance",
       "to": "ds:contacts",
       "kind": "write"
     },

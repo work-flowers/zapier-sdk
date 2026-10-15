@@ -1,0 +1,46 @@
+{
+  "name": "luma-hosted-event-to-notion",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "luma-hosted-event-to-notion",
+    "description": "Luma event on the Notion Singapore calendar (private Luma Calendar API integration, new_event) -> skip unless it is in the Luma Managed Events Table -> upsert the Notion Events record keyed on Luma ID (properties + cover) and index it in the Luma Event ID -> Page ID Table. Also fired by luma-manager-email-to-table's backfill.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "App247901CLIAPI@1.0.0",
+    "action": "new_event",
+    "authentication_id": "029a1f8f-fac5-8bc2-a786-741a6593d8e2",
+    "params": {},
+    "authentication_note": "Private integration `Luma Calendar API (Unofficial Integration by work.flowers)` (App247901, source work-flowers/zapier-luma-hosted), connection `Notion Singapore Community` holding that calendar's API key. Dennis is not a manager of the calendar, so Zapier's built-in Luma app (OAuth) cannot see it.",
+    "params_note": "Empty params = the integration's defaults: every event on the calendar starting from 2 days ago to 365 days ahead. Filtering to Dennis's events happens in code against the Luma Managed Events Table, because Luma's API does not list hidden hosts.",
+    "trigger_note": "Polling. The item id is the Luma event id, so each event is delivered ONCE ever (durable dedupe, ticket W6ZE93-VMEWP); there is no update path. An event delivered before Dennis managed it is replayed by luma-manager-email-to-table's backfill."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.14.1 (2026-09-29) and @zapier/zapier-sdk 0.115.1 (2026-10-06) were the newest releases at least 24h old at build time. No zod: nothing imports it.",
+  "tables": {
+    "managed_events": {
+      "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
+      "name": "Luma Managed Events",
+      "role": "Events Dennis manages. Written by luma-manager-email-to-table; anything not listed is skipped."
+    },
+    "luma_events": {
+      "id": "01KY6MEV55JF723XYDEE4EP0T6",
+      "name": "Luma Event ID → Notion Page ID",
+      "role": "Shared with the guest workflow and the retired Luma Zaps."
+    }
+  },
+  "notion": {
+    "events_data_source": "65490a1e-aa79-4884-932b-60e88db67042"
+  }
+}
