@@ -1,0 +1,55 @@
+{
+  "name": "luma-hosted-guest-to-event-attendance",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "luma-hosted-guest-to-event-attendance",
+    "description": "Luma guest on the Notion Singapore calendar (private Luma Calendar API integration, new_or_updated_guest) -> skip invited-only guests and events not in the Luma Managed Events Table -> resolve/create the Event, upsert the Contact (Work Email registration answer becomes Primary Email, new contacts flagged Possible duplicate of name matches) and upsert Event Attendance (Approval Status, Checked In). Sole creator and updater; no Buttondown opt-in. Also fired by luma-manager-email-to-table's backfill.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "App247901CLIAPI@1.0.0",
+    "action": "new_or_updated_guest",
+    "authentication_id": "029a1f8f-fac5-8bc2-a786-741a6593d8e2",
+    "params": {},
+    "authentication_note": "Private integration `Luma Calendar API (Unofficial Integration by work.flowers)` (App247901, source work-flowers/zapier-luma-hosted), connection `Notion Singapore Community` holding that calendar's API key. Dennis is not a manager of the calendar, so Zapier's built-in Luma app (OAuth) cannot see it.",
+    "params_note": "Empty params = all guests, all statuses, of every event from 2 days ago to 365 days ahead. `approval_statuses` is deliberately unset: invited guests are dropped in code (isInvitedOnly) so that a later registration or check-in still arrives as a new version.",
+    "trigger_note": "Polling. The item id is `<guest id>_<approval_status>_<latest check-in | none>`, so a status change or check-in re-fires despite the durable dedupe on the raw id (W6ZE93-VMEWP). Never key a write on it: Notion writes key on the Luma event id, the guest's email and the Event+Contact pair. A guest returning to a state they were already in (approved -> declined -> approved) does not re-fire."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.14.1 (2026-09-29) and @zapier/zapier-sdk 0.115.1 (2026-10-06) were the newest releases at least 24h old at build time. No zod: nothing imports it.",
+  "tables": {
+    "managed_events": {
+      "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
+      "name": "Luma Managed Events",
+      "role": "Events Dennis manages. Written by luma-manager-email-to-table; anything not listed is skipped."
+    },
+    "luma_events": {
+      "id": "01KY6MEV55JF723XYDEE4EP0T6",
+      "name": "Luma Event ID → Notion Page ID"
+    },
+    "contact_emails": {
+      "id": "01JYEPSEARXB2Z6BJRCMFGXBC2",
+      "name": "Email → Contact page id"
+    },
+    "attendance": {
+      "id": "01KY6NDTW05196F1A3G3XY3ESY",
+      "name": "Event Attendance mirror (Match Key)"
+    }
+  },
+  "notion": {
+    "events_data_source": "65490a1e-aa79-4884-932b-60e88db67042",
+    "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
+    "attendance_data_source": "a591ecac-259f-4490-8f09-f7fddd556eed"
+  }
+}
