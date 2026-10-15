@@ -17,6 +17,7 @@ The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest
 5. **Contact**: unchanged from the retired registered workflow. It looks up the work-email answer and the Luma account email in the email Table. If neither is found it creates the contact with the Contacts default template and **`Lead Source` = `Event`**, indexes every address, and flags `Possible duplicate of` against name-equivalent contacts. A work-email answer is promoted to `Primary Email` and whatever it displaces is kept as a Secondary. A cross-contact collision gets a review flag.
 6. **Attendance**: the Match Key Table, then a Notion search on Event + Contact, then a create (`Approval Status`, `Checked In`, `Registration Date`) or an update (`Approval Status`, and `Checked In` only ever ticked). `Attended` wins over the approval status once the guest has checked in (`resolveAttendanceStatus`, unchanged).
 
+   - **Registration answers go in the page body.** Questions differ per event, so instead of mapping them to properties, every question and answer is written into the Attendance page body under `## Registration answers`, in the order Luma asked them (`formatRegistrationAnswers`). A new row gets them on create, in the second call `createItemWithTemplate` makes. An existing row gets them **once, and only if its body is empty**, so notes written on the row are never touched. Answer shapes: text and select are shown as typed, multi-select is comma-joined, company is `Company — Job title`, terms and agree boxes are `Yes`/`No`, LinkedIn becomes a full URL. Markdown a guest typed is escaped, and each answer is capped at 1,800 characters. Q&A pairs are separated by single newlines, so they render as one compact paragraph with each question in bold. Blank lines would each become an empty paragraph block. The 22 existing Build Bar rows with answers were filled by hand on 2026-10-15 using the same formatter (one guest answered nothing). *(Dennis, 2026-10-15; a related Questions database was considered and rejected: one task per answer, and labels differ per event anyway.)*
 7. **Event-link guard.** `Event Attendance.Event` is a two-way relation, so every create also appends to the Event page's own list, and Notion drops links when several land on one Event page in the same second. That includes rows that already existed. Before creating a row the workflow waits 5–44 s, derived from the guest id (`staggerSeconds`), so guests from one poll are spread out. On every run it then waits 60 s, re-reads its own row, and re-adds the Event link if it was dropped (`eventLink.repaired` in the output). A failed repair throws.
 
 `Lead Source` is set on **create only**: it records how we first met someone, so an existing contact's value is never overwritten (the same convention as `contact-us-form-to-notion-contact`). The 18 contacts the first Build Bar backfill created were set to `Event` by hand on 2026-10-15, where empty.
@@ -60,8 +61,8 @@ flowchart TD
     CC --> AT
     CR --> AT
     CD --> AT
-    AT{"Attendance via Match Key Table / Notion"} -->|"miss"| SG["wait 5–44 s (hash of guest id)"] --> AC["Create Attendance<br/>status, Checked In, Registration Date"]
-    AT -->|"hit"| AU["Update status; tick Checked In only"]
+    AT{"Attendance via Match Key Table / Notion"} -->|"miss"| SG["wait 5–44 s (hash of guest id)"] --> AC["Create Attendance<br/>status, Checked In, Registration Date<br/>+ Q&A in page body"]
+    AT -->|"hit"| AU["Update status; tick Checked In only<br/>write Q&A if body empty"]
     AC --> IX["Index Match Key"]
     AU --> IX
     IX --> EL["wait 60 s, re-read row<br/>re-add Event link if dropped"]
