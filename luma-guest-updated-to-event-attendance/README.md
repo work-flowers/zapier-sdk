@@ -1,5 +1,7 @@
 # Luma Guest Updated → Notion Event Attendance
 
+> **⏸️ Retired 2026-10-15 — disabled, not deleted.** Dennis cancelled Luma Plus, and the Luma API now refuses every call with `403 Your calendar must have an active Luma Plus plan to make API requests`, so the Luma trigger delivers nothing. It had been silent since 2026-08-05 while still reporting healthy. To revive: reactivate Luma Plus, confirm with a read-only Luma API call, then `enable-workflow` `019f8d53-5763-7a67-88d6-7a144729456b` — no republish needed. Everything below describes the workflow as it ran.
+
 Durable workflow (trigger **`guest_updated`**, `LumaCLIAPI@6.1.0`) that reflects Luma guest
 changes — approval-status change, check-in, registration edit — onto the existing Notion
 **Event Attendance** record.

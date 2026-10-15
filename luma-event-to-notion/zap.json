@@ -1,12 +1,18 @@
 {
   "note": "This directory's single workflow.ts is deployed as TWO workflows — one per Luma trigger — so this file mirrors both deployments instead of one. Republish both together whenever workflow.ts changes.",
+  "retired": {
+    "retired_on": "2026-10-15",
+    "reason": "Dennis cancelled Luma Plus. The Luma API now refuses every call with 403 \"Your calendar must have an active Luma Plus plan to make API requests\", so the Luma trigger delivers nothing; these deployments have been silent since 2026-08-05 while still reporting healthy.",
+    "applies_to": "both deployments (luma-event-created-to-notion and luma-event-updated-to-notion)",
+    "how_to_revive": "Reactivate Luma Plus first (confirm with a read-only Luma API call), then `enable-workflow` each deployment workflow_id — no republish needed, the versions are intact."
+  },
   "deployments": [
     {
       "name": "luma-event-created-to-notion",
       "workflow_id": "019f8d52-07a7-7e6c-8e1a-d6f10c638110",
       "current_version_id": "01a064cc-e086-7a89-8a2a-12c226f0fd3b",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASwy-Q233onxs0M0_BJloQ",
-      "enabled": true,
+      "enabled": false,
       "trigger": {
         "selected_api": "LumaCLIAPI@6.1.0",
         "action": "event_created",
@@ -21,7 +27,7 @@
       "workflow_id": "019f8d52-20c0-7d50-97a5-ef16196f2dd8",
       "current_version_id": "01a064cd-096a-768c-8451-6dad43ecef54",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcsExOri_XFebS5Q9-JeqQ",
-      "enabled": true,
+      "enabled": false,
       "trigger": {
         "selected_api": "LumaCLIAPI@6.1.0",
         "action": "event_updated",

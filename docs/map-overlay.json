@@ -1971,6 +1971,18 @@
     },
     "sow-signed-to-deal-won": {
       "status": "cutover-pending"
+    },
+    "luma-event-to-notion": {
+      "status": "retired",
+      "note": "Retired 2026-10-15: Luma Plus cancelled, so the Luma API refuses every call."
+    },
+    "luma-guest-registered-to-event-attendance": {
+      "status": "retired",
+      "note": "Retired 2026-10-15: Luma Plus cancelled, so the Luma API refuses every call."
+    },
+    "luma-guest-updated-to-event-attendance": {
+      "status": "retired",
+      "note": "Retired 2026-10-15: Luma Plus cancelled, so the Luma API refuses every call."
     }
   },
   "blurbs": {

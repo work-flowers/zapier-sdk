@@ -1,5 +1,7 @@
 # Luma Event → Notion
 
+> **⏸️ Retired 2026-10-15 — disabled, not deleted.** Dennis cancelled Luma Plus, and the Luma API now refuses every call with `403 Your calendar must have an active Luma Plus plan to make API requests`, so the Luma trigger delivers nothing. Both deployments had been silent since 2026-08-05 while still reporting healthy. To revive: reactivate Luma Plus, confirm with a read-only Luma API call, then `enable-workflow` each `workflow_id` in `zap.json` — no republish needed. Everything below describes the workflow as it ran.
+
 Durable workflow that keeps a Notion **Events** record in sync with a Luma event.
 Deployed twice — once per trigger — from this single code directory.
 
