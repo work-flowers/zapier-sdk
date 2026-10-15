@@ -3,7 +3,12 @@
   "workflow_id": "019f8d53-5763-7a67-88d6-7a144729456b",
   "current_version_id": "01a064cd-5dc9-792a-8546-81223b74a341",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AViOs3pxG6Gy0xQZmiUQ_g",
-  "enabled": true,
+  "enabled": false,
+  "retired": {
+    "retired_on": "2026-10-15",
+    "reason": "Dennis cancelled Luma Plus. The Luma API now refuses every call with 403 \"Your calendar must have an active Luma Plus plan to make API requests\", so the Luma trigger delivers nothing; these deployments have been silent since 2026-08-05 while still reporting healthy.",
+    "how_to_revive": "Reactivate Luma Plus first (confirm with a read-only Luma API call), then `enable-workflow 019f8d53-5763-7a67-88d6-7a144729456b` — no republish needed, the version is intact."
+  },
   "trigger": {
     "selected_api": "LumaCLIAPI@6.1.0",
     "action": "guest_updated",
