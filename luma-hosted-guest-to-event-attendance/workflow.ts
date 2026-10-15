@@ -215,6 +215,9 @@ export interface Guest {
   name: string | null;
   approvalStatus: string | null;
   registeredAt: string | null;
+  /** Every registration question and answer, as markdown for the Attendance
+   *  page body; null when the guest answered nothing. */
+  answersMarkdown: string | null;
   checkedIn: boolean;
   event: EmbeddedEvent;
 }
@@ -258,6 +261,7 @@ export function extractGuest(raw: unknown): Guest | null {
     name: firstString(g.name, g.user_name),
     approvalStatus: firstString(g.approval_status),
     registeredAt: firstString(g.registered_at),
+    answersMarkdown: formatRegistrationAnswers(g.registration_answers),
     checkedIn,
     event: {
       id: eventId,
@@ -267,6 +271,60 @@ export function extractGuest(raw: unknown): Guest | null {
       url: firstString(ev.url),
     },
   };
+}
+
+/** Notion caps a rich-text run at 2000 characters; keep each answer under it. */
+const ANSWER_MAX_CHARS = 1800;
+
+/** Neutralise markdown a guest typed, so an answer can't become a heading,
+ *  list or quote in the page body. */
+function escapeMarkdownLine(line: string): string {
+  return line.replace(/^(\s*)([#>*+\-]|\d+[.)])(\s)/, "$1\\$2$3");
+}
+
+/** One registration answer as display text, or null when unanswered. Shapes
+ *  seen across the Notion SG events (2026-10-15): text and single select
+ *  (string), multi-select (string[]), company ({company, job_title}), terms
+ *  and agree-check (boolean), linkedin ("/in/handle"). */
+export function answerText(a: Record<string, any>): string | null {
+  const type = firstString(a?.question_type) ?? "";
+  const v = a?.value !== undefined ? a.value : a?.answer;
+  if (v === null || v === undefined || v === "") return null;
+  if (type === "company" || (typeof v === "object" && !Array.isArray(v) && ("company" in v || "job_title" in v))) {
+    const company = firstString(v?.company, a?.answer_company);
+    const title = firstString(v?.job_title, a?.answer_job_title);
+    return [company, title].filter(Boolean).join(" — ") || null;
+  }
+  if (type === "linkedin" && typeof v === "string") {
+    const path = v.trim();
+    return /^https?:\/\//i.test(path) ? path : `https://www.linkedin.com${path.startsWith("/") ? "" : "/"}${path}`;
+  }
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (Array.isArray(v)) {
+    const parts = v.map((x) => (typeof x === "string" || typeof x === "number" ? String(x) : JSON.stringify(x)));
+    return parts.filter((x) => x.trim() !== "").join(", ") || null;
+  }
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v).trim() || null;
+}
+
+/**
+ * Registration questions differ per event, so rather than map them to
+ * properties the whole set goes into the Attendance page body (Dennis,
+ * 2026-10-15), in the order Luma asked them.
+ */
+export function formatRegistrationAnswers(answers: unknown): string | null {
+  if (!Array.isArray(answers)) return null;
+  const blocks: string[] = [];
+  for (const a of answers) {
+    const question = firstString(a?.label, a?.question);
+    const text = answerText(a ?? {});
+    if (!question || text === null) continue;
+    const clipped = text.length > ANSWER_MAX_CHARS ? `${text.slice(0, ANSWER_MAX_CHARS)}…` : text;
+    const body = clipped.split(/\r?\n/).map(escapeMarkdownLine).join("\n");
+    blocks.push(`**${question.replace(/\*/g, "")}**\n${body}`);
+  }
+  return blocks.length ? `## Registration answers\n${blocks.join("\n")}` : null;
 }
 
 /**
@@ -1015,6 +1073,7 @@ const workflow = defineDurable(
 
     let attendanceCreated = false;
     let attendanceUpdated = false;
+    let bodyFilled = false;
 
     if (!attendancePageId) {
       // No title: a native database automation sets it (ATT-<ID>).
@@ -1030,7 +1089,13 @@ const workflow = defineDurable(
         createInputs["properties|||Registration Date|||date__start"] = guest.registeredAt;
       }
       await staggerBeforeLink(ctx, guest.guestId);
-      const created = await createItemWithTemplate(ctx, "attendance", ATTENDANCE_DS, createInputs);
+      const created = await createItemWithTemplate(
+        ctx,
+        "attendance",
+        ATTENDANCE_DS,
+        createInputs,
+        guest.answersMarkdown,
+      );
       attendancePageId = created.pageId;
       attendanceCreated = true;
     } else {
@@ -1052,6 +1117,30 @@ const workflow = defineDurable(
         }),
       );
       attendanceUpdated = true;
+
+      // Rows created before the answers were written (or by hand) get them
+      // once. Only an EMPTY body is filled, so notes written on the row are
+      // never touched; read and write share a step so a retry re-reads.
+      const answers = guest.answersMarkdown;
+      if (answers) {
+        bodyFilled = await ctx.step("fill-empty-attendance-body", async () => {
+          const res = await sdk.fetch(`${NOTION_API}/blocks/${pageId}/children?page_size=1`, {
+            connection: NOTION_CONNECTION,
+            headers: { "Notion-Version": NOTION_VERSION },
+          });
+          if (!res.ok) return false;
+          const body: any = await res.json();
+          if ((body?.results ?? []).length > 0) return false;
+          await sdk.runAction({
+            appKey: NOTION_APP_KEY,
+            actionType: "write",
+            actionKey: "page_content",
+            connection: NOTION_CONNECTION,
+            inputs: { page_id: pageId, content: answers, content_format: "markdown" },
+          });
+          return true;
+        });
+      }
     }
 
     // 3c. Index the pair in the free attendance Table unless it came from there.
@@ -1106,6 +1195,7 @@ const workflow = defineDurable(
       approvalStatus,
       checkedIn: guest.checkedIn,
       eventLink,
+      answersWritten: attendanceCreated ? guest.answersMarkdown !== null : bodyFilled,
     };
   },
 );
