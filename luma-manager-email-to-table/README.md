@@ -29,7 +29,7 @@ So after recording the event, this Zap:
 1. Reads the event through the integration's `new_event` trigger, called as a **read action** with `event_ids: [id]` and `lookback_days: 30`. The integration's polling triggers are exposed as `read` actions to `sdk.runAction`. If it isn't on the Notion SG calendar (a host invite from workFlowers', Zapier's or Lenny's calendar), the key can't see it: the row is marked `not-on-calendar` and the run stops.
 2. Resolves the two target workflows **by name** with `listWorkflows`, refusing on anything but exactly one match. They shipped in the same PR as this Zap, so their ids didn't exist to hardcode.
 3. Fires `luma-hosted-event-to-notion` with the event (`source: "backfill"`), then waits 120 s so the Event page exists before any guest looks for it.
-4. Reads every guest through `new_or_updated_guest` (same read-action trick) and fires `luma-hosted-guest-to-event-attendance` once per guest who is **not invited-only**, in batches of 10 with a 30 s pause, so Notion isn't hit in one burst.
+4. Reads every guest through `new_or_updated_guest` (same read-action trick) and fires `luma-hosted-guest-to-event-attendance` once per guest who is **not invited-only**, **one at a time, 20 s apart**. Every Attendance create appends to the Event page's two-way relation, and creates that land together drop each other's links. The first backfill, in batches of 10, left only 9 of 23 rows linked. See the guest workflow's README.
 5. Sets `Backfill Status` to `done: N guests fired, M invited skipped`.
 
 `sdk.triggerWorkflow` is **not** subject to the trigger dedupe: two fires with the same top-level `id` both ran (verified 2026-10-15 on a probe). Both targets are idempotent upserts, so a guest that both the backfill and the live trigger deliver ends up in the same records. The one exception is a narrow race that could produce a second Attendance row if both runs land at the same moment (see "Concurrency" in the shared rules).
@@ -52,7 +52,7 @@ flowchart TD
     G --> H["triggerWorkflow → luma-hosted-event-to-notion"]
     H --> W["wait 120 s"]
     W --> I["read new_or_updated_guest (event_ids=[id])<br/>keep non-invited or checked-in"]
-    I --> J["triggerWorkflow → luma-hosted-guest-to-event-attendance<br/>per guest, batches of 10, 30 s apart"]
+    I --> J["triggerWorkflow → luma-hosted-guest-to-event-attendance<br/>one guest at a time, 20 s apart"]
     J --> K["Backfill Status = done: N fired, M invited skipped"]
 ```
 

@@ -40,10 +40,12 @@ const LUMA_SENDER_RE = /(^|[@.])luma-mail\.com$/i;
  *  still pick up its check-ins. */
 const BACKFILL_LOOKBACK_DAYS = 30;
 
-/** Guests are fired in batches so the guest workflow's Notion writes don't all
- *  land in the same second (Notion allows ~3 requests/s per integration). */
-const GUEST_BATCH_SIZE = 10;
-const GUEST_BATCH_PAUSE_SECONDS = 30;
+/** Guests are fired ONE AT A TIME, this far apart. Every Attendance create
+ *  appends to the Event page's two-way relation, and Notion drops links when
+ *  several land on one Event page at once: the first Build Bar backfill fired
+ *  batches of 10 and only 9 of 23 rows stayed linked (2026-10-15). The guest
+ *  workflow adds its own stagger and link check on top. */
+const GUEST_SPACING_SECONDS = 20;
 
 /** Time for the event workflow to create the Event page before guests start
  *  resolving it. The guest workflow waits and falls back on its own too. */
@@ -179,9 +181,10 @@ function slimGuest(g: Record<string, any>): Record<string, any> {
 }
 
 /**
- * Fire the guest workflow once per guest, in batches. A helper taking `ctx`
- * because the step ids carry an index, which the publish-time analyzer only
- * accepts outside the workflow body (see durables-sdk.md).
+ * Fire the guest workflow once per guest, one at a time with a pause between
+ * (see GUEST_SPACING_SECONDS). A helper taking `ctx` because the step ids carry
+ * an index, which the publish-time analyzer only accepts outside the workflow
+ * body (see durables-sdk.md).
  */
 async function fireGuests(
   ctx: any,
@@ -190,9 +193,7 @@ async function fireGuests(
 ): Promise<number> {
   let fired = 0;
   for (let i = 0; i < guests.length; i++) {
-    if (i > 0 && i % GUEST_BATCH_SIZE === 0) {
-      await ctx.wait(`guest-batch-pause-${i / GUEST_BATCH_SIZE}`, GUEST_BATCH_PAUSE_SECONDS);
-    }
+    if (i > 0) await ctx.wait(`guest-spacing-${i}`, GUEST_SPACING_SECONDS);
     const input = { ...guests[i], source: "backfill" };
     await ctx.step(`fire-guest-${i}`, async () => {
       const res = await workflows.triggerWorkflow({ workflow: guestWorkflowId, input });
