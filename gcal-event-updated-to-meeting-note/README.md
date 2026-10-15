@@ -1,13 +1,13 @@
 # gcal-event-updated-to-meeting-note
 
-Keeps a Notion **meeting note**'s `Date` in step with the Google Calendar event it came from. When a meeting is rescheduled, this writes the new start/end onto the existing note. It is **update-only** — it never creates a note, and never touches anything but `Date`.
+Keeps a Notion **meeting note**'s `Date`, and the time shown in its title, in step with the Google Calendar event it came from. When a meeting is rescheduled, this writes the new start/end onto the existing note. It is **update-only**: it never creates a note, and touches only `Date` and the title's date mention.
 
 Replaces the classic Zap **“Updated Meeting → Update Meeting Note in Notion”**, which had been silently failing since May 2026 (see [Why the classic Zap stopped working](#why-the-classic-zap-stopped-working)).
 
 - **Trigger:** a `WebHookCLIAPI` catch hook, fed by the **classic hand-off Zap** *"Updated Meeting → hand off to durable"*, which watches Google Calendar → *New or Updated Event* on `dennis@work.flowers` and forwards only real reschedules of meetings that have a note (see [Classic hand-off](#classic-hand-off)). Until 2026-10 this durable polled `event_updated` itself. On durables that trigger fires **only on an event's first sighting**, so this update-only Zap never saw a reschedule.
 - **Catch URL:** filled into `zap.json` `trigger.webhook_url` by the publish pipeline on merge.
 - **Workflow ID:** `019fb770-139b-74ca-bf9b-fec7ea0c9c3b` · [editor](https://zapier.com/durables-editor/019fb770-139b-74ca-bf9b-fec7ea0c9c3b)
-- **Cost:** about 2 tasks per *actual* reschedule: the classic Zap's Webhooks POST plus this workflow's one Notion write. The classic Zap's Table lookup and filters are free, and they stop everything else before the POST.
+- **Cost:** about 2–3 tasks per *actual* reschedule: the classic Zap's Webhooks POST plus this workflow's Notion read and write. The classic Zap's Table lookup and filters are free, and they stop everything else before the POST.
 
 ## Workflow
 
@@ -27,7 +27,7 @@ flowchart TD
     G4 -- no --> S4[/skip: no-meeting-note-for-event<br/>the normal outcome/]
     G4 -- yes --> G5{start and end<br/>same instant as<br/>row Start/End?}
     G5 -- yes --> S5[/skip: times-unchanged/]
-    G5 -- no --> U[update-meeting-note-date<br/>Notion: set Date start + end<br/>1 task]
+    G5 -- no --> U[update-meeting-note-date<br/>Notion: read page, then one PATCH:<br/>Date start + end, and any title<br/>date mention at the old start]
     U --> G6{page gone?}
     G6 -- yes --> A[flag-mapping-row-archived<br/>Table: Archived = true<br/>0 tasks] --> S6[/skip: meeting-note-page-gone/]
     G6 -- no --> R[refresh-mapping-row<br/>Table: Start, End, Event Title, iCal UID<br/>0 tasks]
@@ -113,13 +113,14 @@ It also caused a second, quieter fault: because one iCalUID covers every occurre
 - **Instant comparison, not string comparison.** Google sends local time plus offset (`2026-07-31T16:00:00+08:00`); Zapier Tables normalises to `Z` (`2026-07-31T08:00:00Z`). Those are the same moment, so the “did the time actually change?” guard reduces both to epoch milliseconds. A string compare would see a change on every single run and rewrite Notion endlessly.
 - **No `Date` in the workflow body.** `@zapier/zapier-durable` runs the body in GUARDED mode and its `Date` proxy throws in the `construct` trap *before* reading its arguments, so even `new Date(isoString)` fails. `epochMsFromRfc3339` is integer maths only — same approach as [`drive-invoice-to-xero`](../drive-invoice-to-xero/).
 - **A dead page is flagged, not deleted.** The classic Zap *deleted* the mapping row when the Notion update errored. Any transient Notion failure would therefore have destroyed a good mapping. Here the error is caught **inside** the `ctx.step` (so it cannot spin the retry loop), matched against a narrow "page is gone" pattern, and the row is flagged `Archived` — the column already existed for exactly this. Every other error rethrows and gets the step's normal retries.
+- **The title's time is a date mention, and it moves too (2026-10-15).** The Worker titles notes `<meeting> @<start>`, where `@<start>` is a Notion date mention inside the title's rich text. Updating `Date` alone left the title showing the old time. The update step now reads the page and rewrites only the date mentions whose start matches the row's **previous** start. A hand-typed date elsewhere in a title is left alone, and so is a title edited by hand so that nothing matches. A retry after the write has landed finds nothing to rewrite, because the mention already shows the new start. Everything goes out in one `PATCH` through `sdk.fetch` (Notion API `2026-03-11`). The test for which mentions move is the pure exported `rewriteTitleDateMentions`. Notes rescheduled before this change keep their stale title time: their row already holds the new start, so the old mention no longer matches.
 - **Write-back keeps the change-detection honest.** After a successful update the row's `Start`/`End` are refreshed, so the next edit compares against current values. This also backfills `iCal UID` on rows that predate that column.
 
 ## What it deliberately does not do
 
 - **A whole-series edit does not propagate.** With `expand_recurring: false` (matching the classic Zap), editing the *series* delivers the master event, whose id matches no note, so the run skips cleanly. Only single-occurrence edits and one-off events propagate. This is the right trade for this data: notes exist only for meetings at or after their start, so retro-updating past occurrences is rarely wanted, and `expand_recurring: true` would fan a single series edit out across every future instance, almost all of which have no note.
 - **It never creates a meeting note.** Notes are created by the [`meeting-note-db-updates`](https://github.com/work-flowers/notion-worker-meeting-note-db-updates) Notion Worker, from a Notion DB automation. No mapping row means no note, which means nothing to do.
-- **It only writes `Date`.** Attendees, contacts, call link and description stay owned by the Worker.
+- **It only writes `Date` and the title's date mention.** The rest of the title, attendees, contacts, call link and description stay owned by the Worker.
 - **Notes whose row was already overwritten stay unreachable.** Where the collapse had already reused a row, the earlier occurrences' Page IDs are gone from the table; the migration could only re-key the surviving one.
 
 ## Verified cases
@@ -135,6 +136,14 @@ Run against production on 2026-07-31 via `run-durable`:
 | All-day event | `start.date` only, no `dateTime` | `skipped: not-a-timed-event` |
 | **First live trigger run** (`019fb772-a39d…`, 09:12Z) | a real edit to the recurring `💛 SG HK TW Ambassador Quarterly` occurrence on 5 Aug | `skipped: no-meeting-note-for-event` — correct; that meeting has not happened, so it has no note |
 
+**Classic hand-off live (2026-10-15).** The Busy note (event `3c7cdd60bd6456b59d6220681b56f0b6`) was moved 11:00 → 11:30 → 11:00 SGT. That produced two runs, `01a13d16-2759…` (01:03Z) and `01a13d19-4987…` (01:07Z), both `updated: true`, and the note's `Date` followed both moves. Two updates to one event both arriving is the bug fix proven.
+
+**Title mention rewrite (2026-10-15), checked before merge.**
+- An offline harness covered the rewrite on eight title shapes: the Busy note's `+08:00` mention against the row's `Z` time, a matching end, an unrelated end, an unrelated date-only mention, a plain-text title, a retry after the write, a user mention alongside a date mention, and an empty title.
+- Against a fake Notion it checked the step's exact `PATCH` body, plus 404, in-trash, `400 archived` (all flag the row) and `500` (throws, so it retries).
+- A title containing "is archived in the trash" as plain text is **not** read as a dead page; only error bodies are matched.
+- One live `PATCH` to the Busy note wrote back its own current Date and title in the new request shape, and Notion answered `200` with nothing changed.
+
 **Hand-off path (2026-10-15).** Before merge, `run-durable` was given a classic-handoff payload for the real row `v2c1j276h2o0t27pm4909443mc` with unchanged times written in `+08:00` (the Table stores `Z`). The result was `skipped: times-unchanged` (run `01a13c97-835f-…`), so the envelope maps onto the lookup correctly and nothing was written. An offline harness also covered `{}`, `null`, `""`, a wrapper-only body, an unrelated object, `{"data":{}}` and `{"data":{"id":""}}`: the four empty shapes skip and the rest throw. A hand-off with no `event_id` throws instead of falling back to the composite `id`. Cancelled and all-day hand-offs skip, and a raw Google event replay still works.
 
 That last row of the table above settles the design's central premise with production evidence rather than inference: the trigger delivered `id: d839afd543fc469494cd72dfc5beacd4_20260805T050000Z` — the **per-occurrence** id — for a recurring instance with `expand_recurring: false`. So a single-occurrence edit really does arrive keyed the way the table is keyed. (Its `iCalUID` was the bare `d839afd543fc469494cd72dfc5beacd4@google.com`, another example of a recurring series whose UID looks exactly like a one-off's.)
@@ -142,7 +151,7 @@ That last row of the table above settles the design's central premise with produ
 ## Maintainer notes
 
 - **Upstream dependency:** the `Event ID` column must hold the occurrence id. The Notion Worker at [`notion-workers/workers/meeting-note-db-updates`](https://github.com/work-flowers/notion-worker-meeting-note-db-updates) writes that column when it enriches a new note — if it ever reverts to writing the iCalUID, this workflow goes silently dead again. That is the single most important thing to know before touching either side.
-- **Hand-off cutover (2026-10):** merge the PR, wait for the publish job to write `trigger.webhook_url` into `zap.json`, then build the classic Zap above. Reschedules between the merge and the classic Zap going live are lost, but they are already lost today.
+- **Hand-off cutover: done 2026-10-15.** The classic Zap "Updated Meeting → hand off to durable" is live and POSTs to `…/omxtpUyRac5QSs8W/`.
 - **Original cutover:** the classic Zap must be turned off in the Zapier UI. Note that the re-keying migration *also* repaired the classic Zap's lookup, so until it is disabled both it and this workflow will fire on the same event and write the same value twice.
 - The table's `Archived` (f7) column is now meaningful: `true` means the linked Notion note no longer exists.
 - **Historical (native `event_updated` trigger, before the hand-off).** The classic Zap's pre-filter now absorbs this noise for free. **The native trigger fired far more often than it "should," and that's expected — verified against `list_workflow_runs` on 2026-08-05.** A 200-run sample (2026-08-02 to 2026-08-05, ~60 runs/day average) was dominated by a handful of bursts, not a steady trickle: 78 runs (39%) were `status: cancelled` tombstones with no `updated` field at all, and single bursts of 39–41 runs landed at the identical millisecond for one long-running daily/weekly series. Two Google-side behaviors cause this, and `expand_recurring: false` does not suppress either one (it only stops Zapier from *proactively generating* synthetic future-occurrence triggers for a still-open series):

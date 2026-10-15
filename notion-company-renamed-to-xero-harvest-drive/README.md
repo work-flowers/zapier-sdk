@@ -139,10 +139,12 @@ the classic Zap off. The hand-off branch can stay. A raw page id still works.
 
 ## Cutover
 
-**Hand-off cutover (2026-10):** merge the PR, wait for the publish job to write
-`trigger.webhook_url` into `zap.json`, then build the classic Zap above. Renames
-between the merge and the classic Zap going live are lost, but they are already
-lost today. Rename any company changed in that window by hand.
+**Hand-off cutover: done 2026-10-15.** The classic Zap *"Company Renamed → hand
+off to durable"* is live and POSTs to `…/Y69AnJjpYIfSVC1D/`. Two renames of
+3 Cricket produced two runs (00:36Z and 00:40Z). Both renamed the Table, Xero,
+Harvest and Drive, so the dedupe bug no longer blocks a second rename. On the
+first run Xero's custom rename action hit Zapier's 180 s action limit and
+succeeded on the step's retry. Watch for that if Xero renames start failing.
 
 **Original migration: complete as of 2026-08-22.** The classic Zap **"Sync Company Name Updates to
 Xero, Harvest, and Zapier Table"** was disabled and this durable enabled the
