@@ -116,15 +116,10 @@ function extractCustomerId(res: unknown): string {
   );
 }
 
-/** Linear refuses a create whose domain is already held by another customer.
- *  Zapier reports it as a `partner_error` at HTTP 200, which the durable runtime
- *  treats as retryable: five identical attempts, then a StepExhaustedError that
- *  replaces Linear's own sentence with "exhausted all retry attempts" (Zapier
- *  Error Triage ticket 52, Masjid Al-Falah). Match that sentence narrowly — a
- *  pure predicate, exported so it can be tested — so every other failure (a
- *  genuine firewall refusal, a 5xx, a rate limit) still throws and stays
- *  retryable. */
-export function isDomainAlreadyExistsError(err: unknown): boolean {
+/** Every string reachable in a Zapier action error — message, detail, the
+ *  errors[] items, the cause chain. Linear's own rejection sentences can
+ *  surface in any of them. */
+function collectErrorStrings(err: unknown): string[] {
   const seen: string[] = [];
   const collect = (value: unknown): void => {
     if (typeof value === "string") {
@@ -139,8 +134,29 @@ export function isDomainAlreadyExistsError(err: unknown): boolean {
     if (Array.isArray(o.errors)) for (const item of o.errors) collect(item);
   };
   collect(err);
-  return seen.some((text) =>
+  return seen;
+}
+
+/** Linear refuses a create whose domain, or external id, is already held by
+ *  another customer — "A customer with one of these domains already exists"
+ *  and "A customer with one of these external IDs already exists" (Zapier
+ *  Error Triage ticket 52: Masjid Al-Falah / alfalah.sg, 2026-09-23; National
+ *  University of Singapore / COM-n, 2026-10-16). Zapier reports both as a
+ *  `partner_error` at HTTP 200, which the durable runtime treats as
+ *  retryable: five identical attempts, then a StepExhaustedError that
+ *  replaces Linear's own sentence with "exhausted all retry attempts". Match
+ *  each sentence narrowly — pure predicates, exported so they can be tested
+ *  — so every other failure (a genuine firewall refusal, a 5xx, a rate
+ *  limit) still throws and stays retryable. */
+export function isDomainAlreadyExistsError(err: unknown): boolean {
+  return collectErrorStrings(err).some((text) =>
     text.toLowerCase().includes("customer with one of these domains already exists"),
+  );
+}
+
+export function isExternalIdAlreadyExistsError(err: unknown): boolean {
+  return collectErrorStrings(err).some((text) =>
+    text.toLowerCase().includes("customer with one of these external ids already exists"),
   );
 }
 
@@ -214,11 +230,17 @@ const workflow = defineDurable<Input, unknown>(
           }),
         };
       } catch (err) {
-        // A domain another Linear customer already holds is a settled state,
-        // not a transient fault: no number of retries can change the answer,
-        // and letting the step exhaust itself buries Linear's own message. Hand
-        // the reason back as an outcome so the run finishes green.
-        if (isDomainAlreadyExistsError(err)) return { ok: false as const };
+        // A domain or external id another Linear customer already holds is a
+        // settled state, not a transient fault: no number of retries can
+        // change the answer, and letting the step exhaust itself buries
+        // Linear's own message. Hand the collision kind back as an outcome so
+        // the run finishes green with the reason in its output.
+        if (isDomainAlreadyExistsError(err)) {
+          return { ok: false as const, collision: "domain" as const };
+        }
+        if (isExternalIdAlreadyExistsError(err)) {
+          return { ok: false as const, collision: "external-id" as const };
+        }
         throw err;
       }
     });
@@ -228,11 +250,16 @@ const workflow = defineDurable<Input, unknown>(
       // sentinel in Linear Customer ID would masquerade as one. The company
       // stays unlinked until a human points it at the existing Linear customer,
       // so name that in the run output rather than only in a log line.
+      const heldValue =
+        created.collision === "domain" ? `domain "${domain}"` : `external id "${companyUid}"`;
       console.log(
-        `Linear already has a customer for domain "${domain}" — "${companyName}" (${companyPageId}) was not created.`,
+        `Linear already has a customer with ${heldValue} — "${companyName}" (${companyPageId}) was not created.`,
       );
       return {
-        skipped: "linear-domain-already-exists",
+        skipped:
+          created.collision === "domain"
+            ? "linear-domain-already-exists"
+            : "linear-external-id-already-exists",
         companyPageId,
         company: companyName,
         domain: domain || null,
