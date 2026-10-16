@@ -1,7 +1,7 @@
 {
   "name": "notion-company-to-linear-customer",
   "workflow_id": "019feb0a-aa26-7322-9cb9-d744919fc0d7",
-  "current_version_id": "01a0cc8c-d6c9-7fe0-a10b-2fb55bc5667c",
+  "current_version_id": "01a14382-7b2e-7a2f-a7e8-256a0c45e71d",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ9llVPqyiWw9fOMMpysFQ",
   "enabled": true,
   "is_private": false,
@@ -40,7 +40,7 @@
     "@zapier/zapier-sdk": "0.97.1"
   },
   "created_at": "2026-08-10",
-  "version_created_at": "2026-08-10",
+  "version_created_at": "2026-10-16T06:59:47.427Z",
   "replaces_classic_zap": "Company Linked to Deal -> Create Customer in Linear",
   "cutover": {
     "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector. Race with the classic Zap is now moot.",
