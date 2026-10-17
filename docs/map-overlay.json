@@ -92,6 +92,7 @@
         "harvest-new-project-to-zapier-table",
         "harvest-project-status-to-zapier-table",
         "internal-user-ids-to-table-and-notion",
+        "multi-wavy-whatsapp-forwarder",
         "notion-companies-to-zapier-table",
         "notion-company-renamed-to-xero-harvest-drive",
         "notion-page-deleted-to-zapier-tables",
@@ -2063,6 +2064,11 @@
     "deal-won-set-up-client-workspace": {
       "status": "never-deployed"
     },
+    "multi-wavy-whatsapp-forwarder": {
+      "status": "never-deployed",
+      "classic": true,
+      "note": "Build spec for four classic Zaps (TKT-996 Lovable WhatsApp spike); not built on Zapier yet."
+    },
     "xero-bill-approved-to-wise-transfer": {
       "status": "shelved",
       "note": "Merged to main but deliberately never deployed — waiting on Wise's official Xero bill sync."
@@ -2098,6 +2104,7 @@
     "email-db-updates": "New page in the Notion Emails data source → enrich it with parsed mail-block metadata, resolve or create the related Contacts, link internal recipients.",
     "notion-blog-post-to-hero-image": "Notion Blog post webhook → AI-drafted hero image prompt → generated image written back onto the Blog page.",
     "email-contact-page-zap": "Classic Code-step Zap: files inbound email into the sender's Notion contact page, resolving addresses through the Email → Contact Page IDs Table.",
+    "multi-wavy-whatsapp-forwarder": "Spec for four classic Zaps that forward each test WhatsApp number's new messages and status updates to the multi-wavy-numbers Lovable app's webhook (Branch A / Branch B) — not built yet.",
     "deal-won-set-up-client-workspace": "Design record for provisioning a client Notion workspace on Deal Won — never deployed.",
     "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record.",
     "agent-chat-session-to-notion": "embeddable-agent-chat session.ended webhook → fetch the transcript via the Notion Agents Unofficial custom integration → AI summary (standard/auto) → record in the Agent Chat Sessions Notion database with the transcript as the page body.",
