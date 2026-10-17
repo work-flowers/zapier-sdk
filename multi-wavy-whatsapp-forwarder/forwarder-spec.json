@@ -1,0 +1,114 @@
+{
+  "name": "multi-wavy-whatsapp-forwarder",
+  "status": "design-only",
+  "status_note": "Build spec for four CLASSIC Zaps, built by hand in the Zapier UI. Nothing here is published by the pipeline: there is deliberately no zap.json, so the publisher and detect-changed-zaps ignore this directory. See README.md for why classic Zaps and not Durables.",
+  "spike": "TKT-996 - Lovable WhatsApp multi-number spike",
+  "target": {
+    "url": "https://multi-wavy-numbers.lovable.app/api/public/zapier/whatsapp",
+    "method": "POST",
+    "payload_type": "json",
+    "secret_header": "X-Webhook-Secret",
+    "secret_source": "Typed into the Webhooks by Zapier step's Headers field in the Zapier UI (value = the app's INBOUND_WEBHOOK_SECRET). Never written into this repo.",
+    "contract_source": "https://github.com/work-flowers/multi-wavy-numbers/blob/main/src/lib/zapier-inbound.server.ts"
+  },
+  "whatsapp_app": {
+    "app": "App228834CLIAPI",
+    "version": "1.4.6",
+    "selected_api": "App228834CLIAPI@1.4.6"
+  },
+  "forbidden_connection_ids": {
+    "0240f561-4036-869d-bd75-4f2f28101022": "LIVE +65 production WhatsApp line (also the MCP default connection). Never bind it to any of these Zaps."
+  },
+  "zaps": [
+    {
+      "zap_name": "Multi-Wavy WA | Branch A | new message",
+      "branch_label": "Branch A",
+      "display_number": "+1 929-762-2048",
+      "kind": "message",
+      "trigger": {
+        "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
+        "event": "new_message",
+        "connection_id": "0219aff1-73d3-866c-98a1-3f6cff9b4bf9",
+        "params": { "only_replies": false, "message_types": "(leave UNSET - same reasoning as whatsapp-slack-bridge: setting it silently drops unsupported/location/sticker/contacts/reaction)" }
+      },
+      "data_mapping": {
+        "kind": "message",
+        "branch_label": "Branch A",
+        "id": "{{id}}",
+        "from": "{{from}}",
+        "text__body": "{{text__body}}",
+        "type": "{{type}}",
+        "timestamp": "{{timestamp}}",
+        "phone_number_id": "{{phone_number_id}}",
+        "display_phone_number": "{{display_phone_number}}"
+      }
+    },
+    {
+      "zap_name": "Multi-Wavy WA | Branch A | message status",
+      "branch_label": "Branch A",
+      "display_number": "+1 929-762-2048",
+      "kind": "status",
+      "trigger": {
+        "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
+        "event": "message_status_updated",
+        "connection_id": "0219aff1-73d3-866c-98a1-3f6cff9b4bf9",
+        "params": { "status_types": ["sent", "delivered", "read", "failed"] }
+      },
+      "data_mapping": {
+        "kind": "status",
+        "branch_label": "Branch A",
+        "id": "{{id}}",
+        "status": "{{status}}",
+        "timestamp": "{{timestamp}}",
+        "recipient_id": "{{recipient_id}}",
+        "phone_number_id": "{{phone_number_id}}",
+        "display_phone_number": "{{display_phone_number}}"
+      }
+    },
+    {
+      "zap_name": "Multi-Wavy WA | Branch B | new message",
+      "branch_label": "Branch B",
+      "display_number": "+1 711-921-8808",
+      "kind": "message",
+      "trigger": {
+        "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
+        "event": "new_message",
+        "connection_id": "025a64f5-1887-8d0a-8f36-f08c0183487b",
+        "params": { "only_replies": false, "message_types": "(leave UNSET)" }
+      },
+      "data_mapping": {
+        "kind": "message",
+        "branch_label": "Branch B",
+        "id": "{{id}}",
+        "from": "{{from}}",
+        "text__body": "{{text__body}}",
+        "type": "{{type}}",
+        "timestamp": "{{timestamp}}",
+        "phone_number_id": "{{phone_number_id}}",
+        "display_phone_number": "{{display_phone_number}}"
+      }
+    },
+    {
+      "zap_name": "Multi-Wavy WA | Branch B | message status",
+      "branch_label": "Branch B",
+      "display_number": "+1 711-921-8808",
+      "kind": "status",
+      "trigger": {
+        "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
+        "event": "message_status_updated",
+        "connection_id": "025a64f5-1887-8d0a-8f36-f08c0183487b",
+        "params": { "status_types": ["sent", "delivered", "read", "failed"] }
+      },
+      "data_mapping": {
+        "kind": "status",
+        "branch_label": "Branch B",
+        "id": "{{id}}",
+        "status": "{{status}}",
+        "timestamp": "{{timestamp}}",
+        "recipient_id": "{{recipient_id}}",
+        "phone_number_id": "{{phone_number_id}}",
+        "display_phone_number": "{{display_phone_number}}"
+      }
+    }
+  ]
+}

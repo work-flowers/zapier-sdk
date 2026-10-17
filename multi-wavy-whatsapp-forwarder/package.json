@@ -1,0 +1,13 @@
+{
+  "name": "multi-wavy-whatsapp-forwarder",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test forward.test.ts",
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions forward.ts forward.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}
