@@ -1,7 +1,7 @@
 {
   "name": "multi-wavy-whatsapp-forwarder",
-  "status": "design-only",
-  "status_note": "Build spec for four CLASSIC Zaps, built by hand in the Zapier UI. Nothing here is published by the pipeline: there is deliberately no zap.json, so the publisher and detect-changed-zaps ignore this directory. See README.md for why classic Zaps and not Durables.",
+  "status": "superseded",
+  "status_note": "SUPERSEDED 2026-10-17: Dennis chose two DURABLE Zaps (multi-wavy-whatsapp-branch-a and multi-wavy-whatsapp-branch-b: new_message only, no webhook secret) over the four classic Zaps below. Kept as a historical record of the classic design; nothing here is a build target. This directory still has no zap.json, so the publisher and detect-changed-zaps ignore it.",
   "spike": "TKT-996 - Lovable WhatsApp multi-number spike",
   "target": {
     "url": "https://multi-wavy-numbers.lovable.app/api/public/zapier/whatsapp",

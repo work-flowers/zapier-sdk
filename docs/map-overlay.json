@@ -92,6 +92,8 @@
         "harvest-new-project-to-zapier-table",
         "harvest-project-status-to-zapier-table",
         "internal-user-ids-to-table-and-notion",
+        "multi-wavy-whatsapp-branch-a",
+        "multi-wavy-whatsapp-branch-b",
         "multi-wavy-whatsapp-forwarder",
         "notion-companies-to-zapier-table",
         "notion-company-renamed-to-xero-harvest-drive",
@@ -2066,8 +2068,7 @@
     },
     "multi-wavy-whatsapp-forwarder": {
       "status": "never-deployed",
-      "classic": true,
-      "note": "Build spec for four classic Zaps (TKT-996 Lovable WhatsApp spike); not built on Zapier yet."
+      "note": "Not a Zap: the superseded four-classic-Zap design record plus the shared logic (forwarder-core.ts) and tests for multi-wavy-whatsapp-branch-a and -b. Never published."
     },
     "xero-bill-approved-to-wise-transfer": {
       "status": "shelved",
@@ -2104,7 +2105,9 @@
     "email-db-updates": "New page in the Notion Emails data source → enrich it with parsed mail-block metadata, resolve or create the related Contacts, link internal recipients.",
     "notion-blog-post-to-hero-image": "Notion Blog post webhook → AI-drafted hero image prompt → generated image written back onto the Blog page.",
     "email-contact-page-zap": "Classic Code-step Zap: files inbound email into the sender's Notion contact page, resolving addresses through the Email → Contact Page IDs Table.",
-    "multi-wavy-whatsapp-forwarder": "Spec for four classic Zaps that forward each test WhatsApp number's new messages and status updates to the multi-wavy-numbers Lovable app's webhook (Branch A / Branch B) — not built yet.",
+    "multi-wavy-whatsapp-forwarder": "Shared, tested logic (forwarder-core.ts) and design record for the two Multi-Wavy WhatsApp durables; also holds the superseded four-classic-Zap spec. Never published itself.",
+    "multi-wavy-whatsapp-branch-a": "Branch A (+1 929-762-2048) WhatsApp new_message -> POST to the multi-wavy-numbers Lovable app's inbound webhook (kind=message, branch_label=Branch A). Test connection only; the live +65 line is refused in code. No webhook secret sent, so the app answers 401 until its auth change lands.",
+    "multi-wavy-whatsapp-branch-b": "Branch B (+1 711-921-8808) WhatsApp new_message -> POST to the multi-wavy-numbers Lovable app's inbound webhook (kind=message, branch_label=Branch B). Test connection only; the live +65 line is refused in code. No webhook secret sent, so the app answers 401 until its auth change lands.",
     "deal-won-set-up-client-workspace": "Design record for provisioning a client Notion workspace on Deal Won — never deployed.",
     "xero-bill-approved-to-wise-transfer": "Xero bill approved → build a Wise transfer from the Vendor Payment Details Table — shelved design record.",
     "agent-chat-session-to-notion": "embeddable-agent-chat session.ended webhook → fetch the transcript via the Notion Agents Unofficial custom integration → AI summary (standard/auto) → record in the Agent Chat Sessions Notion database with the transcript as the page body.",
