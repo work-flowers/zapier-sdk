@@ -3,8 +3,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node --test forward.test.ts",
-    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions forward.ts forward.test.ts"
+    "test": "node --test forward.test.ts durable.test.ts",
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions forwarder-core.ts forward.ts forward.test.ts durable.test.ts"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

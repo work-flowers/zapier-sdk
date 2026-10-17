@@ -1,10 +1,13 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/multi-wavy-whatsapp-forwarder
 //
-// Pure helpers behind the multi-wavy-whatsapp-forwarder build spec. NOTHING here
-// runs on Zapier: the four classic Zaps are built by hand from forwarder-spec.json,
-// and these helpers exist so the tests can replay what Zapier does with that spec
-// (token substitution into the Webhooks "Data" fields) and check the result
-// against the receiving handler's contract.
+// SUPERSEDED classic-Zap helpers (kept for the record and the handler-contract mirror).
+// The plan is now two DURABLES (multi-wavy-whatsapp-branch-a / -b); their logic lives in
+// forwarder-core.ts. What is still used from here: checkHandlerContract (a mirror of the
+// receiving handler, which durable.test.ts replays against), and flatten (re-exported
+// from forwarder-core.ts). The rest replays the old four-classic-Zap spec
+// (forwarder-spec.json) and is no longer a build target.
+
+import { flatten, type Flat } from "./forwarder-core.ts";
 
 /** One Zap definition in forwarder-spec.json. */
 export interface ZapSpec {
@@ -21,25 +24,8 @@ export interface ForwarderSpec {
   zaps: ZapSpec[];
 }
 
-export type Flat = Record<string, string>;
-
-/**
- * Flatten a trigger payload the way Zapier presents it to the next step:
- * nested objects become `parent__child` keys, null/undefined become "".
- * (`{ text: { body: "hi" } }` -> `{ text__body: "hi" }`.) Arrays are JSON-encoded.
- */
-export function flatten(payload: unknown, prefix = ""): Flat {
-  const out: Flat = {};
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return out;
-  for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
-    const key = prefix ? `${prefix}__${k}` : k;
-    if (v === null || v === undefined) out[key] = "";
-    else if (Array.isArray(v)) out[key] = JSON.stringify(v);
-    else if (typeof v === "object") Object.assign(out, flatten(v, key));
-    else out[key] = String(v);
-  }
-  return out;
-}
+export { flatten };
+export type { Flat };
 
 /**
  * Replay the Webhooks step's Data mapping: a value of exactly `{{field}}` takes

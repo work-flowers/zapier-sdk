@@ -1,8 +1,29 @@
 # multi-wavy-whatsapp-forwarder
 
-> **Design record and build spec. Nothing is built on Zapier yet.** This directory has no `zap.json` on purpose: the publish pipeline only manages Durables, and the recommended vehicle here is four **classic Zaps** built by hand in the Zapier UI (reasoning below). Merging this PR changes nothing on Zapier.
+> **Superseded plan. The build is now two DURABLE Zaps, not four classic ones.** On 2026-10-17 Dennis decided: one durable per WhatsApp connection (two total), `new_message` only (status events are ignored; the dedupe bug is not important), and **no webhook secret** sent. The durables are [`multi-wavy-whatsapp-branch-a`](../multi-wavy-whatsapp-branch-a/) (+1 929-762-2048) and [`multi-wavy-whatsapp-branch-b`](../multi-wavy-whatsapp-branch-b/), and they publish and **enable on merge** on the two throwaway test connections. The classic-Zap spec in [`forwarder-spec.json`](forwarder-spec.json) and the "Why classic Zaps" / "Build spec" / "End-to-end test" sections below are kept as a **historical record only**; do not build from them. This directory itself has no `zap.json` and is never published; it holds the shared, tested logic.
 
 Spike **TKT-996**. Lovable allows only **one** WhatsApp connection per project, so the Lovable app [`multi-wavy-numbers`](https://github.com/work-flowers/multi-wavy-numbers) uses Zapier as the WhatsApp provider for **every** number. Outbound is already built (the app calls the SDK `runAction` with the branch's connection id). This directory covers **inbound**: forwarding each number's WhatsApp events to the app's webhook.
+
+## Current plan: two durables
+
+```mermaid
+flowchart LR
+    A["WhatsApp new_message<br/>Branch A +1 929-762-2048<br/>conn 0219aff1-..."] --> DA["durable multi-wavy-whatsapp-branch-a"]
+    B["WhatsApp new_message<br/>Branch B +1 711-921-8808<br/>conn 025a64f5-..."] --> DB["durable multi-wavy-whatsapp-branch-b"]
+    DA & DB -->|"POST JSON, kind=message + branch_label<br/>no X-Webhook-Secret"| H["multi-wavy-numbers.lovable.app<br/>/api/public/zapier/whatsapp"]
+    H --> V{"secret header?"}
+    V -->|"missing (today)"| R["401 + rejected row: red run, fail closed"]
+    V -->|"after the app's auth change"| D{"wamid seen?"}
+    D -->|yes| OK1["200 deduped"]
+    D -->|no| S["wa_messages"]
+```
+
+- **What is here:** [`forwarder-core.ts`](forwarder-core.ts) is the canonical, dependency-free logic both durables import (payload to body mapping, the live-connection and live-number refusal, empty/unrecognized-payload handling, retry classification). Each branch directory carries a **byte-identical copy** (the publisher only reads files inside a Zap's own directory); `durable.test.ts` fails if one drifts. [`forward.ts`](forward.ts) keeps the handler-contract mirror (`checkHandlerContract`) the new tests replay against, and re-exports `flatten`; its classic-spec helpers are superseded.
+- **The app rejects every POST until its own auth change lands.** The Zaps send no `X-Webhook-Secret`, the handler requires it, so each inbound message is a red run with a `401` for now. That is expected and fail-closed; the app-side change is separate.
+- **Never the live line** `0240f561-4036-869d-bd75-4f2f28101022`: refused in code and tested.
+- Design, retry reasoning and the empty/unrecognized-payload rules are in each durable's README ([A](../multi-wavy-whatsapp-branch-a/README.md), [B](../multi-wavy-whatsapp-branch-b/README.md)).
+
+## Historical: the classic-Zap design
 
 ## Flow
 
@@ -90,9 +111,9 @@ From [`src/lib/zapier-inbound.server.ts`](https://github.com/work-flowers/multi-
 
 ```bash
 cd multi-wavy-whatsapp-forwarder
-node --test forward.test.ts          # Node >= 22.18 strips the types itself; 29 tests
+node --test forward.test.ts durable.test.ts   # Node >= 22.18 strips the types itself
 # type-check, per .claude/rules/durables-sdk.md (scratch dir with typescript + @types/node):
-npx tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions forward.ts forward.test.ts
+npx tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals --allowImportingTsExtensions forwarder-core.ts forward.ts forward.test.ts durable.test.ts
 ```
 
 They cover: flat and nested text messages, media with no text, quotes/newlines/emoji surviving the JSON body, numeric timestamps, all four statuses, distinct dedupe ids for sent/delivered/read, status lower-casing, the six repo-mandated empty shapes (`{}`, `null`, `""`, an unrelated object, `{"data":{}}`, `{"data":{"id":""}}`) plus `{"querystring":{}}`, a mirror of the handler's rejection rules, and spec safety (four Zaps, one connection per branch, the live id refused, no secret value in the spec). The handler mirror in `forward.ts` is a copy: if the handler changes, update it.
