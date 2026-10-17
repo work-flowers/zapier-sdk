@@ -1,12 +1,12 @@
 {
   "name": "multi-wavy-whatsapp-branch-b",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a14a19-8746-79b5-8bfa-a3c9363debdf",
+  "current_version_id": "01a14a19-9cbe-7319-bb6a-1cf2b1b013c0",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZIRxWlNwo3q_LqbwqUcEA",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "multi-wavy-whatsapp-branch-b",
     "description": "Branch B (+1 711-921-8808) WhatsApp new_message -> POST {kind: \"message\", branch_label: \"Branch B\", id, from, text__body, type, timestamp, phone_number_id, display_phone_number} to the multi-wavy-numbers Lovable app's /api/public/zapier/whatsapp webhook. Test connection only; the live +65 line is refused in code.",
     "enable_on_publish": true,
