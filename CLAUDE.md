@@ -58,7 +58,7 @@ Zaps are managed via the Zapier SDK CLI or the Zapier MCP connector. **In this r
 
 ## The interactive workflow map
 
-**The map is a manual, occasional artifact — no CI maintains it.** The daily refresh and the `--validate` PR check were retired 2026-10-18, so don't update [`docs/map-overlay.json`](docs/map-overlay.json) as part of ordinary Zap PRs. Regenerate only when Dennis asks: fix the overlay until `node scripts/build-map.mjs --validate` passes, run `node scripts/build-map.mjs`, and commit `docs/map.html` in that PR. **The map is published — any change to `docs/` landing on `main` deploys it to a public page** via [`deploy-pages.yml`](.github/workflows/deploy-pages.yml), and `map.html` must stay a complete standalone document (never embed its markup in a host page). Load the `zap-map` skill for the regeneration mechanics and the standalone-document constraints.
+**The map is a manual, occasional artifact — no CI maintains it.** The daily refresh and the `--validate` PR check were retired 2026-10-18, so don't update [`docs/map-overlay.json`](docs/map-overlay.json) as part of ordinary Zap PRs. Regenerate only when Dennis asks: fix the overlay until `node scripts/build-map.mjs --validate` passes, run `node scripts/build-map.mjs`, and commit `docs/map.html` in that PR. **`docs/` is a public GitHub Pages site, but deploys are manual** — [`deploy-pages.yml`](.github/workflows/deploy-pages.yml) runs only by hand (since 2026-10-18), so merging a `docs/` change publishes nothing until someone runs it. `map.html` must stay a complete standalone document (never embed its markup in a host page). Load the `zap-map` skill for the regeneration mechanics and the standalone-document constraints.
 
 ## Repo-specific notes
 

@@ -25,20 +25,21 @@ read/write/own/trigger semantics are curated in
 2. `node scripts/build-map.mjs` — rewrites only the marker-delimited data block
    in `docs/map.html`. It refuses while `--validate` would fail.
 3. Open the page locally to check it, then commit `map.html` and the overlay in
-   one PR. Merging that PR deploys it (below).
+   one PR. After it merges, run the deploy (below).
 
 `node scripts/build-map.mjs --check` fails when the committed map differs from a
 fresh build — use it to ask "is the published map current?".
 
-## The map is published, so a `docs/` change on `main` is a deploy
+## Publishing is a separate, manual step
 
 [`deploy-pages.yml`](../../../.github/workflows/deploy-pages.yml) publishes
-`docs/` to `https://work-flowers.github.io/zapier-sdk/map.html` whenever `docs/`
-changes on `main` (a merged PR touching it), or by hand via
-`gh workflow run deploy-pages.yml`. Pages' source must stay set to "GitHub Actions". And
+`docs/` to `https://work-flowers.github.io/zapier-sdk/map.html`, and
 [work.flowers/zap-map](https://www.work.flowers/zap-map) embeds that URL in an
-`<iframe>`. Regenerating the map therefore changes a public page — no extra step,
-but no undo either.
+`<iframe>`. Since 2026-10-18 it runs **only by hand**
+(`gh workflow run deploy-pages.yml`); merging a `docs/` change no longer
+deploys. So after the regeneration PR merges, run the deploy and check the live
+page. Pages' source must stay set to "GitHub Actions". Deploying changes a
+public page with no undo.
 
 ## `map.html` must stay a complete, standalone document
 
