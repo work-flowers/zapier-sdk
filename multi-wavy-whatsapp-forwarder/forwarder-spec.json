@@ -68,7 +68,7 @@
     {
       "zap_name": "Multi-Wavy WA | Branch B | new message",
       "branch_label": "Branch B",
-      "display_number": "+1 711-921-8808",
+      "display_number": "+1 711-607-2838",
       "kind": "message",
       "trigger": {
         "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
@@ -91,7 +91,7 @@
     {
       "zap_name": "Multi-Wavy WA | Branch B | message status",
       "branch_label": "Branch B",
-      "display_number": "+1 711-921-8808",
+      "display_number": "+1 711-607-2838",
       "kind": "status",
       "trigger": {
         "app": "WhatsApp Business (App228834CLIAPI@1.4.6)",
