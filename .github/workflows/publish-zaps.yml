@@ -11,9 +11,8 @@
 #                merge, with no separate environment gate. (There used to be a
 #                `production` environment with a required-reviewer rule here; it
 #                was removed 2026-08-18 as redundant with the act of merging.)
-#                The sync-back does NOT regenerate docs/map.html, even though
-#                it can drift the map's data block — refresh-map.yml catches
-#                the map up daily.
+#                The sync-back does NOT regenerate docs/map.html; the map is
+#                refreshed by hand only (see the zap-map skill).
 #
 # ┌─ SETUP NOTES ───────────────────────────────────────────────────────────────┐
 # │ Secrets: the existing repository secrets ZAPIER_CLIENT_ID /                 │
@@ -127,11 +126,8 @@ jobs:
           node scripts/publish-changed-zaps.mjs --files "${FILES[@]}" --execute
 
       # The workflow map is deliberately NOT regenerated here. Its data block is
-      # derived from zap.json (workflow_id, enabled), so this sync-back leaves the
-      # committed map stale — a first publish most visibly, since build-map reads
-      # workflow_id null as "not deployed". refresh-map.yml catches it up daily,
-      # and the check-map PR gate only validates curation, so the drift never
-      # fails a PR.
+      # derived from zap.json (workflow_id, enabled), so the committed map goes
+      # stale; it is refreshed by hand only (see the zap-map skill).
       - name: Commit the sync-back
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}

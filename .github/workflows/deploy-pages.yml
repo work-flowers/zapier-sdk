@@ -13,9 +13,6 @@
 #
 # Triggers:
 #   push       — a merged PR that touches docs/.
-#   workflow_call — refresh-map.yml, after it pushes a regenerated map. Its push
-#                uses GITHUB_TOKEN, and GitHub never starts workflows from a
-#                GITHUB_TOKEN push, so the path filter below would not see it.
 #   workflow_dispatch — manual redeploy.
 #
 # No Jekyll: docs/ is uploaded as-is. The .md files in docs/ are served raw
@@ -27,7 +24,6 @@ on:
   push:
     branches: [main]
     paths: ["docs/**"]
-  workflow_call: {}
   workflow_dispatch: {}
 
 permissions:
@@ -47,8 +43,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      # ref: main, so a workflow_call from refresh-map deploys the commit it
-      # just pushed rather than the SHA that run started on.
       - uses: actions/checkout@v4
         with:
           ref: main
