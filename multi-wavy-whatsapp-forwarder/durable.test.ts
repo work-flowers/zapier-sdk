@@ -27,7 +27,7 @@ const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8"
 const json = (rel: string) => JSON.parse(read(rel));
 
 const A: Branch = { label: "Branch A", connectionId: "0219aff1-73d3-866c-98a1-3f6cff9b4bf9", displayDigits: "19297622048" };
-const B: Branch = { label: "Branch B", connectionId: "025a64f5-1887-8d0a-8f36-f08c0183487b", displayDigits: "17119218808" };
+const B: Branch = { label: "Branch B", connectionId: "025a64f5-1887-8d0a-8f36-f08c0183487b", displayDigits: "17116072838" };
 
 const PNID = "100000000000001";
 const msg = {
@@ -69,7 +69,7 @@ test("flat text payload maps 1:1 and the handler contract accepts it", () => {
 
 test("nested text.body (what the durable runtime delivers) flattens to text__body", () => {
   const { text__body: _drop, ...rest } = msg;
-  const r = forward(B, { ...rest, display_phone_number: "17119218808", text: { body: "Hello nested" } });
+  const r = forward(B, { ...rest, display_phone_number: "17116072838", text: { body: "Hello nested" } });
   assert.equal(r.body.text__body, "Hello nested");
   assert.equal(r.body.branch_label, "Branch B");
   assert.equal("text" in r.body, false);
@@ -186,7 +186,7 @@ test("the live display number is refused as a branch number and as a payload num
 });
 
 test("a payload from the OTHER branch's number is refused (wrong-label guard)", () => {
-  assert.throws(() => prepareForward(A, { ...msg, display_phone_number: "17119218808" }), /not this branch's number/);
+  assert.throws(() => prepareForward(A, { ...msg, display_phone_number: "17116072838" }), /not this branch's number/);
   assert.throws(() => prepareForward(B, msg), /not this branch's number/);
 });
 
@@ -250,10 +250,10 @@ test("workflow.ts constants match the branch, and zap.json agrees with them", ()
     assert.equal(src.includes("FORWARD_URL"), true);
 
     const zap = json(`${dir}/zap.json`);
-    assert.equal(zap.deploy.state, "pending-create");
-    assert.equal(zap.workflow_id, null);
-    assert.equal(zap.current_version_id, null);
-    assert.equal(zap.trigger_url, null);
+    // Published by PR #245; the sync-back owns these ids, so only check they are filled.
+    assert.equal(zap.deploy.state, "published");
+    assert.match(zap.workflow_id, /^[0-9a-f-]{36}$/);
+    assert.match(zap.current_version_id, /^[0-9a-f-]{36}$/);
     assert.equal(zap.is_private, false);
     assert.equal(zap.deploy.enable_on_publish, true);
     assert.equal(zap.enabled, true);

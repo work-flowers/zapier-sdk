@@ -9,7 +9,7 @@ Spike **TKT-996**. Lovable allows only **one** WhatsApp connection per project, 
 ```mermaid
 flowchart LR
     A["WhatsApp new_message<br/>Branch A +1 929-762-2048<br/>conn 0219aff1-..."] --> DA["durable multi-wavy-whatsapp-branch-a"]
-    B["WhatsApp new_message<br/>Branch B +1 711-921-8808<br/>conn 025a64f5-..."] --> DB["durable multi-wavy-whatsapp-branch-b"]
+    B["WhatsApp new_message<br/>Branch B +1 711-607-2838<br/>conn 025a64f5-..."] --> DB["durable multi-wavy-whatsapp-branch-b"]
     DA & DB -->|"POST JSON, kind=message + branch_label<br/>no X-Webhook-Secret"| H["multi-wavy-numbers.lovable.app<br/>/api/public/zapier/whatsapp"]
     H --> V{"secret header?"}
     V -->|"missing (today)"| R["401 + rejected row: red run, fail closed"]
@@ -33,7 +33,7 @@ flowchart LR
         A1["WhatsApp new_message"] --> AF1["Filter: id exists"] --> AW1["Webhooks POST<br/>kind=message<br/>branch_label=Branch A"]
         A2["WhatsApp message_status_updated"] --> AF2["Filter: id exists"] --> AW2["Webhooks POST<br/>kind=status<br/>branch_label=Branch A"]
     end
-    subgraph B["Branch B  +1 711-921-8808"]
+    subgraph B["Branch B  +1 711-607-2838"]
         B1["WhatsApp new_message"] --> BF1["Filter: id exists"] --> BW1["Webhooks POST<br/>kind=message<br/>branch_label=Branch B"]
         B2["WhatsApp message_status_updated"] --> BF2["Filter: id exists"] --> BW2["Webhooks POST<br/>kind=status<br/>branch_label=Branch B"]
     end
@@ -68,7 +68,7 @@ Build four Zaps. Names and connections come from [`forwarder-spec.json`](forward
 | --- | --- | --- | --- | --- |
 | Multi-Wavy WA \| Branch A \| new message | `new_message` | Branch A `0219aff1-73d3-866c-98a1-3f6cff9b4bf9` (+1 929-762-2048) | `message` | `Branch A` |
 | Multi-Wavy WA \| Branch A \| message status | `message_status_updated` | Branch A (same) | `status` | `Branch A` |
-| Multi-Wavy WA \| Branch B \| new message | `new_message` | Branch B `025a64f5-1887-8d0a-8f36-f08c0183487b` (+1 711-921-8808) | `message` | `Branch B` |
+| Multi-Wavy WA \| Branch B \| new message | `new_message` | Branch B `025a64f5-1887-8d0a-8f36-f08c0183487b` (+1 711-607-2838) | `message` | `Branch B` |
 | Multi-Wavy WA \| Branch B \| message status | `message_status_updated` | Branch B (same) | `status` | `Branch B` |
 
 > **NEVER** bind `0240f561-4036-869d-bd75-4f2f28101022`: the live +65 production line, and the default connection the Zapier UI/MCP may preselect. Pick the account explicitly in every trigger step and check the account label (WABA / number) before turning the Zap on. The live line is already consumed by the production [`whatsapp-slack-bridge`](../whatsapp-slack-bridge/). [`forward.test.ts`](forward.test.ts) asserts the spec never references it.

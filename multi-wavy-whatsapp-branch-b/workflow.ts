@@ -1,6 +1,6 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/multi-wavy-whatsapp-branch-b
 //
-// Multi-Wavy WhatsApp | Branch B (+1 711-921-8808): every new inbound WhatsApp message
+// Multi-Wavy WhatsApp | Branch B (+1 711-607-2838): every new inbound WhatsApp message
 // on this number's connection is forwarded to the multi-wavy-numbers Lovable app's
 // inbound webhook. Published as `workflow.ts` alongside `forwarder-core.ts`
 // (a byte-identical copy of multi-wavy-whatsapp-forwarder/forwarder-core.ts).
@@ -24,7 +24,7 @@ const sdk = createZapierSdk();
 const BRANCH: Branch = {
   label: "Branch B",
   connectionId: "025a64f5-1887-8d0a-8f36-f08c0183487b",
-  displayDigits: "17119218808",
+  displayDigits: "17116072838",
 };
 
 const workflow = defineDurable("multi-wavy-whatsapp-branch-b", async (ctx, rawInput: unknown) => {
