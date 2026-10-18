@@ -3,8 +3,8 @@
 // workflow sources merged with the curated semantics in docs/map-overlay.json.
 //
 //   node scripts/build-map.mjs            regenerate the data block in docs/map.html
-//                                         (CI does this daily: .github/workflows/refresh-map.yml)
-//   node scripts/build-map.mjs --validate check the overlay against the repo (the PR gate)
+//                                         (by hand only; no CI runs this)
+//   node scripts/build-map.mjs --validate check the overlay against the repo
 //   node scripts/build-map.mjs --check    verify committed output matches (never writes)
 //   node scripts/build-map.mjs --report  print the extracted inventory (debug)
 

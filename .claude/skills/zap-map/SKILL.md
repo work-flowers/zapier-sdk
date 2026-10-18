@@ -1,56 +1,41 @@
 ---
 name: zap-map
-description: Mechanics for this repo's interactive workflow map — docs/map-overlay.json curated semantics, scripts/build-map.mjs and its --validate PR gate, the daily refresh-map.yml job that regenerates the data block, why map.html must stay a standalone document, and the fact that the map publishes publicly from main. Use when a Zap is added, removed or re-statused, when an asset relationship changes, or when build-map.mjs --validate fails.
+description: Mechanics for this repo's interactive workflow map — docs/map-overlay.json curated semantics, scripts/build-map.mjs and its --validate check, how to regenerate the map by hand, why map.html must stay a standalone document, and the fact that the map publishes publicly from main. Use only when asked to regenerate or edit the map — ordinary Zap PRs no longer maintain it.
 ---
 
 # The interactive workflow map
 
-Repo rule (in `CLAUDE.md`): keep the map's curation in sync. This skill is the how-to.
+No CI maintains this map. The daily `refresh-map.yml` job and the
+`check-map.yml` PR gate were retired 2026-10-18 — the map was a novelty and
+didn't need constant upkeep. Ordinary Zap PRs leave it alone; it is regenerated
+only when someone asks, so the published copy can trail the repo indefinitely.
 
-## Curating (your job, per PR)
+## Regenerating (by hand, on request)
 
 [`docs/map.html`](../../../docs/map.html) is a generated atlas of every Zap and
-the shared assets connecting them. When a Zap is added/removed/re-statused or an
-asset relationship changes (a Table read/write, a Notion data source, a Drive
-folder, the one zap→zap HTTP edge), update the curated semantics in
+the shared assets connecting them. Its facts are extracted from the repo; the
+read/write/own/trigger semantics are curated in
 [`docs/map-overlay.json`](../../../docs/map-overlay.json).
 
-`node scripts/build-map.mjs --validate` is the gate — it fails when the repo and
-the overlay disagree (new asset ids must be registered or explicitly ignored;
-every zap dir must sit in exactly one cluster; every zap→asset reference needs a
-curated edge). **It runs on every PR** ([`check-map.yml`](../../../.github/workflows/check-map.yml)),
-so a curation gap fails the PR instead of breaking the next scheduled refresh.
+1. `node scripts/build-map.mjs --validate` — fails when the repo and the overlay
+   disagree (new asset ids must be registered or explicitly ignored; every zap
+   dir must sit in exactly one cluster; every zap→asset reference needs a
+   curated edge). Expect a backlog of gaps after a long gap between refreshes;
+   fix the overlay until it passes.
+2. `node scripts/build-map.mjs` — rewrites only the marker-delimited data block
+   in `docs/map.html`. It refuses while `--validate` would fail.
+3. Open the page locally to check it, then commit `map.html` and the overlay in
+   one PR. Merging that PR deploys it (below).
 
-## Regenerating (daily, automatic)
-
-**Don't commit a regenerated `docs/map.html` in an ordinary PR.** The data block
-is one long line of JSON, so two PRs that both regenerate it conflict with each
-other, and the regeneration is redundant anyway:
-[`refresh-map.yml`](../../../.github/workflows/refresh-map.yml) runs
-`node scripts/build-map.mjs` daily at 01:00 UTC and pushes the result
-straight to `main`. The committed map can therefore trail the repo by up to a
-day — that is by design, not drift to hand-fix. Trigger the job by hand
-(`gh workflow run refresh-map.yml`) when a change should show sooner.
-
-The exception is a PR that edits `map.html`'s own markup/JS or `build-map.mjs`'s
-rendering: run the generator locally to check the page still works, and commit
-the result so the review covers what will publish.
-
-The publish pipeline doesn't regenerate either. A **first publish** fills in
-`workflow_id` (which the extractor reads as "not deployed" while `null`), so the
-map shows a freshly shipped Zap as undeployed until the next daily refresh.
-
-`node scripts/build-map.mjs --check` still exists — it fails when the committed
-map differs from a fresh build. It is no longer a gate; use it locally to ask
-"is the published map current?".
+`node scripts/build-map.mjs --check` fails when the committed map differs from a
+fresh build — use it to ask "is the published map current?".
 
 ## The map is published, so a `docs/` change on `main` is a deploy
 
 [`deploy-pages.yml`](../../../.github/workflows/deploy-pages.yml) publishes
 `docs/` to `https://work-flowers.github.io/zapier-sdk/map.html` whenever `docs/`
-changes on `main` (a merged PR touching it, or a `refresh-map.yml` run that
-pushed — that job calls the deploy itself, since its bot push can't trigger
-workflows). Pages' source must stay set to "GitHub Actions". And
+changes on `main` (a merged PR touching it), or by hand via
+`gh workflow run deploy-pages.yml`. Pages' source must stay set to "GitHub Actions". And
 [work.flowers/zap-map](https://www.work.flowers/zap-map) embeds that URL in an
 `<iframe>`. Regenerating the map therefore changes a public page — no extra step,
 but no undo either.
