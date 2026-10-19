@@ -13,6 +13,17 @@ const NOTION_VERSION = "2026-03-11";
 const DRIVE_APP_KEY = "GoogleDriveCLIAPI";
 const DRIVE_CONNECTION = "gdrive_wf";
 
+/** Logo.dev Brand API (api.logo.dev/v2). The `logo_dev` connection is an
+ *  API by Zapier connection holding the SECRET key (`sk_…`) as a Bearer token,
+ *  scoped to api.logo.dev — the publishable key on img.logo.dev cannot read
+ *  brand profiles. */
+const LOGO_DEV_CONNECTION = "logo_dev";
+const LOGO_DEV_API = "https://api.logo.dev/v2";
+/** Brand-asset downloads cap out at 800px on the longest side. */
+const MAX_PNG_SIZE = 800;
+const MAX_BANNERS = 3;
+const BRAND_KIT_FOLDER_NAME = "Brand Kit";
+
 /** Work.Flowers HQ shared drive, "Client Docs" folder. */
 const SHARED_DRIVE_ID = "0AHY_MJFjT0WtUk9PVA";
 const CLIENT_DOCS_FOLDER_ID = "109hgE0VmTpTFTGUXreEYCNf8xu-jSnc2";
@@ -23,6 +34,7 @@ const DEAL_COMPANY_PROP = "Company";
 
 const COMPANY_TITLE_PROP = "Company Name";
 const COMPANY_DRIVE_ID_PROP = "Google Drive Folder ID";
+const COMPANY_WEBSITE_PROP = "Website";
 // "Google Drive Folder" on Companies is a FORMULA that renders the URL from
 // Google Drive Folder ID, so the id write below is the only write needed.
 
@@ -104,6 +116,136 @@ function isEmptyPing(raw: unknown): boolean {
     return false; // a wrapper with something in it — treat as a real event
   }
   return true;
+}
+
+/** Bare host out of a company's free-text `Website` (same rules as
+ *  notion-review-to-company-logo): drop scheme, `www.`, path, userinfo, port. */
+function extractDomain(website: string): string {
+  const raw = website.trim();
+  if (!raw) return "";
+  const m = /^(?:https?:\/\/)?(?:www\.)?([^/?#]+)/i.exec(raw);
+  let host = (m?.[1] ?? "").toLowerCase();
+  host = host.split("@").pop() ?? "";
+  host = host.split(":")[0] ?? "";
+  return host.replace(/\.+$/, "");
+}
+
+function looksLikeHost(host: string): boolean {
+  if (!host || host.length > 253) return false;
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(host);
+}
+
+/** A Notion `url` property, or a rich_text one if the schema ever changes. */
+function urlProp(prop: unknown): string {
+  const p = prop as any;
+  return firstString(p?.url).trim() || plainText(p?.rich_text);
+}
+
+/** A logo.dev image object's temporary URL, re-requested as a PNG. The bare
+ *  URL serves a 128px JPEG whatever the source is, and SVG is not offered.
+ *  `size` bounds the longest side and caps at 800, so ask for the source's own
+ *  size up to that cap — never upscale a small source. */
+function pngUrl(image: any): string {
+  const url = firstString(image?.url);
+  if (!url) return "";
+  const w = Number(image?.source?.width);
+  const h = Number(image?.source?.height);
+  const longest = Math.max(Number.isFinite(w) ? w : 0, Number.isFinite(h) ? h : 0);
+  const size = longest > 0 ? Math.min(longest, MAX_PNG_SIZE) : MAX_PNG_SIZE;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}format=png&size=${size}`;
+}
+
+type BrandFetch = { kind: "ready"; brand: any } | { kind: "pending" } | { kind: "not_found" };
+
+/** GET /v2/brands?domain=… . A 404 or `status: "not_found"` is terminal and
+ *  NOT an error — plenty of small clients are not in the index. A `202`
+ *  (`status: "not_indexed"`, `metadata.pending`) means the lookup started a
+ *  first crawl, which logo.dev says settles within `expires_in_seconds` (300).
+ *  Every other non-2xx (bad key, plan gate, 5xx) throws. */
+async function fetchBrand(domain: string): Promise<BrandFetch> {
+  const url = `${LOGO_DEV_API}/brands?domain=${encodeURIComponent(domain)}&nosubscribe=true`;
+  const res = await sdk.fetch(url, { connection: LOGO_DEV_CONNECTION });
+  if (res.status === 404) return { kind: "not_found" };
+  if (!res.ok) {
+    throw new Error(`logo.dev brand lookup for ${domain} failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  }
+  const body = (await res.json()) as any;
+  const status = firstString(body?.data?.status);
+  if (status === "not_found") return { kind: "not_found" };
+  if (res.status === 202 || status === "not_indexed" || body?.metadata?.pending) return { kind: "pending" };
+  return { kind: "ready", brand: body?.data };
+}
+
+/** Uploads one public URL into a Drive folder; returns the file id. */
+async function uploadToDrive(folderId: string, url: string, name: string, extension: string): Promise<string> {
+  const res = await sdk.runAction({
+    appKey: DRIVE_APP_KEY,
+    actionType: "write",
+    actionKey: "file",
+    connection: DRIVE_CONNECTION,
+    inputs: {
+      drive: SHARED_DRIVE_ID,
+      folder: folderId,
+      file: url,
+      new_name: name,
+      new_extension: extension,
+    },
+  });
+  return firstString(firstResult(res)?.id);
+}
+
+/** Social banners are an array, so their step ids carry an index — which the
+ *  publish-time analyzer only allows outside the workflow body. */
+async function uploadBanners(
+  ctx: DurableContext,
+  stepPrefix: string,
+  folderId: string,
+  company: string,
+  banners: any[],
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (let i = 0; i < banners.length; i++) {
+    const url = pngUrl(banners[i]);
+    if (!url) continue;
+    const suffix = banners.length > 1 ? ` ${i + 1}` : "";
+    ids.push(
+      await ctx.step(`${stepPrefix}-${i}`, async () =>
+        uploadToDrive(folderId, url, `${company} social banner${suffix}`, "png"),
+      ),
+    );
+  }
+  return ids;
+}
+
+/** Plain-text brand guide, converted to a Google Doc on upload. */
+function brandGuideText(brand: any, domain: string): string {
+  const lines: string[] = [];
+  lines.push(`${firstString(brand?.name) || domain} — brand kit`);
+  lines.push("");
+  const description = firstString(brand?.description).trim();
+  if (description) lines.push(description, "");
+  const colors = Array.isArray(brand?.colors) ? brand.colors : [];
+  if (colors.length) {
+    lines.push("Colours");
+    const seen = new Set<string>();
+    for (const c of colors) {
+      const hex = firstString(c?.hex).toUpperCase();
+      if (!hex || seen.has(hex)) continue; // logo.dev can repeat a colour
+      seen.add(hex);
+      lines.push(`  ${hex}   rgb(${c?.r}, ${c?.g}, ${c?.b})`);
+    }
+    lines.push("");
+  }
+  const socials = brand?.socials && typeof brand.socials === "object" ? brand.socials : {};
+  const socialLines = Object.entries(socials)
+    .filter(([, v]) => typeof v === "string" && v)
+    .map(([k, v]) => `  ${k}: ${v}`);
+  if (socialLines.length) lines.push("Socials", ...socialLines, "");
+  lines.push(`Source: logo.dev brand profile for ${domain}` +
+    (firstString(brand?.indexed_at) ? `, indexed ${firstString(brand.indexed_at).slice(0, 10)}` : "") + ".");
+  lines.push("Logos via Logo.dev — https://logo.dev");
+  return lines.join("\n");
 }
 
 /** First item of a runAction result ({ data: [...] } or a bare array). */
@@ -231,6 +373,93 @@ const workflow = defineDurable<Input, unknown>(
 
     console.log(`created Drive folder "${companyName}" (${folderId}) from deal "${dealName}"`);
 
+    // 6. Brand kit from logo.dev, into a "Brand Kit" sub-folder. Runs only on
+    //    the folder-creating path, AFTER the write-back, so a brand-kit failure
+    //    can never cause a duplicate client folder. Missing data (no Website,
+    //    brand not in logo.dev's index) is an expected outcome and is reported
+    //    in the result; a real API error throws (red run, Zapier alert) and the
+    //    kit has to be added by hand — a re-trigger stops at the folder guard.
+    const website = urlProp(companyProps[COMPANY_WEBSITE_PROP]);
+    const domain = extractDomain(website);
+    let brandKit: Record<string, unknown>;
+
+    if (!website) {
+      brandKit = { skipped: "no-website" };
+    } else if (!looksLikeHost(domain)) {
+      brandKit = { skipped: "unusable-website", website };
+    } else {
+      let lookup = await ctx.step("fetch-brand", async () => fetchBrand(domain));
+      if (lookup.kind === "pending") {
+        // First request for this domain started a crawl. Waits are free.
+        console.log(`logo.dev is crawling ${domain} for the first time — waiting before one retry`);
+        await ctx.wait("wait-for-brand-crawl", 240);
+        lookup = await ctx.step("fetch-brand-after-crawl", async () => fetchBrand(domain));
+      }
+
+      if (lookup.kind !== "ready") {
+        brandKit = { skipped: lookup.kind === "not_found" ? "brand-not-found" : "brand-still-indexing", domain };
+      } else {
+        const brand = lookup.brand;
+        const logoUrl = pngUrl(brand?.logo);
+        const brandmarkUrl = pngUrl(brand?.brandmark);
+        const banners = (Array.isArray(brand?.social_banners) ? brand.social_banners : []).slice(0, MAX_BANNERS);
+
+        const kitFolder = await ctx.step("create-brand-kit-folder", async () =>
+          sdk.runAction({
+            appKey: DRIVE_APP_KEY,
+            actionType: "write",
+            actionKey: "folder",
+            connection: DRIVE_CONNECTION,
+            inputs: { drive: SHARED_DRIVE_ID, folder: folderId, title: BRAND_KIT_FOLDER_NAME },
+          }),
+        );
+        const kitFolderId = firstString(firstResult(kitFolder)?.id);
+        if (!kitFolderId) {
+          throw new Error(
+            `Created the ${BRAND_KIT_FOLDER_NAME} folder in ${folderId} but could not read its id: ` +
+              JSON.stringify(firstResult(kitFolder)).slice(0, 300),
+          );
+        }
+
+        const files: Record<string, unknown> = {};
+        if (logoUrl) {
+          files.logo = await ctx.step("upload-logo", async () =>
+            uploadToDrive(kitFolderId, logoUrl, `${companyName} logo`, "png"),
+          );
+        }
+        if (brandmarkUrl) {
+          files.brandmark = await ctx.step("upload-brandmark", async () =>
+            uploadToDrive(kitFolderId, brandmarkUrl, `${companyName} brandmark`, "png"),
+          );
+        }
+        files.banners = await uploadBanners(ctx, "upload-banner", kitFolderId, companyName, banners);
+        files.guide = await ctx.step("write-brand-guide", async () =>
+          firstString(
+            firstResult(
+              await sdk.runAction({
+                appKey: DRIVE_APP_KEY,
+                actionType: "write",
+                actionKey: "newtxtfile",
+                connection: DRIVE_CONNECTION,
+                inputs: {
+                  drive: SHARED_DRIVE_ID,
+                  folder: kitFolderId,
+                  title: `${companyName} brand guide`,
+                  file: brandGuideText(brand, domain),
+                  convert: true,
+                },
+              }),
+            )?.id,
+          ),
+        );
+
+        brandKit = { created: true, domain, brandKitFolderId: kitFolderId, files };
+        console.log(`brand kit for ${domain} saved to ${BRAND_KIT_FOLDER_NAME} (${kitFolderId})`);
+      }
+    }
+
+    if (brandKit.skipped) console.log(`no brand kit: ${String(brandKit.skipped)} (${domain || website || "no website"})`);
+
     return {
       created: true,
       companyId,
@@ -238,6 +467,7 @@ const workflow = defineDurable<Input, unknown>(
       dealPageId,
       deal: dealName,
       driveFolderId: folderId,
+      brandKit,
     } satisfies Outcome;
   },
 );
