@@ -36,7 +36,7 @@ flowchart TD
     J --> K{"Brand ready?"}
     K -- "not found / still indexing" --> R2(["Done — brandKit.skipped"])
     K -- yes --> L["Drive: create 'Brand Kit' sub-folder"]
-    L --> M["Upload logo + brandmark (PNG 800px),<br/>up to 3 social banners"]
+    L --> M["Upload logo + brandmark (PNG),<br/>up to 3 social banners"]
     M --> N["Create '&lt;Company&gt; brand guide' Google Doc<br/>(description, colours, socials)"]
 ```
 
@@ -48,7 +48,7 @@ and fills a `Brand Kit` sub-folder with:
 
 | File | Source |
 | --- | --- |
-| `<Company> logo.png` | `logo` — square logo, re-requested as PNG at 800px (the asset URL serves JPEG by default, and 800px is Logo.dev's cap) |
+| `<Company> logo.png` | `logo` — square logo, re-requested as PNG at the source's own size, capped at 800px. The bare asset URL serves a **128px JPEG**, and `size` bounds the longest side with an 800px cap, so it is set explicitly but never above the source (no upscaling) |
 | `<Company> brandmark.png` | `brandmark` — wordmark, same treatment. Logo.dev does not serve SVG downloads even when the source is vector |
 | `<Company> social banner[ n].png` | up to 3 `social_banners` |
 | `<Company> brand guide` (Google Doc) | name, description, colours (hex + rgb), social links, index date |
@@ -84,6 +84,21 @@ and fills a `Brand Kit` sub-folder with:
   with content but no page id now throws).
 
 ## Testing
+
+**Brand kit, 2026-10-19** — `run-durable` of a harness (this `workflow.ts`
+with steps 1–5 replaced by fixed inputs, step 6 verbatim) writing into the
+**real** Tannin Road client folder (`1rh7ZwVmNAMA9lra_ZTLFPWhC_2Ey_3L8`):
+
+| Case | Result |
+| --- | --- |
+| `tanninroad.com.au`, not yet in Logo.dev's index | `202` → 240s wait → retry → ready. `Brand Kit` holds logo (192×192 PNG), one social banner (534×800 PNG), brand-guide Doc with description, 2 colours, 2 socials. No brandmark (Logo.dev has none for this brand) |
+| First run of the above | Found two bugs, both fixed before the second run: the banner came out **85×128** (no `size` → 128px default) and the guide listed `#BC225C` twice (Logo.dev repeats colours). The first run's `Brand Kit` folder was moved to the Drive trash |
+| Brand API, unknown domain | `404` → `brandKit.skipped: "brand-not-found"` (probed with `curl` through the connection) |
+
+Not exercised live: a brand **with** a brandmark (same code path as the
+logo), `no-website` / `unusable-website` (guard-only returns).
+
+**Folder creation, 2026-08-10:**
 
 `run-durable` on 2026-08-10 (guard path, no side effects): deal
 `9ca1f339-617f-4e08-946b-7bb00a475fa9` (Tannin Road) → fetched deal + company,

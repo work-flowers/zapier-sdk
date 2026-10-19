@@ -19,8 +19,8 @@ const DRIVE_CONNECTION = "gdrive_wf";
  *  brand profiles. */
 const LOGO_DEV_CONNECTION = "logo_dev";
 const LOGO_DEV_API = "https://api.logo.dev/v2";
-/** Brand-asset downloads cap out at 800px; ask for the largest PNG. */
-const LOGO_PNG_SIZE = 800;
+/** Brand-asset downloads cap out at 800px on the longest side. */
+const MAX_PNG_SIZE = 800;
 const MAX_BANNERS = 3;
 const BRAND_KIT_FOLDER_NAME = "Brand Kit";
 
@@ -141,11 +141,19 @@ function urlProp(prop: unknown): string {
   return firstString(p?.url).trim() || plainText(p?.rich_text);
 }
 
-/** A logo.dev temporary asset URL re-requested as a PNG. The bare URL serves a
- *  JPEG (no transparency) whatever the source format, and SVG is not offered. */
-function pngUrl(url: string, size?: number): string {
+/** A logo.dev image object's temporary URL, re-requested as a PNG. The bare
+ *  URL serves a 128px JPEG whatever the source is, and SVG is not offered.
+ *  `size` bounds the longest side and caps at 800, so ask for the source's own
+ *  size up to that cap — never upscale a small source. */
+function pngUrl(image: any): string {
+  const url = firstString(image?.url);
+  if (!url) return "";
+  const w = Number(image?.source?.width);
+  const h = Number(image?.source?.height);
+  const longest = Math.max(Number.isFinite(w) ? w : 0, Number.isFinite(h) ? h : 0);
+  const size = longest > 0 ? Math.min(longest, MAX_PNG_SIZE) : MAX_PNG_SIZE;
   const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}format=png${size ? `&size=${size}` : ""}`;
+  return `${url}${sep}format=png&size=${size}`;
 }
 
 type BrandFetch = { kind: "ready"; brand: any } | { kind: "pending" } | { kind: "not_found" };
@@ -198,12 +206,12 @@ async function uploadBanners(
 ): Promise<string[]> {
   const ids: string[] = [];
   for (let i = 0; i < banners.length; i++) {
-    const url = firstString(banners[i]?.url);
+    const url = pngUrl(banners[i]);
     if (!url) continue;
     const suffix = banners.length > 1 ? ` ${i + 1}` : "";
     ids.push(
       await ctx.step(`${stepPrefix}-${i}`, async () =>
-        uploadToDrive(folderId, pngUrl(url), `${company} social banner${suffix}`, "png"),
+        uploadToDrive(folderId, url, `${company} social banner${suffix}`, "png"),
       ),
     );
   }
@@ -220,9 +228,12 @@ function brandGuideText(brand: any, domain: string): string {
   const colors = Array.isArray(brand?.colors) ? brand.colors : [];
   if (colors.length) {
     lines.push("Colours");
+    const seen = new Set<string>();
     for (const c of colors) {
-      const hex = firstString(c?.hex);
-      if (hex) lines.push(`  ${hex.toUpperCase()}   rgb(${c?.r}, ${c?.g}, ${c?.b})`);
+      const hex = firstString(c?.hex).toUpperCase();
+      if (!hex || seen.has(hex)) continue; // logo.dev can repeat a colour
+      seen.add(hex);
+      lines.push(`  ${hex}   rgb(${c?.r}, ${c?.g}, ${c?.b})`);
     }
     lines.push("");
   }
@@ -389,8 +400,8 @@ const workflow = defineDurable<Input, unknown>(
         brandKit = { skipped: lookup.kind === "not_found" ? "brand-not-found" : "brand-still-indexing", domain };
       } else {
         const brand = lookup.brand;
-        const logoUrl = firstString(brand?.logo?.url);
-        const brandmarkUrl = firstString(brand?.brandmark?.url);
+        const logoUrl = pngUrl(brand?.logo);
+        const brandmarkUrl = pngUrl(brand?.brandmark);
         const banners = (Array.isArray(brand?.social_banners) ? brand.social_banners : []).slice(0, MAX_BANNERS);
 
         const kitFolder = await ctx.step("create-brand-kit-folder", async () =>
@@ -413,12 +424,12 @@ const workflow = defineDurable<Input, unknown>(
         const files: Record<string, unknown> = {};
         if (logoUrl) {
           files.logo = await ctx.step("upload-logo", async () =>
-            uploadToDrive(kitFolderId, pngUrl(logoUrl, LOGO_PNG_SIZE), `${companyName} logo`, "png"),
+            uploadToDrive(kitFolderId, logoUrl, `${companyName} logo`, "png"),
           );
         }
         if (brandmarkUrl) {
           files.brandmark = await ctx.step("upload-brandmark", async () =>
-            uploadToDrive(kitFolderId, pngUrl(brandmarkUrl, LOGO_PNG_SIZE), `${companyName} brandmark`, "png"),
+            uploadToDrive(kitFolderId, brandmarkUrl, `${companyName} brandmark`, "png"),
           );
         }
         files.banners = await uploadBanners(ctx, "upload-banner", kitFolderId, companyName, banners);
