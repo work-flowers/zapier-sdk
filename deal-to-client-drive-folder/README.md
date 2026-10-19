@@ -48,9 +48,9 @@ and fills a `Brand Kit` sub-folder with:
 
 | File | Source |
 | --- | --- |
-| `<Company> logo.png` | `logo` — square logo, re-requested as PNG at the source's own size, capped at 800px. The bare asset URL serves a **128px JPEG**, and `size` bounds the longest side with an 800px cap, so it is set explicitly but never above the source (no upscaling) |
+| `<Company> logo.png` | `logo` — square logo, re-requested as PNG at the source's own size, capped at 800px. The bare asset URL serves a **128px JPEG**, and `size` bounds the longest side with an 800px cap, so it is set explicitly but never above a raster source (no upscaling). A **vector** source (`is_vector`) reports only its viewBox — SCW's brandmark is "110×44" — so it is rendered at the full 800px |
 | `<Company> brandmark.png` | `brandmark` — wordmark, same treatment. Logo.dev does not serve SVG downloads even when the source is vector |
-| `<Company> social banner[ n].png` | up to 3 `social_banners` |
+| `<Company> social banner[ n].png` | up to 3 `social_banners`, skipping any whose etag matches the logo or brandmark (Logo.dev offered `alfalah.sg`'s logo as its banner) |
 | `<Company> brand guide` (Google Doc) | name, description, colours (hex + rgb), social links, index date |
 
 - **Only on the folder-creating path.** A company whose folder already exists
@@ -95,8 +95,18 @@ with steps 1–5 replaced by fixed inputs, step 6 verbatim) writing into the
 | First run of the above | Found two bugs, both fixed before the second run: the banner came out **85×128** (no `size` → 128px default) and the guide listed `#BC225C` twice (Logo.dev repeats colours). The first run's `Brand Kit` folder was moved to the Drive trash |
 | Brand API, unknown domain | `404` → `brandKit.skipped: "brand-not-found"` (probed with `curl` through the connection) |
 
-Not exercised live: a brand **with** a brandmark (same code path as the
-logo), `no-website` / `unusable-website` (guard-only returns).
+**Backfill, 2026-10-19** — same harness, run once per client with an open
+deal (Lead → In signing) plus Sakana AI, Knoxx Business Group and Secure Code
+Warrior, into each existing client folder: 11 kits created. Skipped: MY World
+Preschool and Knoxx Innovations (no client folder), **MRT** (`mrt.com.au`
+never finishes Logo.dev's first crawl — every lookup answers `202` again, so
+the Zap's single retry correctly gives up green). Carousell's `carousell.sg`
+does the same; it was backfilled from `carousell.com` (same brand) instead.
+The backfill surfaced the vector-size and duplicate-banner bugs above; the
+four affected kits (Knoxx, SCW, NUS, Masjid Al-Falah) were trashed and redone
+with the fix.
+
+Not exercised live: `no-website` / `unusable-website` (guard-only returns).
 
 **Folder creation, 2026-08-10:**
 
