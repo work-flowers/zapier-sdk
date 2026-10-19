@@ -1,7 +1,7 @@
 {
   "name": "deal-to-client-drive-folder",
   "workflow_id": "019feb0a-9bff-7eed-9854-1759e13c9921",
-  "current_version_id": "01a152a1-7c38-7697-b3f6-f707c8806857",
+  "current_version_id": "01a153c7-65dc-74fd-8784-57ab2508d187",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZb42mCfzpuONIVt5cTYmg",
   "enabled": true,
   "is_private": false,
@@ -38,7 +38,7 @@
     "@zapier/zapier-sdk": "0.97.1"
   },
   "created_at": "2026-08-10",
-  "version_created_at": "2026-10-19T05:27:57.527Z",
+  "version_created_at": "2026-10-19T10:49:00.485Z",
   "replaces_classic_zap": "Create Google Drive Folder from Notion",
   "supersedes": "deal-won-set-up-client-workspace (source-only, never deployed)",
   "cutover": {
