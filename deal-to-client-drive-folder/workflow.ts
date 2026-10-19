@@ -144,14 +144,17 @@ function urlProp(prop: unknown): string {
 /** A logo.dev image object's temporary URL, re-requested as a PNG. The bare
  *  URL serves a 128px JPEG whatever the source is, and SVG is not offered.
  *  `size` bounds the longest side and caps at 800, so ask for the source's own
- *  size up to that cap — never upscale a small source. */
+ *  size up to that cap — never upscale a small raster source. */
 function pngUrl(image: any): string {
   const url = firstString(image?.url);
   if (!url) return "";
   const w = Number(image?.source?.width);
   const h = Number(image?.source?.height);
   const longest = Math.max(Number.isFinite(w) ? w : 0, Number.isFinite(h) ? h : 0);
-  const size = longest > 0 ? Math.min(longest, MAX_PNG_SIZE) : MAX_PNG_SIZE;
+  // A vector source reports its viewBox (SCW's brandmark is "110x44"), which
+  // says nothing about resolution — render it at the cap.
+  const vector = image?.source?.is_vector === true;
+  const size = !vector && longest > 0 ? Math.min(longest, MAX_PNG_SIZE) : MAX_PNG_SIZE;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}format=png&size=${size}`;
 }
@@ -402,7 +405,12 @@ const workflow = defineDurable<Input, unknown>(
         const brand = lookup.brand;
         const logoUrl = pngUrl(brand?.logo);
         const brandmarkUrl = pngUrl(brand?.brandmark);
-        const banners = (Array.isArray(brand?.social_banners) ? brand.social_banners : []).slice(0, MAX_BANNERS);
+        // Logo.dev sometimes offers the logo itself as a "banner" (same etag,
+        // seen on alfalah.sg) — skip those rather than file the logo twice.
+        const markEtags = new Set([firstString(brand?.logo?.etag), firstString(brand?.brandmark?.etag)].filter(Boolean));
+        const banners = (Array.isArray(brand?.social_banners) ? brand.social_banners : [])
+          .filter((b: any) => !markEtags.has(firstString(b?.etag)))
+          .slice(0, MAX_BANNERS);
 
         const kitFolder = await ctx.step("create-brand-kit-folder", async () =>
           sdk.runAction({
