@@ -16,7 +16,8 @@
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "gdrive_wf": "02eb8724-3fc7-8edc-9b30-be83af0b327f"
+    "gdrive_wf": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
+    "logo_dev": "0275391e-224b-8f76-a809-f38843d3bf2e"
   },
   "notion": {
     "companies_data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
@@ -45,5 +46,10 @@
     "classic_zap_disabled": "2026-08-10 — confirmed by Dennis. Not machine-verifiable: classic Zaps are exposed by neither the SDK CLI nor the MCP connector",
     "status": "complete — this durable is the only thing serving this Notion sender"
   },
-  "description": "Deal webhook from Notion -> create the company's Google Drive folder under Client Docs (Work.Flowers HQ shared drive), write the folder id back to the Company."
+  "description": "Deal webhook from Notion -> create the company's Google Drive folder under Client Docs (Work.Flowers HQ shared drive), write the folder id back to the Company.",
+  "logo_dev": {
+    "connection_note": "`logo_dev` is an API by Zapier connection (App235435CLIAPI, titled 'logo.dev') that must hold the logo.dev SECRET key (sk_…) as `Authorization: Bearer` with its domain filter set to api.logo.dev. The publishable key / img.logo.dev scope cannot read brand profiles.",
+    "endpoint": "GET https://api.logo.dev/v2/brands?domain=<Website host>&nosubscribe=true",
+    "brand_kit": "Sub-folder 'Brand Kit' in the new client folder: logo + brandmark (PNG, 800px), up to 3 social banners (PNG), and a '<Company> brand guide' Google Doc (description, colours, socials). Only on the folder-creating path."
+  }
 }
