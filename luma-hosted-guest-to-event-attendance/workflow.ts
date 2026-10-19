@@ -829,6 +829,189 @@ async function ensureEventLink(
   });
 }
 
+// --- Duplicate-create guard (claim-then-verify) ------------------------------
+//
+// Two runs for ONE guest can overlap: a registration approved within a poll
+// interval arrives as two trigger items (`<guest>_pending_approval_none`, then
+// `<guest>_approved_none`), both runs find no Attendance row, and both create.
+// Seen 2026-10-19: ATT-357/358, created 20 s apart. Neither Notion nor a Table
+// can create-if-absent, so every run that CREATED a row re-reads the
+// Event+Contact pair once things have settled, and all runs agree on one
+// winner: the lowest ATT number (the auto-increment ID, i.e. created first).
+// Only a losing run acts — it moves its own status onto the winner when it is
+// further along, deletes its own Table index entry, then trashes its own row —
+// so two runs never fight. The loser always sees the winner: the winner was
+// created first, and the loser checks a full settle period after its own create.
+
+/** How far along an Approval Status is. A loser's status replaces the
+ *  winner's only when strictly higher, so on a tie (Approved vs Declined) the
+ *  winner's value stands. */
+const STATUS_RANK: Record<string, number> = {
+  Invited: 0,
+  "Pending Approval": 1,
+  Waitlist: 1,
+  Approved: 2,
+  Declined: 2,
+  Attended: 3,
+};
+
+export function statusRank(status: string | null): number {
+  return status != null && status in STATUS_RANK ? STATUS_RANK[status] : -1;
+}
+
+export interface AttendanceRow {
+  id: string;
+  /** Auto-increment ID number (ATT-<n>); null when Notion did not return it. */
+  number: number | null;
+  status: string | null;
+  checkedIn: boolean;
+}
+
+const normId = (id: string) => id.replace(/-/g, "").toLowerCase();
+
+/** The row every run keeps: the lowest ATT number, then the lowest page id. A
+ *  row without a number sorts after every numbered row. */
+export function pickAttendanceWinner(rows: AttendanceRow[]): AttendanceRow | null {
+  let best: AttendanceRow | null = null;
+  for (const r of rows) {
+    if (!best) {
+      best = r;
+      continue;
+    }
+    const a = r.number ?? Number.POSITIVE_INFINITY;
+    const b = best.number ?? Number.POSITIVE_INFINITY;
+    if (a < b || (a === b && normId(r.id) < normId(best.id))) best = r;
+  }
+  return best;
+}
+
+/** Properties to write onto the winner from a losing run, or null if none. */
+export function mergeOntoWinner(
+  winner: AttendanceRow,
+  loserStatus: string,
+  loserCheckedIn: boolean,
+): Record<string, unknown> | null {
+  const props: Record<string, unknown> = {};
+  if (statusRank(loserStatus) > statusRank(winner.status)) {
+    props["Approval Status"] = { select: { name: loserStatus } };
+  }
+  if (loserCheckedIn && !winner.checkedIn) props["Checked In"] = { checkbox: true };
+  return Object.keys(props).length ? props : null;
+}
+
+/** Notion's answer to trashing a page that is already in the trash. Replaying
+ *  the trash is then a success, not a failure (see durables-sdk.md). */
+export function isAlreadyTrashed(status: number, body: string): boolean {
+  return status === 400 && /archived/i.test(body);
+}
+
+export function toAttendanceRow(page: any): AttendanceRow | null {
+  const id = firstString(page?.id);
+  if (!id || page?.in_trash === true || page?.archived === true) return null;
+  const n = page?.properties?.ID?.unique_id?.number;
+  return {
+    id,
+    number: typeof n === "number" ? n : null,
+    status: firstString(page?.properties?.["Approval Status"]?.select?.name),
+    checkedIn: page?.properties?.["Checked In"]?.checkbox === true,
+  };
+}
+
+type DedupeResult =
+  | { checked: false; error: string }
+  | { checked: true; duplicates: number; kept: string; lost: boolean; merged: string[] };
+
+/**
+ * Runs only after this run CREATED `ownPageId`, and after the link-check
+ * settle wait. Read and writes share one step, ordered so a retry is safe: the
+ * merge is a plain property write, the Table delete re-lists first, and the
+ * trash goes last and treats "already trashed" as done.
+ */
+async function dedupeCreatedAttendance(
+  ctx: any,
+  ownPageId: string,
+  eventPageId: string,
+  contactPageId: string,
+  ownStatus: string,
+  ownCheckedIn: boolean,
+): Promise<DedupeResult> {
+  return ctx.step("dedupe-created-attendance", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/data_sources/${ATTENDANCE_DS}/query`, {
+      method: "POST",
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filter: {
+          and: [
+            { property: "Event", relation: { contains: eventPageId } },
+            { property: "Contact", relation: { contains: contactPageId } },
+          ],
+        },
+        page_size: 100,
+      }),
+    });
+    // Best-effort, like the other reads: a check that cannot run leaves at
+    // worst the duplicate this guard exists to remove, never a lost row.
+    if (!res.ok) return { checked: false as const, error: `query ${res.status}` };
+    const body: any = await res.json();
+    const rows = (body?.results ?? [])
+      .map(toAttendanceRow)
+      .filter((r: AttendanceRow | null): r is AttendanceRow => r !== null);
+    const own = normId(ownPageId);
+    // The query may not show our own row yet; it exists, so count it.
+    if (!rows.some((r: AttendanceRow) => normId(r.id) === own)) {
+      rows.push({ id: ownPageId, number: null, status: ownStatus, checkedIn: ownCheckedIn });
+    }
+    const winner = pickAttendanceWinner(rows) as AttendanceRow;
+    if (normId(winner.id) === own) {
+      return { checked: true as const, duplicates: rows.length - 1, kept: ownPageId, lost: false, merged: [] };
+    }
+
+    const merge = mergeOntoWinner(winner, ownStatus, ownCheckedIn);
+    if (merge) {
+      const patch = await sdk.fetch(`${NOTION_API}/pages/${winner.id}`, {
+        connection: NOTION_CONNECTION,
+        method: "PATCH",
+        headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+        body: JSON.stringify({ properties: merge }),
+      });
+      if (!patch.ok) {
+        throw new Error(`Attendance merge onto ${winner.id} failed (${patch.status}): ${(await patch.text()).slice(0, 200)}`);
+      }
+    }
+
+    const indexed = await sdk.listTableRecords({
+      table: ATTENDANCE_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: "Attendance Page ID", operator: "exact", value: ownPageId }],
+      pageSize: 10,
+    });
+    const recordIds = (indexed?.data ?? []).map((r: any) => firstString(r?.id)).filter(Boolean) as string[];
+    if (recordIds.length) await sdk.deleteTableRecords({ table: ATTENDANCE_TABLE, records: recordIds });
+
+    const trash = await sdk.fetch(`${NOTION_API}/pages/${ownPageId}`, {
+      connection: NOTION_CONNECTION,
+      method: "PATCH",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({ in_trash: true }),
+    });
+    if (!trash.ok) {
+      const text = await trash.text();
+      if (!isAlreadyTrashed(trash.status, text)) {
+        throw new Error(`Trashing duplicate Attendance ${ownPageId} failed (${trash.status}): ${text.slice(0, 200)}`);
+      }
+    }
+    console.log(`duplicate Attendance ${ownPageId} trashed; kept ${winner.id}`);
+    return {
+      checked: true as const,
+      duplicates: rows.length - 1,
+      kept: winner.id,
+      lost: true,
+      merged: merge ? Object.keys(merge) : [],
+    };
+  });
+}
+
 // --- Workflow ----------------------------------------------------------------
 // ONE workflow for every guest change: the integration's `new_or_updated_guest`
 // trigger re-fires whenever a guest's approval status or check-in changes,
@@ -1287,6 +1470,20 @@ const workflow = defineDurable(
       ? await ensureEventLink(ctx, attendancePageId, eventPageId as string)
       : null;
 
+    // 5. A concurrent run for the same guest may have created a row too (see
+    //    the duplicate-create guard). The link check above was the settle wait.
+    const attendanceDedupe = attendanceCreated && attendancePageId
+      ? await dedupeCreatedAttendance(
+          ctx,
+          attendancePageId,
+          eventPageId as string,
+          contactPageId as string,
+          approvalStatus,
+          guest.checkedIn,
+        )
+      : null;
+    if (attendanceDedupe?.checked && attendanceDedupe.lost) attendancePageId = attendanceDedupe.kept;
+
     return {
       guestId: guest.guestId,
       accountEmail: guest.accountEmail,
@@ -1309,6 +1506,7 @@ const workflow = defineDurable(
       approvalStatus,
       checkedIn: guest.checkedIn,
       eventLink,
+      attendanceDedupe,
       answersWritten: attendanceCreated ? guest.answersMarkdown !== null : bodyFilled,
     };
   },
