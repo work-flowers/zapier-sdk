@@ -1,0 +1,32 @@
+{
+  "name": "calcom-booking-rescheduled-to-travel-blocks",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": true,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "calcom-booking-rescheduled-to-travel-blocks",
+    "description": "Cal.com booking rescheduled for the in-person event type (slug in-person) -> delete the ORIGINAL booking's travel blocks on dennis@work.flowers and create fresh ones keyed to the new booking uid. The trigger payload carries only the new uid, so the original is read from the Cal.com API (rescheduledFromUid).",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "CalComCLIAPI@3.1.1",
+    "action": "booking_rescheduled",
+    "authentication_id": "02f2779c-90cf-8f52-a8d5-d507cedec73e",
+    "params": {},
+    "authentication_note": "Cal.com connection 'dennis-work' (dchiuten@work.flowers, Cal.com user dennis-chiuten, verified via GET /v2/me 2026-10-20). NOT the stale 'dennis-chiuten' connection 02d05cb6-4d5d-81b0-954c-ce3bbb24eabc, whose token refresh fails with invalid_grant.",
+    "trigger_note": "REST-hook trigger, no input fields (verified via list-trigger-input-fields 2026-10-20), so the event-type filter lives in code on payload.eventType.slug. Payload shape captured from a real booking through a trigger inbox on 2026-10-20 — see README."
+  },
+  "connections": {
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "calcom": "02f2779c-90cf-8f52-a8d5-d507cedec73e"
+  },
+  "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — where the travel blocks live. calcom is the same Cal.com connection as the trigger, bound so sdk.fetch can read rescheduledFromUid off GET /v2/bookings/{uid}.",
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "description": "Cal.com booking rescheduled for the in-person event type (slug in-person) -> delete the ORIGINAL booking's travel blocks on dennis@work.flowers and create fresh ones keyed to the new booking uid. The trigger payload carries only the new uid, so the original is read from the Cal.com API (rescheduledFromUid)."
+}
