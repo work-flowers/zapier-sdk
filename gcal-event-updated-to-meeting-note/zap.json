@@ -3,7 +3,7 @@
   "retired": {
     "retired_on": "2026-10-20",
     "reason": "The Meeting Notes data source was converted to a Notion Meetings database (Full Page Meeting Notes, early access). In a Meetings database the linked calendar event supplies the note's title, date and Notion-member attendees, and Notion updates them when the event changes, so this Zap's job is now native.",
-    "outstanding": "Turn off the classic hand-off Zap \"Updated Meeting -> hand off to durable\" in the Zapier UI; while it runs, every reschedule still costs it a Webhooks POST into this disabled workflow.",
+    "classic_handoff_disabled": "2026-10-20 — the classic hand-off Zap \"Updated Meeting -> hand off to durable\" was turned off in the Zapier UI.",
     "how_to_revive": "`enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and turn the classic hand-off Zap back on. No republish needed; the version is intact."
   },
   "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
