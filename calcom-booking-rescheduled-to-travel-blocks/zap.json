@@ -1,12 +1,12 @@
 {
   "name": "calcom-booking-rescheduled-to-travel-blocks",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a15969-25f3-796e-ba86-255130a78974",
+  "current_version_id": "01a15969-3a4c-7869-8535-7ac9d65553b3",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUUnEBa5I3nGm7xEwttqGA",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "calcom-booking-rescheduled-to-travel-blocks",
     "description": "Cal.com booking rescheduled for the in-person event type (slug in-person) -> delete the ORIGINAL booking's travel blocks on dennis@work.flowers and create fresh ones keyed to the new booking uid. The trigger payload carries only the new uid, so the original is read from the Cal.com API (rescheduledFromUid).",
     "enable_on_publish": true

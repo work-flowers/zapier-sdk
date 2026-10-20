@@ -1,12 +1,12 @@
 {
   "name": "calcom-booking-cancelled-to-travel-blocks",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a15968-b4b4-7d1f-937d-0fa362e7be11",
+  "current_version_id": "01a15968-ef8f-7ca5-82c6-c5440f51bf3a",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AU_0l0In1WMoyfFhVM5YWg",
   "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "calcom-booking-cancelled-to-travel-blocks",
     "description": "Cal.com booking cancelled for the in-person event type (slug in-person) -> find the travel blocks calcom-booking-created-to-travel-blocks put on dennis@work.flowers (by the 'cal-booking-uid:' line in their description) and delete them.",
     "enable_on_publish": true
