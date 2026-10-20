@@ -19,6 +19,9 @@ const NOTION_VERSION = "2026-03-11";
 // `contact-emails-to-zapier-table/workflow.ts` for the 2026-07-28 incident that
 // forced the split. Writes to it are always a union of the existing links.
 const POSSIBLE_DUPLICATE_PROP = "Possible duplicate of";
+// Read only, never written (see above): a contact carrying it is the losing
+// half of a merge, awaiting archive.
+const DUPLICATE_OF_PROP = "Duplicate of";
 
 // Marketing Events workspace data sources (the same ones the retired Luma Zaps
 // wrote to).
@@ -275,6 +278,58 @@ export function planSecondaryAdditions(
   const have = new Set([...(current.primary ? [current.primary] : []), ...current.secondaryNames.map((n) => n.toLowerCase())]);
   const add = addresses.filter((e) => !have.has(e));
   return add.length ? [...current.secondaryNames, ...add] : null;
+}
+
+/** A live contact whose Name is name-equivalent to the guest's. */
+export interface NameMatch {
+  id: string;
+  /** Primary + Secondary Email, lowercased. */
+  emails: string[];
+  /** Carries a `Duplicate of` link: the losing half of a merge awaiting
+   *  archive, so not a contact to reuse or to count as a rival. */
+  isMergedAway: boolean;
+}
+
+/**
+ * The existing contact to REUSE for a guest whose addresses resolved to
+ * nothing — or null, and the caller creates a new contact and flags the name
+ * matches as before. Reuse needs all three:
+ *
+ *   1. exactly one live contact with the guest's name (ignoring merged-away
+ *      records) — a second same-name contact means we can't tell which;
+ *   2. one of the guest's addresses shares a domain with an address on it;
+ *   3. that domain is an organisation's (Jev verdict), never a personal
+ *      provider — two people both on gmail.com prove nothing.
+ *
+ * Why: the email Table is exact-match, and the usual miss is a second address
+ * format at the same company. Manuel Denoual registered on 2026-10-19 as
+ * manuel@aheadgaining.com while his contact carried
+ * manuel.denoual@aheadgaining.com, and got a duplicate. A name alone is not
+ * proof (see findNameMatchedContacts), but the same name at the same
+ * organisation's domain is. Replayed over all 1,047 live contacts on
+ * 2026-10-20, it fires only on that pair: every other same-name group differs
+ * in domain or shares only gmail.com.
+ */
+export function pickSameOrgNameMatch(
+  matches: NameMatch[],
+  guestEmails: string[],
+  verdicts: Record<string, DomainVerdict> | null,
+): { id: string; domain: string } | null {
+  if (!verdicts) return null;
+  const live = matches.filter((m) => !m.isMergedAway);
+  if (live.length !== 1) return null;
+  const theirs = new Set(live[0].emails.map(emailDomain));
+  const domain = guestEmails.map(emailDomain).find((d) => theirs.has(d) && verdicts[d] === "organisation");
+  return domain ? { id: live[0].id, domain } : null;
+}
+
+/** Domains a sole live name match shares with the guest: what
+ *  pickSameOrgNameMatch needs judged. Empty when it can't fire anyway. */
+export function sharedDomainsWithSoleMatch(matches: NameMatch[], guestEmails: string[]): string[] {
+  const live = matches.filter((m) => !m.isMergedAway);
+  if (live.length !== 1) return [];
+  const theirs = new Set(live[0].emails.map(emailDomain));
+  return [...new Set(guestEmails.map(emailDomain).filter((d) => theirs.has(d)))];
 }
 
 /** First item of a runAction result ({ data: [...] } or a bare array). */
@@ -597,16 +652,17 @@ function normalizeNameKey(name: string): string {
  * and every downstream mess followed from it — the address could not have
  * resolved, because his record did not carry it.
  *
- * A name match is NOT treated as proof and never reuses the record: two
+ * A name match ALONE is not treated as proof and never reuses the record: two
  * different people share a name often enough that attaching a registration to
  * the wrong contact would be the same false-positive this repo has just spent a
  * day undoing. The new contact is still created; it is only FLAGGED, so a
- * person decides. See POSSIBLE_DUPLICATE_PROP.
+ * person decides. See POSSIBLE_DUPLICATE_PROP. The one exception, a sole name
+ * match at the same organisation's domain, is pickSameOrgNameMatch.
  *
  * Queried against the data source endpoint directly: `find_data_source_item`
  * returns a single hit, and a name needle can legitimately match several.
  */
-async function findNameMatchedContacts(fullName: string): Promise<string[]> {
+async function findNameMatchedContacts(fullName: string): Promise<NameMatch[]> {
   const key = normalizeNameKey(fullName);
   if (!key) return [];
   // Search on the longest token — the most selective one, and the one least
@@ -631,16 +687,23 @@ async function findNameMatchedContacts(fullName: string): Promise<string[]> {
   if (!res.ok) return [];
   const body: any = await res.json();
 
-  const matches: string[] = [];
+  const matches: NameMatch[] = [];
   for (const page of body?.results ?? []) {
     if (page?.in_trash === true || page?.archived === true) continue;
-    const title = (page?.properties?.Name?.title ?? [])
+    const props = page?.properties ?? {};
+    const title = (props.Name?.title ?? [])
       .map((t: any) => firstString(t?.plain_text))
       .filter(Boolean)
       .join(" ");
     if (normalizeNameKey(title) !== key) continue;
     const id = firstString(page?.id);
-    if (id && !matches.includes(id)) matches.push(id);
+    if (!id || matches.some((m) => m.id === id)) continue;
+    const emails = [
+      cleanEmail(props["Primary Email"]?.email),
+      ...(props["Secondary Email"]?.multi_select ?? []).map((o: any) => cleanEmail(o?.name)),
+    ].filter((e): e is string => typeof e === "string");
+    const isMergedAway = (props[DUPLICATE_OF_PROP]?.relation ?? []).length > 0;
+    matches.push({ id, emails, isMergedAway });
   }
   return matches;
 }
@@ -1180,13 +1243,43 @@ const workflow = defineDurable(
     let primaryChoice: { primary: string; secondaries: string[]; reason: string } | null = null;
     let domainCheck: { jevCalled: boolean; model: string | null; verdicts: Record<string, DomainVerdict> | null } | null =
       null;
+    let sameOrgNameMatch: { id: string; domain: string } | null = null;
+
+    if (!contactPageId) {
+      // No address resolved. Look for name-equivalent contacts first: a sole
+      // one sharing an organisation domain with the guest is REUSED
+      // (pickSameOrgNameMatch); otherwise a new contact is created and they
+      // are flagged. Best-effort — a failed query means "no matches".
+      const nameForMatch = guest.name || [guest.firstName, guest.lastName].filter(Boolean).join(" ");
+      const nameMatches: NameMatch[] = await ctx.step("find-name-matched-contacts", async () => {
+        if (!nameForMatch) return [];
+        try {
+          return await findNameMatchedContacts(nameForMatch);
+        } catch (err) {
+          console.log(`name-match query failed: ${String((err as Error)?.message ?? err)}`);
+          return [];
+        }
+      });
+      const guestEmails = [guest.accountEmail, ...guest.answerEmails.map((a) => a.email)];
+
+      // One domain check covers both decisions: every guest domain when there
+      // are answers to choose a Primary from, plus any domain a sole name
+      // match shares (usually a cache hit; Jev only for an unseen domain).
+      const toJudge = new Set(sharedDomainsWithSoleMatch(nameMatches, guestEmails));
+      if (guest.answerEmails.length > 0) for (const e of guestEmails) toJudge.add(emailDomain(e));
+      if (toJudge.size > 0) domainCheck = await classifyDomains(ctx, [...toJudge]);
+
+      sameOrgNameMatch = pickSameOrgNameMatch(nameMatches, guestEmails, domainCheck ? domainCheck.verdicts : null);
+      if (sameOrgNameMatch) {
+        // Reused: from here on it is an existing contact, so 2b adds the
+        // guest's addresses as Secondary and indexes them.
+        contactPageId = sameOrgNameMatch.id;
+        console.log(`Reusing name-matched contact ${contactPageId} (same organisation domain ${sameOrgNameMatch.domain})`);
+      }
+    }
 
     if (!contactPageId) {
       // New contact: pick its Primary by domain (choosePrimaryEmail).
-      if (guest.answerEmails.length > 0) {
-        const domains = [...new Set([guest.accountEmail, ...guest.answerEmails.map((a) => a.email)].map(emailDomain))];
-        domainCheck = await classifyDomains(ctx, domains);
-      }
       primaryChoice = choosePrimaryEmail(guest.accountEmail, guest.answerEmails, domainCheck ? domainCheck.verdicts : {});
       const { primary, secondaries } = primaryChoice;
       console.log(`Primary Email ${primary} (${primaryChoice.reason})`);
@@ -1227,9 +1320,9 @@ const workflow = defineDurable(
       // Flag a brand-new contact against every name-equivalent record so it
       // surfaces for review. Best-effort — never fails the run.
       nameMatchedFlags = await ctx.step("flag-name-matched-contacts", async () => {
-        const matches = (await findNameMatchedContacts(fullName)).filter(
-          (id) => !sameNotionId(id, newContactPageId),
-        );
+        const matches = (await findNameMatchedContacts(fullName))
+          .map((m) => m.id)
+          .filter((id) => !sameNotionId(id, newContactPageId));
         if (matches.length === 0) return [];
         const existing = (await readPossibleDuplicateLinks(newContactPageId)) ?? [];
         const union = [...existing];
@@ -1496,6 +1589,7 @@ const workflow = defineDurable(
       contactPageId,
       contactCreated,
       nameMatchedFlags,
+      sameOrgNameMatch,
       secondariesAdded,
       collidingPageIds,
       markedPossibleDuplicates,

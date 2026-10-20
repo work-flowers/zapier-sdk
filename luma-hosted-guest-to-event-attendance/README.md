@@ -15,6 +15,7 @@ The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest
 3. **Skip unless the event is in the Luma Managed Events Table**, for the same reason as the event workflow: the integration can't tell which events Dennis hosts. See [`luma-manager-email-to-table`](../luma-manager-email-to-table/).
 4. **Event**: the `Luma Event ID` Table, then a Notion search on `Luma ID`. On a miss it waits 90 s for [`luma-hosted-event-to-notion`](../luma-hosted-event-to-notion/) and checks the Table again, and only then creates a bare page from the six event fields the guest item carries.
 5. **Contact**: every address the guest gave is a candidate: the Luma account email plus any email typed into a registration answer, except questions about someone else ("your manager's email", "referred by"). Each candidate is looked up in the email Table, and the first hit is the contact. Answers are tried first, "work email" labels ahead of the rest.
+   - **No address resolved → [same name at the same organisation](#same-name-at-the-same-organisation)?** If exactly one live contact has the guest's name and shares an organisation email domain with them, that contact is **reused**, and is then treated as an existing contact (below).
    - **New contact → [Primary Email by domain](#primary-email-by-domain-jev).** Created with the Contacts default template and `Lead Source` = `Event`. The chosen address becomes Primary, the rest become Secondary, and every address is indexed. The contact is flagged `Possible duplicate of` against name-equivalent contacts.
    - **Existing contact → its Primary is left alone.** Any of the guest's addresses it doesn't carry yet are added to `Secondary Email` and indexed. *(Dennis, 2026-10-15: the domain rule is for new contacts only.)*
    - **Collision:** if the addresses resolve to different contacts, each other contact is flagged `Possible duplicate of` the first one.
@@ -59,8 +60,10 @@ flowchart TD
     E -->|"hit"| C
     W -->|"found"| C
     EC --> C{"Contact via email Table<br/>(work email, account email)"}
-    C -->|"none"| CC["Create Contact (template)<br/>index emails, flag name matches"]
-    C -->|"found"| CR["Promote work email to Primary<br/>(keep displaced as Secondary)"]
+    C -->|"none"| NM{"Sole same-name contact<br/>at a shared organisation domain?"}
+    NM -->|"no"| CC["Create Contact (template)<br/>index emails, flag name matches"]
+    NM -->|"yes"| CR
+    C -->|"found"| CR["Keep Primary; add new addresses<br/>as Secondary and index them"]
     C -->|"two different contacts"| CD["Flag Possible duplicate of"]
     CC --> AT
     CR --> AT
@@ -75,9 +78,21 @@ flowchart TD
     DD -->|"another is lower"| LS["Merge status onto it if further along<br/>delete own Match Key row, trash own page"]
 ```
 
+## Same name at the same organisation
+
+Contacts are resolved by **exact** email, through the email Table. The usual miss is a second address format at the same company. Manuel Denoual registered on 2026-10-19 as `manuel@aheadgaining.com`, while his contact carried only `manuel.denoual@aheadgaining.com`, so he got a duplicate contact. A name match alone still never reuses a record, because two people share a name often enough. When no address resolves, `pickSameOrgNameMatch` reuses an existing contact only if **all three** hold:
+
+1. exactly one live contact has the guest's name (the sorted-token `normalizeNameKey` match). A contact carrying `Duplicate of` is the losing half of a merge and doesn't count. A second same-name contact means we can't tell which, so we create and flag as before;
+2. one of the guest's addresses shares a domain with an address on that contact;
+3. that domain is an **organisation's**, per the same [Jev verdict](#primary-email-by-domain-jev) as below. Two people both on `gmail.com` prove nothing. Without a verdict, nothing is reused.
+
+The reused contact keeps its Primary. The guest's new address is added as Secondary and indexed, so the next registration resolves by email. `sameOrgNameMatch` in the run output records the reuse.
+
+**Replayed over all 1,047 live contacts (2026-10-20):** of the 6 same-name groups, the rule fires only on Manuel's pair. Grace Tang shares only `gmail.com`; Ian Lim, Nancy Chen and Pei Sai Yong differ in domain. Those stay as created and flagged. The cases are asserted in [`contact-match.test.mjs`](contact-match.test.mjs) (`npm test`).
+
 ## Primary Email by domain (Jev)
 
-Guests often register on Luma with a personal address while a question asks for their work or Notion email. That was 91 of the 241 email answers across the Notion SG events on 2026-10-15. A new contact's Primary should be the organisation's address. Whether a **domain** is a personal provider or an organisation's own is judged by **Jev**, not a hardcoded list *(Dennis: no maintained list of personal domains)*, and each verdict is cached in the **Email Domain Types** Table (`01M4ZY38AWDS7FTRJ4PW9BY03F`). So `gmail.com` is judged once, ever, and a Jev call (one task, ~$0.0001 in TypeSafe tokens) happens only for a new contact with an answer email whose domain is not cached yet. All unseen domains go in that one call.
+Guests often register on Luma with a personal address while a question asks for their work or Notion email. That was 91 of the 241 email answers across the Notion SG events on 2026-10-15. A new contact's Primary should be the organisation's address. Whether a **domain** is a personal provider or an organisation's own is judged by **Jev**, not a hardcoded list *(Dennis: no maintained list of personal domains)*, and each verdict is cached in the **Email Domain Types** Table (`01M4ZY38AWDS7FTRJ4PW9BY03F`). So `gmail.com` is judged once, ever, and a Jev call (one task, ~$0.0001 in TypeSafe tokens) happens only when a domain that matters is not cached yet: a new contact with an answer email, or a domain shared with a [sole same-name contact](#same-name-at-the-same-organisation). All unseen domains go in that one call.
 
 `choosePrimaryEmail`, in order:
 1. an answer to a "work email"-style question, at an organisation domain;
