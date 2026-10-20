@@ -107,6 +107,21 @@ function firstResult(res: any): any {
   return res ?? null;
 }
 
+/**
+ * The Contacts default template's own title, which shows through on any
+ * contact created from the template without a name. It is not a person: on
+ * 2026-09-28 a contact titled "New Contact" was sent to BetterContact as
+ * New / Contact at du.edu, which answered with a guessed new.contact@du.edu
+ * that was then written to the contact and indexed. Compared on letters only,
+ * so spacing, case and a trailing space (the live title is "New Contact ")
+ * don't matter.
+ */
+const PLACEHOLDER_TITLES = new Set(["newcontact", "contactnew", "untitled"]);
+
+function isPlaceholderTitle(title: string): boolean {
+  return PLACEHOLDER_TITLES.has(title.toLowerCase().replace(/[^a-z]/g, ""));
+}
+
 function plainText(rich: any): string {
   return (Array.isArray(rich) ? rich : []).map((t: any) => t?.plain_text ?? "").join("");
 }
@@ -317,13 +332,13 @@ function extractContactData(raw: unknown): ContactData {
   // properties arrive empty. Fall back to splitting the title so the
   // enrichment sources get a name to match on. A title that is just an email
   // address (the placeholder for a contact created from a bare registration)
-  // is not a name.
+  // is not a name, and neither is the Contacts template's own default title.
   let firstName = plainText(props["First Name"]?.rich_text).trim();
   let lastName = plainText(props["Last Name"]?.rich_text).trim();
   let fromTitle = false;
   if (!firstName && !lastName) {
     const title = plainText(props["Name"]?.title).trim();
-    if (title && !title.includes("@")) {
+    if (title && !title.includes("@") && !isPlaceholderTitle(title)) {
       const parts = title.split(/\s+/);
       firstName = parts[0] ?? "";
       lastName = parts.slice(1).join(" ");
