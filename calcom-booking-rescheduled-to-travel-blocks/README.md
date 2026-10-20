@@ -30,8 +30,9 @@ flowchart TD
 - If a reschedule moves the booking to a *different* event type, the slug check skips it and the original blocks stay. Cal.com's normal reschedule flow keeps the event type, so this isn't handled.
 - Task cost per in-person reschedule: 1 API read + 2 searches + 2 deletes + 2 creates. Any other event type: 0.
 
-## Verified cases (run-durable, 2026-10-20, pre-publish)
+## Verified cases (run-durable pre-publish, then live, 2026-10-20)
 
 | Case | Result |
 | --- | --- |
 | Real `booking_rescheduled` payload (new uid `4LBY…`, moved 13:00 → 14:00 SGT) | API returned `rescheduledFromUid: 4xUh…`; both original blocks deleted; new blocks `13:15–14:00` and `15:00–15:45+08:00` created |
+| **Live (2026-10-20):** `tjvF…` rescheduled to 23 Oct 15:00–16:00 SGT (new uid `n7jU…`) | Old blocks deleted; new blocks `14:15–15:00` and `16:00–16:45+08:00` created |

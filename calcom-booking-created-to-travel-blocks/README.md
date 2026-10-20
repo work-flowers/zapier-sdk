@@ -74,7 +74,7 @@ Captured from a real test booking through a trigger inbox. Only the fields used 
 
 There is no top-level `id`. The trigger payloads for `booking_rescheduled` and `booking_cancelled` have the same shape (see the siblings).
 
-## Verified cases (run-durable, 2026-10-20, pre-publish)
+## Verified cases (run-durable pre-publish, then live, 2026-10-20)
 
 | Case | Result |
 | --- | --- |
@@ -83,3 +83,4 @@ There is no top-level `id`. The trigger payloads for `booking_rescheduled` and `
 | `eventType.slug` = `discovery-call` | `skipped: not-in-person` |
 | `{"querystring":{}}` | `skipped: empty-payload` (tested on the cancelled sibling, which has the same guard) |
 | `{"data":{"id":""}}` | throws `Unrecognised Cal.com booking payload` (tested on the cancelled sibling) |
+| **Live (2026-10-20):** real booking `tjvF…`, 22 Oct 14:00–15:00 SGT | Blocks `13:15–14:00` and `15:00–15:45+08:00` appeared within a minute, both private |

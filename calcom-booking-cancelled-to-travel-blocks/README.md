@@ -21,10 +21,11 @@ flowchart TD
 - The payload is the same shape as `booking_created`, with `status: "CANCELLED"` and the cancellation reason in `cancellationReason`.
 - Task cost per in-person cancellation: 1 search + 1 delete per block (normally 2). Any other event type: 0.
 
-## Verified cases (run-durable, 2026-10-20, pre-publish)
+## Verified cases (run-durable pre-publish, then live, 2026-10-20)
 
 | Case | Result |
 | --- | --- |
 | Real `booking_cancelled` payload for a booking with blocks | Both blocks deleted; a follow-up search finds no `cal-booking-uid` events |
 | `{"querystring":{}}` | `skipped: empty-payload` |
 | `{"data":{"id":""}}` | throws `Unrecognised Cal.com booking payload … top-level keys: data` |
+| **Live (2026-10-20):** `n7jU…` cancelled | Both blocks deleted; no `cal-booking-uid` events left on the calendar |
