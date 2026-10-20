@@ -68,6 +68,13 @@ email all along. Two paths now harvest it, strongest evidence first:
    extra `Email Context` input field and two extra output fields, **no extra
    step and no extra task**.
 
+**When neither path finds a name, the title is the email address** (since
+2026-10-20). Left empty, the Contacts template's own title, "New Contact",
+showed through, and `enrich-contact-records` took that for the person's name:
+on 2026-09-28 it asked BetterContact for *New Contact* at du.edu and wrote back
+a guessed `new.contact@du.edu`. An address title is the convention enrichment
+already reads as "no name", and it shows the contact as its address in views.
+
 Only `high`-confidence AI names are written. A **wrong** name is worse than no
 name, because it is exactly what the enrichment sources match on: it converts a
 clean miss into a confident match on the wrong person. So a name merely inferred

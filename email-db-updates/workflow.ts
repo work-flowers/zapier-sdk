@@ -799,9 +799,15 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         // Contacts HAS a default template (blue user-circle icon), so the
         // created page matches hand-made ones. Properties passed here override
         // the template's defaults, so the name lands on a templated page.
+        // With no name, the title is the address: left empty, the template's
+        // own title ("New Contact") shows through, and enrich-contact-records
+        // takes that for a person's name — on 2026-09-28 it asked BetterContact
+        // for "New Contact" at du.edu and wrote back a guessed
+        // new.contact@du.edu. An address title is the convention enrichment
+        // already reads as "no name".
         const created = await createItemWithTemplate(ctx, `contact-${i}`, CONTACTS_DS, {
           "properties|||Primary Email|||email": email,
-          ...(name ? nameProps(name) : {}),
+          ...(name ? nameProps(name) : { "properties|||Name|||title": email }),
         });
         if (!created.pageId) {
           console.log(`Contact creation for ${email} returned no page id`);

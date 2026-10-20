@@ -117,6 +117,17 @@ const c = extractContactData(payload());
 check("own name kept as the CRM holds it", [c.firstName, c.lastName], ["Alice", "SY Peng (彭思瑀)"]);
 check("match name rendered for the request", [c.matchFirstName, c.matchLastName], ["Alice", "Peng"]);
 
+// The Contacts template's default title is not a name (2026-09-28: "New
+// Contact" at du.edu came back from BetterContact as new.contact@du.edu).
+for (const title of ["New Contact ", "New Contact", "new contact", "Untitled"]) {
+  const p = extractContactData(payload({ Name: { type: "title", title: [{ plain_text: title }] } }));
+  check(`template placeholder title "${title}" is no name`, [p.firstName, p.lastName], ["", ""]);
+}
+const real = extractContactData(payload({ Name: { type: "title", title: [{ plain_text: "Newton Contreras" }] } }));
+check("a real name starting with New is still a name", [real.firstName, real.lastName], ["Newton", "Contreras"]);
+const addr = extractContactData(payload({ Name: { type: "title", title: [{ plain_text: "maxine.lotherington@gmail.com" }] } }));
+check("an address title is still no name", [addr.firstName, addr.lastName], ["", ""]);
+
 // --- The workflow body against a fake BetterContact ---------------------------
 // The fake rejects any header-unsafe string input with the platform's own
 // message, the way the real integration fails before sending.

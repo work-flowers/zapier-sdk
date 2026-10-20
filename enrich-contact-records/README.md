@@ -24,7 +24,11 @@ BetterContact alone replaced the Apollo → Lusha → NinjaPear cascade on
    Name` properties are empty, the name is parsed from the page **title**
    instead (auto-created contacts often carry the person's name only there); a
    title that is just an email address is not treated as a name. (Added
-   2026-07-27, TKT-811.)
+   2026-07-27, TKT-811.) Neither is the Contacts template's own default title,
+   "New Contact" (`isPlaceholderTitle`, 2026-10-20): on 2026-09-28 a contact
+   created without a name was sent to BetterContact as *New Contact* at
+   du.edu, which answered with a guessed `new.contact@du.edu` that was then
+   written to the contact and indexed.
 
    **Domain** comes from the `Domain` rollup on the linked Company page, taking
    the **first entry that is a real corporate host** — the rollup often carries
