@@ -97,6 +97,35 @@ function mapButtondownStatus(status: unknown): string | null {
 }
 
 /**
+ * Prefix de-indented lines with "> " to make one blockquote. Each line is a
+ * separate Notion block (paragraph, list item, ...), and adjacent "> a" / "> b"
+ * lines are ONE Markdown paragraph whose soft breaks collapse to spaces when
+ * rendered, so separate blocks with a blank ">" line — except between list
+ * items, which stay tight, and inside a code fence.
+ */
+function blockquoteLines(lines: string[]): string[] {
+  const isListItem = (l: string) => /^\s*([-*+]|\d+[.)])\s/.test(l);
+  const quoted: string[] = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    quoted.push(l.trim() === "" ? ">" : `> ${l}`);
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    const next = lines[i + 1];
+    if (
+      next !== undefined &&
+      !inFence &&
+      l.trim() !== "" &&
+      next.trim() !== "" &&
+      !(isListItem(l) && isListItem(next))
+    ) {
+      quoted.push(">");
+    }
+  }
+  return quoted;
+}
+
+/**
  * Notion's native markdown export (GET /v1/pages/{id}/markdown) is structurally
  * faithful — unlike the lossy Zapier "block_children" converter — but it emits
  * a handful of Notion-specific pseudo-tags that are not valid email markdown/HTML.
@@ -118,28 +147,46 @@ function notionMarkdownToEmail(md: string): string {
       while (lines.length && lines[0].trim() === "") lines.shift();
       while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
       if (icon && lines.length) lines[0] = `${icon} ${lines[0]}`;
-      // Each line here is a separate Notion block (paragraph, list item, ...).
-      // Adjacent "> a" / "> b" lines are ONE Markdown paragraph whose soft
-      // breaks collapse to spaces when rendered, so separate blocks with a
-      // blank ">" line — except between list items, which stay tight.
-      const isListItem = (l: string) => /^\s*([-*+]|\d+[.)])\s/.test(l);
-      const quotedLines: string[] = [];
-      for (let i = 0; i < lines.length; i++) {
-        const l = lines[i];
-        quotedLines.push(l.trim() === "" ? ">" : `> ${l}`);
-        const next = lines[i + 1];
-        if (
-          next !== undefined &&
-          l.trim() !== "" &&
-          next.trim() !== "" &&
-          !(isListItem(l) && isListItem(next))
-        ) {
-          quotedLines.push(">");
-        }
-      }
-      return `\n\n${quotedLines.join("\n")}\n\n`;
+      return `\n\n${blockquoteLines(lines).join("\n")}\n\n`;
     },
   );
+
+  // A quote block with more than one block in it exports as "> first line"
+  // followed by the rest of the quote as CHILD blocks, indented one tab deeper:
+  //   > The hierarchy isn't extreme; ...
+  //   \tWhat I had to do to understand PROJ-116:
+  //   \t- PROJ-116 describes the data ...
+  // The tab strip below would flatten those children out of the quote, leaving
+  // only its first line quoted. Fold them into the blockquote here instead.
+  // Deeper tabs (a nested list inside the quote) become 4-space indentation,
+  // which keeps the nesting without turning into an indented code block.
+  {
+    const lines = out.split("\n");
+    const result: string[] = [];
+    let inFence = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(```|~~~)/.test(line)) inFence = !inFence;
+      const quote = inFence ? null : line.match(/^(\t*)>(?: (.*)|)$/);
+      if (!quote) {
+        result.push(line);
+        continue;
+      }
+      const indent = quote[1];
+      const childIndent = `${indent}\t`;
+      const blocks = [quote[2] ?? ""];
+      while (i + 1 < lines.length && lines[i + 1].startsWith(childIndent)) {
+        i++;
+        blocks.push(
+          lines[i]
+            .slice(childIndent.length)
+            .replace(/^\t+/, (tabs) => "    ".repeat(tabs.length)),
+        );
+      }
+      for (const l of blockquoteLines(blocks)) result.push(`${indent}${l}`);
+    }
+    out = result.join("\n");
+  }
 
   // Column layouts -> flatten (stack content vertically; email is single-column).
   out = out.replace(/<\/?columns>/g, "\n\n").replace(/<\/?column>/g, "\n\n");
