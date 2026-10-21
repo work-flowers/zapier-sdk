@@ -1,8 +1,8 @@
 # Merge Duplicate Contacts
 
-Merges a Notion Contact into the record its `Duplicate of` relation points at —
-**only** when the two are corroborated as the same person — then moves the merged-away
-record to Notion's trash. Nothing is ever permanently deleted.
+Merges a Notion Contact into the record its `Duplicate of` relation points at — unless
+the two records carry different LinkedIn profiles — then moves the merged-away record to
+Notion's trash. Nothing is ever permanently deleted.
 
 Replaces the "Contact Merger" Notion Custom Agent, which was disabled on 2026-07-28.
 
@@ -57,93 +57,42 @@ flowchart TD
     F -- yes --> Z
     F -- no --> G{"Target points back<br/>at source?"}
     G -- yes --> H["Comment: mutual,<br/>no survivor"] --> Y(["Nothing copied"])
-    G -- no --> I{"Corroborated?"}
-    I -- "different LinkedIn URLs" --> J["Comment: two<br/>different people"] --> Y
-    I -- "no name match,<br/>no LinkedIn conflict" --> Q{"Jev: same person ≥ 0.85<br/>and evidence ≥ 2/3?"}
-    Q -- no --> J
-    Q -- yes --> K
-    I -- "same LinkedIn<br/>or equivalent names" --> K["Re-read both,<br/>build patch"]
+    G -- no --> I{"Different LinkedIn<br/>profiles?"}
+    I -- yes --> J["Comment: two<br/>different people"] --> Y
+    I -- no --> K["Re-read both,<br/>build patch"]
     K --> L["PATCH target:<br/>fill empties, OR checkboxes,<br/>UNION multi-values"]
     L --> P{"Source has page content,<br/>or is older than target?"}
     P -- no --> M["Comment on source:<br/>what was copied"] --> T(["Move source to trash"])
     P -- yes --> M2["Comment on source:<br/>what was copied, why kept"] --> N(["Source left in place"])
 ```
 
-## Corroboration
+## When it merges
 
-A set `Duplicate of` is the *request*, not the evidence.
+**`Duplicate of` is a person's decision, and the workflow carries it out.** No Zap writes
+it any more (they write `Possible duplicate of`), so the only thing that stops a merge is
+evidence *against* it:
 
 | Signal | Effect |
 |---|---|
-| Both have a LinkedIn URL, and they **differ** | **Hard decline.** Two real people — this beats a name match |
-| Same LinkedIn profile slug | Merge |
-| Equivalent names | Merge |
-| Names differ, no LinkedIn conflict, and **Jev** corroborates one person | Merge (see [Second opinion from Jev](#second-opinion-from-jev)) |
-| Anything else | Decline, with a comment |
+| Both have a LinkedIn URL, and they **differ** | **Decline**, with a comment. Two real people, which is what a mis-click between same-name contacts looks like. Beats a name match |
+| Anything else | Merge. The reason names what agreed: the same LinkedIn profile, equivalent names, or "set by a person; names differ" |
 
-- **Name keys sort their tokens**, so "Sim Lionel" and "Lionel Sim" compare equal —
-  Luma sends whatever the guest typed. Under two tokens the key is `""` and never
-  matches: a lone "Grace" is far too weak to merge two records on.
-- **A shared email domain is deliberately not a signal.** Colleagues share a work
-  domain (Sachin and Minnie Dua are both `@knoxxfoods.com`) and strangers share
-  consumer ones. This is the check that would have stopped 2026-07-28: Sachin and
-  Lionel shared one address, no name match, and different LinkedIn profiles.
-- Differing employers or email domains are **not** a disqualifier on their own —
-  people change jobs.
+- **Name keys sort their tokens**, so "Sim Lionel" and "Lionel Sim" compare equal. They
+  only label the reason now; a name mismatch no longer declines.
+- LinkedIn on one side only is not a conflict.
 
-## Second opinion from Jev
+### History: the Jev second opinion (2026-10-03 to 2026-10-21)
 
-**Added 2026-10-03.** The name rule declined both real duplicates it was asked to merge whose names differed in a way token sorting can't see:
-
-- **"Ustaz Syakir" → "Syakir Samsaimon"** (2026-08-03). *Ustaz* is a Malay honorific, and each page's `Note` names the other.
-- **"New Contact" → "Alasdair Bell"** (2026-09-11). A placeholder name on a record with the identical personal-domain address `ab@alasdairbell.com`.
-
-A person had set `Duplicate of` both times. So when — and only when — the rules decline **because the names don't match** (no LinkedIn on either side, or only on one), the workflow asks **Jev**, TypeSafe's typed-judgement model, two questions about the pair, and merges only if both clear their bar:
-
-| Question | Type | Bar |
-| --- | --- | --- |
-| Do the two records describe the same real person? | yes/no probability | ≥ 0.85 |
-| How strong is the identifying evidence linking them? | score, 0 (coincidence) to 3 (several independent strong identifiers) | ≥ 2.0 (at least one strong identifier) |
-
-Jev sees only identity-bearing fields (`contactSummary`): Name, First/Last Name, Primary and Secondary Email, LinkedIn, Job Title, Company, City, Country, and `Note`/`Bio` capped at 600 characters. It is called through `sdk.fetch` with the `typesafe` connection (an *API by Zapier* connection holding the TypeSafe key), in its own `jev-same-person` step.
-
-What does **not** change: a LinkedIn conflict is still a hard decline that Jev never sees; equivalent names or a shared LinkedIn profile still merge on the rules alone, with no Jev call; nothing is ever deleted. Failure falls back to the rules: a `429`/`5xx` retries the step, any other error or a malformed answer declines with the rules' reason. Declines carry Jev's scores in the comment, and merges name them in the reason, so every decision is auditable.
-
-**Cost:** one extra call, only on the name-mismatch path — so a Zapier task plus a fraction of a cent of TypeSafe usage, a handful of times a month at most.
-
-### Criteria revised (2026-10-14)
-
-The first questions declined **"Appireddy Pamulapati" → "Appi Pamulapati"** (0.67, 1.8): a shortened given name, the same mailbox `appi@` at two Knoxx group domains (`knoxxinnovations.com`, `knoxxfoods.com`), and a LinkedIn handle `appi-reddy` on the target. They counted only a personal address or a note as a strong identifier. The criteria now:
-
-- require **compatible names** — same surname, given names that are the same or forms of one another (shortened/extended, nickname, honorific, word order), or a placeholder;
-- name the **specific identifiers**: the same personal address, the same mailbox name at related company domains, a LinkedIn handle spelling the other record's name, a note naming the other record;
-- rule out conflicting given names and a shared surname, company or role address on their own.
-
-Thresholds are unchanged. Lowering them instead would not have worked: under the old questions a constructed one-shared-address negative scored 0.67 / 2.0, level with Appi.
-
-### Verified offline (`jev-1.13.0`)
-
-`node replay-jev.mjs` replays [`jev-cases.json`](jev-cases.json) through the real `corroborate` / `contactSummary` / `jevVerdict` code and `JEV_QUESTIONS` against the live Jev API — read-only, one Zapier task per case. Pass a questions JSON as the second argument to try a rewording before editing `workflow.ts`. Real pairs are read live from Notion where the pages still exist; the rest are literal summaries. Scores below are the median of three runs on 2026-10-14 (spread ≤ 0.03):
-
-| Pair | Truth | Questions of 2026-10-03 | Now |
-| --- | --- | --- | --- |
-| Appireddy Pamulapati → Appi Pamulapati | same | **declined** (0.69, 1.9) | **merge** (0.89, 2.4) |
-| Ustaz Syakir → Syakir Samsaimon | same | merge (0.96, 2.4) | merge (0.97, 2.3) |
-| New Contact → Alasdair Bell¹ | same | merge (0.88, 2.0)² | merge (0.97, 2.0) |
-| One shared address, different names (Sachin/Lionel shape) | different | declined (0.67, 2.0) | declined (0.66, 1.7) |
-| Same first-name mailbox at sibling domains, different surnames | different | — | declined (0.75, 1.9) |
-| Chris Wong / Christine Wong, same company | different | declined (0.44, 1.1) | declined (0.64, 1.4) |
-| Two Grace Tangs, different employers | different | declined (0.24, 1.0) | declined (0.30, 1.2) |
-| Same surname, sibling domains, different given names | different | declined (0.23, 1.0) | declined (0.25, 1.1) |
-| Sam Lee / Samantha Lee, unrelated companies | different | declined (0.20, 1.0) | declined (0.26, 1.0) |
-| Two colleagues on one work domain | different | declined (0.03, 1.0) | declined (0.02, 0.7) |
-| Role mailbox (`sales@`) at sibling domains | different | — | declined (0.05, 0.3) |
-
-¹ The source page has since been deleted, so the case is a literal summary of what it held. ² Scored 2026-10-03.
-
-Rule-only cases (different LinkedIn = hard decline; equivalent names or the same LinkedIn = merge) make no Jev call and are covered by `npm test`.
-
-The thresholds were chosen on these few cases, and Appi clears the 0.85 bar by only 0.04. Add every new real decline to `jev-cases.json` and re-run before moving `JEV_SAME_PERSON_MIN` or `JEV_EVIDENCE_MIN` or rewording a question. `npm test` runs offline assertions over the corroboration rules, the summary and the decision, including the real scores above.
+Until 2026-10-21 the rules also declined when the names didn't match, unless **Jev**
+(TypeSafe's typed-judgement model) rated the pair the same person at ≥ 0.85 *and* the
+linking evidence at ≥ 2/3. That guard dated from when Zaps wrote `Duplicate of` as a
+review flag (the 2026-07-28 Sachin Kolekar / Lionel Sim merge). Once only people set it,
+the check was second-guessing their call. Every name-mismatch decline a person asked
+about turned out to be one person: "Ustaz Syakir" → "Syakir Samsaimon" and "New Contact"
+→ "Alasdair Bell" (why Jev was added), "Appireddy" → "Appi Pamulapati" (why its criteria
+were revised), and "annag579 Gibeva" → "Anna Gibaeva" on 2026-10-21, declined at 0.87 /
+**1.99** against the 2.0 bar. Dennis removed it the same day, with the
+`typesafe` connection, `replay-jev.mjs` and `jev-cases.json` (all in git history).
 
 ## Copy rules
 
@@ -243,7 +192,7 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental run-durable "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"},"typesafe":{"connectionId":"02c36cbc-669d-8c82-9c72-7b7813e5cde0"}}' \
+  --connections '{"notion_wf":{"connectionId":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
   --input '{"data":{"id":"<source-contact-page-id>"}}' \
   --private
 ```
@@ -272,7 +221,7 @@ SOURCE_FILES="$(jq -n --rawfile workflow workflow.ts '{"workflow.ts": $workflow}
 zapier-sdk --experimental publish-workflow-version <workflow-id> "$SOURCE_FILES" \
   --dependencies '{"@zapier/zapier-sdk":"0.86.0","zod":"4.4.3"}' \
   --zapier-durable-version '0.9.1' \
-  --connections '{"notion_wf":{"connection_id":"02b73654-15c8-85c3-b16a-07304d2beb17"},"typesafe":{"connection_id":"02c36cbc-669d-8c82-9c72-7b7813e5cde0"}}' \
+  --connections '{"notion_wf":{"connection_id":"02b73654-15c8-85c3-b16a-07304d2beb17"}}' \
   --trigger '{"selected_api":"WebHookCLIAPI@1.1.1","action":"hook_v2","params":{}}' \
   --json
 ```
