@@ -22,7 +22,7 @@ src = src
     "const createZapierSdk = () => ({ fetch: async (..._: unknown[]): Promise<any> => { throw new Error('no network in tests'); } });",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { corroborate, archiveBlocker, isAlreadyTrashed };\n";
+src += "\nexport const __test = { corroborate, archiveBlocker, isAlreadyTrashed, secondaryWithSourcePrimary, planMerge };\n";
 
 const tmpTs = join(dir, ".corroborate-under-test.ts");
 const outDir = join(dir, ".corroborate-under-test-out");
@@ -40,7 +40,7 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { corroborate, archiveBlocker, isAlreadyTrashed } = mod.__test;
+const { corroborate, archiveBlocker, isAlreadyTrashed, secondaryWithSourcePrimary, planMerge } = mod.__test;
 
 let failures = 0;
 let count = 0;
@@ -109,6 +109,33 @@ check("LinkedIn on one side only is not a conflict",
 check("the reason says a person decided when the names differ",
   corroborate(contact({ name: "New Contact" }), contact({ name: "Alasdair Bell" })).reason.startsWith("set by a person"),
   true);
+
+// --- the source's Primary Email survives the merge ------------------------------
+check("source Primary becomes a Secondary on the target",
+  secondaryWithSourcePrimary("annagibaeva05@gmail.com", "anna.gibaeva@effem.com", []),
+  [{ name: "annagibaeva05@gmail.com" }]);
+check("existing Secondary options are kept, the new one appended",
+  secondaryWithSourcePrimary("b@x.com", "a@x.com", [{ name: "c@x.com" }]),
+  [{ name: "c@x.com" }, { name: "b@x.com" }]);
+check("no change when the target already has it as Primary (any case)",
+  secondaryWithSourcePrimary("A@X.com", "a@x.com", []), null);
+check("no change when the target already has it as Secondary (any case)",
+  secondaryWithSourcePrimary("B@x.com", "a@x.com", [{ name: "b@X.com" }]), null);
+check("no change when the target Primary is empty (the fill rule copies it there)",
+  secondaryWithSourcePrimary("b@x.com", null, []), null);
+check("no change when the source has no Primary",
+  secondaryWithSourcePrimary(null, "a@x.com", []), null);
+
+{
+  const src = contact({ name: "annag579 Gibeva", email: "annagibaeva05@gmail.com", secondary: ["old@x.com"] });
+  const tgt = contact({ name: "Anna Gibaeva", email: "anna.gibaeva@effem.com", secondary: ["t@x.com"] });
+  const plan = await planMerge(src, tgt);
+  check("planMerge unions Secondary Email and adds the source Primary (Anna Gibaeva, 2026-10-21)",
+    plan.patch["Secondary Email"],
+    { multi_select: [{ name: "t@x.com" }, { name: "old@x.com" }, { name: "annagibaeva05@gmail.com" }] });
+  check("planMerge never overwrites the target's Primary Email",
+    plan.patch["Primary Email"], undefined);
+}
 
 // --- archiving the merged source -----------------------------------------------
 check("a newer source with no page content is trashed",

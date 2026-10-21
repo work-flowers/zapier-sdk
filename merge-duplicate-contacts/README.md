@@ -102,6 +102,7 @@ Source → target, and only ever additively:
 |---|---|
 | `title`, `rich_text`, `number`, `select`, `status`, `date`, `url`, `email`, `phone_number`, `files` | Fill the target only when it is **empty**. Never overwrite |
 | `checkbox` | OR — true if either record is true |
+| `Primary Email` when the target already has a different one | **Added to the target's `Secondary Email`** (since 2026-10-21), unless it is already there in any case. Before that the fill rule skipped it, and the address left with the trashed source: Anna Gibaeva's merge dropped `annagibaeva05@gmail.com` |
 | `multi_select`, `people`, `relation` | **Union** of the target's current value and the source's |
 | `formula`, `rollup`, `created_*`, `last_edited_*`, `unique_id`, `button`, `verification` | Skipped — Notion computes them and rejects the write |
 | `Duplicate of`, `Duplicated by`, `Possible duplicate of`, `Possible duplicates` | **Never copied** |
