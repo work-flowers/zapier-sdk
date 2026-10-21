@@ -1,7 +1,7 @@
 {
   "name": "merge-duplicate-contacts",
   "workflow_id": "019fa81d-19f4-793e-b8ef-a79c80b8be1c",
-  "current_version_id": "01a15d82-3074-73b2-ba37-c68517af6ac3",
+  "current_version_id": "01a15d88-293e-7907-9acc-2f80dc26d07e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQY03_v_QxmT9mID3tPnSw",
   "enabled": true,
   "is_private": false,
@@ -19,7 +19,7 @@
     "@zapier/zapier-sdk": "0.86.0"
   },
   "created_at": "2026-07-28T09:47:00.000Z",
-  "version_created_at": "2026-10-21T08:09:35.897Z",
+  "version_created_at": "2026-10-21T08:16:07.282Z",
   "notion_automation": "WIRED 2026-07-28. Notion DB automation on Contacts (\"Duplicate of\" edited) POSTs to trigger.webhook_url. The payload carries ONLY the page id — zero properties — so the workflow reads `Duplicate of` from a fresh page read; anything trusting the payload would conclude the relation is empty and silently do nothing. Notion does not expose automations via API, so re-wiring after any change to the catch URL is a manual step in the Notion UI.",
   "description": "Notion Contacts: Duplicate of set by a person -> merge the source into the target unless the two carry different LinkedIn profiles (since 2026-10-21 the person's call stands otherwise; the Jev name-mismatch check was removed). Fills empty target fields, ORs checkboxes, UNIONS every multi-value property, never copies the Duplicate of / Possible duplicate relations, comments on the source with what was copied, then moves it to the Notion trash (never a permanent delete) unless it has page content or is older than the target, in which case it is left in place.",
   "is_private_note": "Corrected 2026-10-03: get-workflow reports is_private false, so this Zap is account-visible. The previous `true` here (and CLAUDE.md listing it as a grandfathered private Zap) were wrong."
