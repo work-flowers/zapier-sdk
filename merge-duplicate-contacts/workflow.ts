@@ -130,6 +130,28 @@ function plainTitle(prop: any): string {
 }
 
 /** Is a property value empty, i.e. safe to fill from the source? */
+/**
+ * The target's Secondary Email options with the source's Primary Email
+ * appended, or null when nothing needs to change: no source address, the
+ * target's Primary is empty (the fill rule copies it there instead), or the
+ * target already carries it as Primary or Secondary. Case-insensitive, and
+ * never drops an existing option.
+ */
+function secondaryWithSourcePrimary(
+  sourcePrimary: string | null,
+  targetPrimary: string | null,
+  targetSecondaries: Array<{ name?: string }> | null,
+): Array<{ name: string }> | null {
+  if (!sourcePrimary || !targetPrimary) return null;
+  const key = sourcePrimary.trim().toLowerCase();
+  if (targetPrimary.trim().toLowerCase() === key) return null;
+  const current = (targetSecondaries ?? [])
+    .map((o) => firstString(o?.name))
+    .filter((n): n is string => n !== null);
+  if (current.some((n) => n.trim().toLowerCase() === key)) return null;
+  return [...current, sourcePrimary.trim()].map((name) => ({ name }));
+}
+
 function isEmptyValue(prop: any): boolean {
   if (!prop) return true;
   switch (prop.type) {
@@ -530,6 +552,20 @@ async function planMerge(
       default:
         skipped.push({ property: name, why: `unhandled type "${type}"` });
     }
+  }
+
+  // The source's Primary Email is a scalar the target already has a value for,
+  // so the fill rule above skips it — and the address would vanish with the
+  // trashed source. Carry it over as a Secondary instead. Found 2026-10-21:
+  // Anna Gibaeva's merge dropped annagibaeva05@gmail.com.
+  const secondaries = secondaryWithSourcePrimary(
+    firstString(source.properties["Primary Email"]?.email),
+    firstString(target.properties["Primary Email"]?.email),
+    (patch["Secondary Email"] as any)?.multi_select ?? target.properties["Secondary Email"]?.multi_select ?? null,
+  );
+  if (secondaries) {
+    patch["Secondary Email"] = { multi_select: secondaries };
+    copied.push({ property: "Primary Email", how: "added to Secondary Email" });
   }
 
   return { patch, copied, skipped };
