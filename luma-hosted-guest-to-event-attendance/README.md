@@ -16,7 +16,7 @@ The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest
 4. **Event**: the `Luma Event ID` Table, then a Notion search on `Luma ID`. On a miss it waits 90 s for [`luma-hosted-event-to-notion`](../luma-hosted-event-to-notion/) and checks the Table again, and only then creates a bare page from the six event fields the guest item carries.
 5. **Contact**: every address the guest gave is a candidate: the Luma account email plus any email typed into a registration answer, except questions about someone else ("your manager's email", "referred by"). Each candidate is looked up in the email Table, and the first hit is the contact. Answers are tried first, "work email" labels ahead of the rest.
    - **No address resolved → [same name at the same organisation](#same-name-at-the-same-organisation)?** If exactly one live contact has the guest's name and shares an organisation email domain with them, that contact is **reused**, and is then treated as an existing contact (below).
-   - **New contact → [Primary Email by domain](#primary-email-by-domain-jev).** Created with the Contacts default template and `Lead Source` = `Event`. The chosen address becomes Primary, the rest become Secondary, and every address is indexed. The contact is flagged `Possible duplicate of` against name-equivalent contacts.
+   - **New contact → [Primary Email by domain](#primary-email-by-domain-jev).** Created with the Contacts default template and `Lead Source` = `Event`. The chosen address becomes Primary, the rest become Secondary, and every address is indexed. The contact is flagged `Possible duplicate of` against [likely duplicates](#possible-duplicate-flags-jev): exact name matches, plus looser candidates Jev judges to be the same person.
    - **Existing contact → its Primary is left alone.** Any of the guest's addresses it doesn't carry yet are added to `Secondary Email` and indexed. *(Dennis, 2026-10-15: the domain rule is for new contacts only.)*
    - **Collision:** if the addresses resolve to different contacts, each other contact is flagged `Possible duplicate of` the first one.
 6. **Attendance**: the Match Key Table, then a Notion search on Event + Contact, then a create (`Approval Status`, `Checked In`, `Registration Date`) or an update (`Approval Status`, and `Checked In` only ever ticked). `Attended` wins over the approval status once the guest has checked in (`resolveAttendanceStatus`, unchanged).
@@ -61,7 +61,7 @@ flowchart TD
     W -->|"found"| C
     EC --> C{"Contact via email Table<br/>(work email, account email)"}
     C -->|"none"| NM{"Sole same-name contact<br/>at a shared organisation domain?"}
-    NM -->|"no"| CC["Create Contact (template)<br/>index emails, flag name matches"]
+    NM -->|"no"| CC["Create Contact (template)<br/>index emails, flag likely duplicates<br/>(exact name, or Jev ≥ 0.6)"]
     NM -->|"yes"| CR
     C -->|"found"| CR["Keep Primary; add new addresses<br/>as Secondary and index them"]
     C -->|"two different contacts"| CD["Flag Possible duplicate of"]
@@ -89,6 +89,35 @@ Contacts are resolved by **exact** email, through the email Table. The usual mis
 The reused contact keeps its Primary. The guest's new address is added as Secondary and indexed, so the next registration resolves by email. `sameOrgNameMatch` in the run output records the reuse.
 
 **Replayed over all 1,047 live contacts (2026-10-20):** of the 6 same-name groups, the rule fires only on Manuel's pair. Grace Tang shares only `gmail.com`; Ian Lim, Nancy Chen and Pei Sai Yong differ in domain. Those stay as created and flagged. The cases are asserted in [`contact-match.test.mjs`](contact-match.test.mjs) (`npm test`).
+
+## Possible-duplicate flags (Jev)
+
+**Since 2026-10-21.** A new contact used to be flagged only against contacts with exactly its name (word order ignored). That missed the duplicates people actually create: an honorific ("Ustaz Syakir" / "Syakir Samsaimon"), a shortened name ("Appi" / "Appireddy Pamulapati"), a mangled Luma profile ("annag579 Gibeva" / "Anna Gibaeva"), a typo'd domain. Now:
+
+1. **Find candidates** (`findFlagCandidates`, one Notion OR-query): Name contains any of the new contact's name words or the first three letters of its surname, or Primary Email contains one of its mailbox names. Trashed and merged-away (`Duplicate of` set) contacts are dropped. A result is a candidate if `flagCandidateReasons` finds any of: exact name, a name within two edits, the same surname with a compatible given name, the same mailbox name at another domain, a mailbox name spelling the other's full name, the same LinkedIn profile, or a rare name word they share (held by at most two other contacts).
+2. **Decide** (`decideFlag`): never across two **different LinkedIn profiles**; always on an **exact name**; otherwise flag only when **Jev** puts P(same person) **≥ 0.6**.
+3. **Jev** is asked one pair per call (`scoreFlagCandidates`), the strongest five candidates at most, with `JEV_SAME_PERSON_QUESTIONS`: the questions `merge-duplicate-contacts` used until 2026-10-21. Only `same_person` decides; `evidence` is logged. A failed or rate-limited call (retried twice) leaves that candidate unflagged, and none of this can fail the run.
+
+The run output's `duplicateCheck` lists every candidate with its reasons, score and decision.
+
+| Question | Type | Asks |
+| --- | --- | --- |
+| `same_person` | yes/no probability | Do `record_a` and `record_b` describe the same real person? True needs compatible names AND a specific identifier (same personal address, same mailbox name at related domains, a LinkedIn handle spelling the other's name, a note naming the other). |
+| `evidence` | score 0–3 | How strong is the identifying evidence linking them? (logged only) |
+
+### Offline comparison (2026-10-21, jev-1.13.0)
+
+All 1,050 live contacts were exported read-only and the looser search produced **187 candidate pairs**, plus Anna Gibaeva's pair (since merged). 175 were labelled: 7 duplicates (Ustaz Syakir, Appi Pamulapati and Anna confirmed by Dennis; Sofie Yang, Jin Keat Lai, Alex Marin Gasga and Nancy Chen judged from the records), 168 different people. 13 could not be called.
+
+| Rule | Caught | False flags | Missed |
+| --- | --- | --- | --- |
+| Exact name (the old rule) | 2 | 1 (two Grace Tangs, different LinkedIn) | 5 |
+| Jev P(same) ≥ 0.6 | 6 | 0 | 1 (Nancy Chen, 0.44) |
+| **Exact name or Jev ≥ 0.6, never across a LinkedIn conflict (shipped)** | **7** | **0** | **0** |
+
+Real duplicates scored ≥ 0.80 and different people ≤ 0.46, so 0.6 sits in the gap; the merge Zap's old 0.85 bar would have missed Anna (0.84) and Alex (0.80). Replaying the live pairs through the shipped `flagCandidateReasons` + `decideFlag` reproduces 6/6 with no false flags, and `findFlagCandidates` was run read-only against live Notion for Anna's mangled name, Ustaz Syakir and Grace Tang.
+
+**Caveats.** Seven duplicates is a small sample, and four labels are judgements. Offline, Jev saw two full records; at registration the new contact carries only a name and emails, so live scores may run lower. Re-check the bar against real flags before moving it. Cost: one Zapier task per Jev call, usually 0–2 per new contact, never more than 5.
 
 ## Primary Email by domain (Jev)
 

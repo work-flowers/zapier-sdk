@@ -39,7 +39,7 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { pickSameOrgNameMatch, sharedDomainsWithSoleMatch } = mod;
+const { pickSameOrgNameMatch, sharedDomainsWithSoleMatch, flagCandidateReasons, decideFlag, linkedinConflict } = mod;
 
 let failures = 0;
 let count = 0;
@@ -151,6 +151,57 @@ check(
   pickSameOrgNameMatch([manuelOriginal], ["Manuel@AheadGaining.com"], verdicts),
   { id: "orig", domain: "aheadgaining.com" },
 );
+
+// --- Possible-duplicate flags (looser candidates + Jev) ----------------------
+// Pairs from the 2026-10-21 offline check over the live Contacts.
+const rec = (name, emails = [], linkedin = null, first = "", last = "") => ({ name, first, last, emails, linkedin });
+const none = new Set();
+const reasons = (a, b, rare = none) => flagCandidateReasons(a, b, rare);
+
+check("Ustaz Syakir / Syakir Samsaimon: a shared rare name word is a candidate",
+  reasons(rec("Ustaz Syakir", ["sykreativ@gmail.com"]), rec("Syakir Samsaimon", ["syakir@alfalah.sg"]), new Set(["syakir"])),
+  ["shared-rare-token"]);
+check("...but not when the word is common",
+  reasons(rec("Ustaz Syakir", ["sykreativ@gmail.com"]), rec("Syakir Samsaimon", ["syakir@alfalah.sg"])),
+  []);
+check("Appi / Appireddy Pamulapati: same surname, shortened given name, same mailbox",
+  reasons(rec("Appi Pamulapati", ["appi@knoxxfoods.com"]), rec("Appireddy Pamulapati", ["appi@knoxxinnovations.com"])),
+  ["surname+compatible-first", "same-local-part"]);
+check("annag579 Gibeva / Anna Gibaeva: the mailbox spells the other's name",
+  reasons(rec("annag579 Gibeva", ["annagibaeva05@gmail.com"], null, "annag579", "Gibeva"),
+          rec("Anna Gibaeva", ["anna.gibaeva@effem.com"])).includes("local-part-spells-name"),
+  true);
+check("a contact titled with its email is matched on First/Last Name",
+  reasons(rec("alemga@kinnai.com", ["alemga@kinnai.com"], null, "Alex", "Marin Gasga"),
+          rec("Alex Marin Gasga", ["alexmga@kiinnai.com"], "https://linkedin.com/in/alexmga")),
+  ["exact-name"]);
+check("Jin Keat Lai / Jin Keat Keat: the same LinkedIn profile",
+  reasons(rec("Jin Keat Lai", ["keat@skiesfifty.com"], "https://linkedin.com/in/keatlai"),
+          rec("Jin Keat Keat", ["keat@terrascope.com"], "http://www.linkedin.com/in/keatlai/")),
+  ["same-local-part", "same-linkedin"]);
+check("role mailboxes are not a signal",
+  reasons(rec("Kathy Sheehy", ["hello@kittykat.world"]), rec("Des Moran", ["hello@other.world"])),
+  []);
+check("Mike Lim / Mike M: a two-edit name difference is only a candidate, not a flag",
+  reasons(rec("Mike Lim", ["mike@insightout.com.sg"]), rec("Mike M", ["mike.mediouni@tictek.co"])),
+  ["fuzzy-name"]);
+
+const cand = (r, ...why) => ({ id: "c", record: r, reasons: why });
+const gtang = rec("Grace Tang", ["grace@linkby.com"], "https://linkedin.com/in/gtang1");
+check("exact name flags without Jev",
+  decideFlag(rec("Nancy Chen", ["nancy.y.chen@gmail.com"]), cand(rec("Nancy Chen", ["nchen@makenotion.com"]), "exact-name"), null).flag,
+  true);
+check("a LinkedIn conflict never flags, even on an exact name (the two Grace Tangs)",
+  decideFlag(gtang, cand(rec("Grace Tang", ["grace@leaps.sg"], "https://linkedin.com/in/tangenpinggrace"), "exact-name"), 0.99).flag,
+  false);
+check("non-exact: Jev 0.84 (Anna's score) flags, 0.46 (the highest different pair) does not, no score does not",
+  [0.84, 0.46, null].map((p) => decideFlag(rec("A B"), cand(rec("A C"), "fuzzy-name"), p).flag),
+  [true, false, false]);
+check("the bar is 0.6",
+  [0.59, 0.6].map((p) => decideFlag(rec("A B"), cand(rec("A C"), "fuzzy-name"), p).flag),
+  [false, true]);
+check("LinkedIn on one side only is no conflict",
+  linkedinConflict("https://linkedin.com/in/x", null), false);
 
 console.log(`\n${count - failures}/${count} passed`);
 if (failures) process.exit(1);

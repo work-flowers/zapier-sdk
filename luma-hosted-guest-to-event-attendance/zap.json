@@ -62,9 +62,10 @@
   "ai_model": {
     "provider": "TypeSafe Jev (jev-latest; thresholds checked on jev-1.13.0)",
     "via": "sdk.fetch -> https://api.typesafe.ai/v1/systemone, connection `typesafe`",
-    "used_for": "Personal-vs-organisation verdict on an email DOMAIN, to pick a NEW contact's Primary Email. One batched call per new contact whose candidate domains are not yet in the Email Domain Types Table; each domain is judged once, ever.",
+    "used_for": "Personal-vs-organisation verdict on an email DOMAIN, to pick a NEW contact's Primary Email. One batched call per new contact whose candidate domains are not yet in the Email Domain Types Table; each domain is judged once, ever. Since 2026-10-21 also: P(same person) for a NEW contact against looser duplicate candidates (not exact-name matches), one pair per call, at most 5 calls; P >= 0.6 flags `Possible duplicate of`, never across two different LinkedIn profiles.",
     "threshold": "P(personal) >= 0.35 -> personal",
     "why_jev": "A typed yes/no probability over a short string fits Jev's question types; Dennis did not want a hard-coded personal-domain list (2026-10-15). Offline run over all 208 real domains: every consumer provider >= 0.38, every organisation <= 0.29 (README).",
-    "cost": "1 Zapier task per Jev call plus ~$0.0001 TypeSafe tokens; cached domains (gmail.com etc.) cost nothing."
+    "cost": "1 Zapier task per Jev call plus ~$0.0001 TypeSafe tokens; cached domains (gmail.com etc.) cost nothing. Duplicate check: 1 Zapier task per Jev call, usually 0-2 per new contact, max 5.",
+    "duplicate_flag_threshold": "P(same person) >= 0.6. Offline 2026-10-21 over 187 real candidate pairs: duplicates >= 0.80, different people <= 0.46 (README 'Possible-duplicate flags')."
   }
 }
