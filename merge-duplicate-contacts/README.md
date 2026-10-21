@@ -1,8 +1,8 @@
 # Merge Duplicate Contacts
 
 Merges a Notion Contact into the record its `Duplicate of` relation points at —
-**only** when the two are corroborated as the same person, and **never** by deleting
-anything.
+**only** when the two are corroborated as the same person — then moves the merged-away
+record to Notion's trash. Nothing is ever permanently deleted.
 
 Replaces the "Contact Merger" Notion Custom Agent, which was disabled on 2026-07-28.
 
@@ -64,8 +64,9 @@ flowchart TD
     Q -- yes --> K
     I -- "same LinkedIn<br/>or equivalent names" --> K["Re-read both,<br/>build patch"]
     K --> L["PATCH target:<br/>fill empties, OR checkboxes,<br/>UNION multi-values"]
-    L --> M["Comment on source:<br/>what was copied,<br/>ready to archive"]
-    M --> N(["Source left in place"])
+    L --> P{"Source has page content,<br/>or is older than target?"}
+    P -- no --> M["Comment on source:<br/>what was copied"] --> T(["Move source to trash"])
+    P -- yes --> M2["Comment on source:<br/>what was copied, why kept"] --> N(["Source left in place"])
 ```
 
 ## Corroboration
@@ -170,12 +171,33 @@ the next false positive.
 - The read and the PATCH live in **one** `ctx.step`, so a retry re-reads both pages
   rather than patching from state that has since moved.
 
-## Nothing is deleted
+## The source is archived, never deleted
 
-The source stays exactly where it is. It gets a comment listing what was copied and
-saying it's ready for a person to archive. If the source is **older** than the target,
-the comment says so — the survivor may be the wrong way round, and that's a judgement
-call, not a rule.
+**Since 2026-10-21**, after a merge the source gets a comment listing what was copied
+and is then moved to Notion's trash (`PATCH in_trash: true`, which is what the API means
+by "archive"). Notion has no archive separate from the trash: the page can be restored
+from the trash for 30 days, after which Notion empties it. Contacts has no "Archived"
+property, and adding one would leave the loser live — still resolving guests through the
+email Table — so the trash is the archive. *(Dennis, 2026-10-21.)* Before that date the
+source was left in place for a person to archive.
+
+Trashing the source is also what moves its email Table rows to the survivor:
+[`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table/#merges-deletes-and-restores)
+gets the `page.deleted` event and reads the survivor off the trashed page's
+`Duplicate of`.
+
+The source is **left in place**, and the comment says why, when a person should look
+first (`archiveBlocker`):
+
+- it has **page content** — only properties are merged, and the trash empties itself;
+- the content check failed, so we don't know;
+- it is **older** than the target — `Duplicate of` may point the wrong way round, so the
+  record being thrown away could be the one to keep.
+
+The comment is posted before the trash, because Notion rejects comments on a trashed
+page. A trash that Notion answers with *already archived* counts as done; any other
+rejection fails the run with Notion's message. The run output reports `archived` and
+`archiveBlockedBy`.
 
 ## Comments
 
@@ -202,8 +224,8 @@ listing, one comment write. Merges are rare, so this is not a hot path.
 
 ## Known limitations
 
-- **Page content is not merged**, only properties. A source with body blocks needs those
-  moved by hand before archiving.
+- **Page content is not merged**, only properties. A source with body blocks is
+  therefore left in place, for its content to be moved by hand before archiving.
 - `files` properties are filled only when the target is empty, rather than unioned —
   appending externally-hosted files reliably is fiddly and no Contact currently needs it.
 - A **third** record pointing at either half is not considered. Each run looks at one

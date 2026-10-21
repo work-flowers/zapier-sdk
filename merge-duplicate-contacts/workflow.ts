@@ -40,7 +40,10 @@ const JEV_MODEL = "jev-latest";
 //
 // So: the copy semantics are code (a union cannot be "forgotten"), the merge is
 // gated on corroborated identity rather than on the relation alone, and nothing
-// is ever deleted — the source is left in place with a comment.
+// is ever deleted. After a merge the source is moved to Notion's trash (the
+// API's "archive"; restorable for 30 days) — never permanently deleted, and
+// never when `archiveBlocker` says a person should decide. Since 2026-10-21; it
+// was left in place with a comment before.
 //
 // Relations this workflow must NEVER copy. `Duplicate of` and `Duplicated by`
 // are what trigger it, so copying them is a self-trigger by construction. The
@@ -289,6 +292,66 @@ async function patchPage(
     const text = await res.text();
     throw new Error(`Notion ${res.status} patching ${pageId}: ${text.slice(0, 400)}`);
   }
+}
+
+/**
+ * Notion's answer to trashing a page that is already in the trash: a 400
+ * "Can't edit block that is archived". The end state is the one we asked for,
+ * so it reads as success — a retried archive step must not fail the run after
+ * the trash already landed. Narrow on purpose: status AND message.
+ */
+function isAlreadyTrashed(status: number, body: string): boolean {
+  return status === 400 && /archived/i.test(body);
+}
+
+/**
+ * Why the merged source must NOT be trashed automatically, or null when it can
+ * be. Each case is one a person should look at first:
+ *   - unknown/has body content: page content is not merged (properties only),
+ *     and the trash empties itself after 30 days;
+ *   - source older than target: `Duplicate of` may point the wrong way round,
+ *     so the record being thrown away could be the one to keep.
+ */
+function archiveBlocker(opts: { hasContent: boolean | null; sourceOlder: boolean }): string | null {
+  if (opts.hasContent === null) return "could not check whether it has page content";
+  if (opts.hasContent) return "it has page content, which the merge does not copy";
+  if (opts.sourceOlder) return "it is OLDER than the record it was merged into, so check the survivor is the one you want";
+  return null;
+}
+
+/** Does the page have any body blocks? Null when the read fails for a
+ *  non-transient reason; 429/5xx throw so the enclosing step retries. */
+async function hasPageContent(pageId: string): Promise<boolean | null> {
+  const res = await sdk.fetch(`${NOTION_API}/blocks/${pageId}/children?page_size=1`, {
+    connection: NOTION_CONNECTION,
+    headers: { "Notion-Version": NOTION_VERSION },
+  });
+  if (res.status === 429 || res.status >= 500) {
+    throw new Error(`Notion ${res.status} reading content of ${pageId} — retrying`);
+  }
+  if (!res.ok) return null;
+  const body: any = await res.json();
+  return (body?.results ?? []).length > 0;
+}
+
+/** Move a page to the trash. Returns the response for the caller to judge;
+ *  only 429/5xx throw, so a real rejection reaches the run error intact
+ *  instead of becoming "exhausted all retry attempts". */
+async function trashPage(pageId: string): Promise<{ status: number; body: string }> {
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    method: "PATCH",
+    connection: NOTION_CONNECTION,
+    headers: {
+      "Notion-Version": NOTION_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ in_trash: true }),
+  });
+  const body = res.ok ? "" : await res.text();
+  if (res.status === 429 || res.status >= 500) {
+    throw new Error(`Notion ${res.status} trashing ${pageId}: ${body.slice(0, 300)} — retrying`);
+  }
+  return { status: res.status, body };
 }
 
 /** Has this workflow already posted this OUTCOME about this pair? */
@@ -816,12 +879,20 @@ const workflow = defineDurable(
       return { patched: true, copied: plan.copied, skipped: plan.skipped, reason: null };
     });
 
-    // Never delete. The source stays put with a comment saying what moved, so a
-    // person archives it deliberately.
+    // Never delete. The source is moved to the trash (restorable for 30 days)
+    // unless archiveBlocker says a person should look first, in which case it
+    // stays put. Either way the comment says what moved. Trashing also hands the
+    // source's email Table rows to the survivor: contact-emails-to-zapier-table
+    // reads `Duplicate of` off the trashed page.
     const sourceOlder =
       source.createdTime !== null &&
       target.createdTime !== null &&
       source.createdTime < target.createdTime;
+    const sourceGone = result.reason === "a page went to the trash";
+    const hasContent = sourceGone
+      ? null
+      : await ctx.step("check-source-content", async () => hasPageContent(sourceId));
+    const blocker = sourceGone ? "a page went to the trash during the merge" : archiveBlocker({ hasContent, sourceOlder });
     const commented = await ctx.step("comment-merged", async () =>
       commentOnce(
         sourceId,
@@ -832,13 +903,22 @@ const workflow = defineDurable(
             `${result.copied.map((c) => `${c.property} (${c.how})`).join(", ")}. `
           : `Already merged into ${targetId} (${verdict.reason}) — the target had ` +
             `nothing left to take from this record. `) +
-          (sourceOlder
-            ? `NOTE: this record is OLDER than the one it was merged into — check the ` +
-              `survivor is the one you want before archiving. `
-            : "") +
-          `Nothing was deleted; archive this record when you are happy with the result.`,
+          (blocker
+            ? `Left in place: ${blocker}. Archive this record by hand when you are happy with the result.`
+            : `Moved this record to the trash; restore it from there within 30 days if the merge was wrong.`),
       ),
     );
+
+    let archived = false;
+    if (!blocker) {
+      const trash = await ctx.step("archive-source", async () => trashPage(sourceId));
+      if (trash.status >= 300 && !isAlreadyTrashed(trash.status, trash.body)) {
+        throw new Error(
+          `Merged into ${targetId}, but trashing source ${sourceId} failed (${trash.status}): ${trash.body.slice(0, 300)}`,
+        );
+      }
+      archived = true;
+    }
 
     return {
       sourceId,
@@ -848,6 +928,8 @@ const workflow = defineDurable(
       copied: result.copied,
       skippedProperties: result.skipped,
       sourceOlderThanTarget: sourceOlder,
+      archived,
+      archiveBlockedBy: blocker,
       commented,
       contactsDataSource: CONTACTS_DS,
     };

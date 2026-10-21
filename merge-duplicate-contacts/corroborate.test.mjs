@@ -22,7 +22,7 @@ src = src
     "const createZapierSdk = () => ({ fetch: async (..._: unknown[]): Promise<any> => { throw new Error('no network in tests'); } });",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { corroborate, contactSummary, jevVerdict, isRetryableJevStatus, JEV_QUESTIONS };\n";
+src += "\nexport const __test = { corroborate, contactSummary, jevVerdict, isRetryableJevStatus, JEV_QUESTIONS, archiveBlocker, isAlreadyTrashed };\n";
 
 const tmpTs = join(dir, ".corroborate-under-test.ts");
 const outDir = join(dir, ".corroborate-under-test-out");
@@ -40,7 +40,7 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { corroborate, contactSummary, jevVerdict, isRetryableJevStatus, JEV_QUESTIONS } = mod.__test;
+const { corroborate, contactSummary, jevVerdict, isRetryableJevStatus, JEV_QUESTIONS, archiveBlocker, isAlreadyTrashed } = mod.__test;
 
 let failures = 0;
 let count = 0;
@@ -145,6 +145,24 @@ check("the reason carries the scores and the model",
 check("only 429 and 5xx retry",
   [429, 500, 503, 400, 401, 422].map(isRetryableJevStatus),
   [true, true, true, false, false, false]);
+
+// --- archiving the merged source -----------------------------------------------
+check("a newer source with no page content is trashed",
+  archiveBlocker({ hasContent: false, sourceOlder: false }), null);
+check("page content blocks the trash (content is not merged)",
+  archiveBlocker({ hasContent: true, sourceOlder: false }) !== null, true);
+check("an unreadable content check blocks the trash",
+  archiveBlocker({ hasContent: null, sourceOlder: false }) !== null, true);
+check("an older source blocks the trash (Duplicate of may point the wrong way)",
+  archiveBlocker({ hasContent: false, sourceOlder: true }) !== null, true);
+check("Notion's already-archived 400 reads as success; nothing else does",
+  [
+    isAlreadyTrashed(400, '{"message":"Can\'t edit block that is archived. You must unarchive the block before editing."}'),
+    isAlreadyTrashed(400, '{"message":"body failed validation"}'),
+    isAlreadyTrashed(404, "archived"),
+    isAlreadyTrashed(500, "archived"),
+  ],
+  [true, false, false, false]);
 
 // -------------------------------------------------------------------------------
 if (failures > 0) {
