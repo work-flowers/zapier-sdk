@@ -12,17 +12,6 @@ const NOTION_VERSION = "2026-03-11";
 
 const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 
-// Jev (TypeSafe's typed-judgement model), called through Zapier's authenticated
-// fetch: the API key lives in an "API by Zapier" connection (Bearer auth), so it
-// never appears in source. Consulted ONLY when the deterministic rules decline
-// because the names don't match — see `jevVerdict`. Each call is a Zapier task,
-// plus a fraction of a cent of TypeSafe usage.
-const JEV_CONNECTION = "typesafe";
-const JEV_URL = "https://api.typesafe.ai/v1/systemone";
-// `jev-latest` moves when TypeSafe ships a release. The thresholds below were
-// checked against jev-1.13.0; the answering model is logged on every call.
-const JEV_MODEL = "jev-latest";
-
 // --- Why this workflow exists ----------------------------------------------
 //
 // It replaces the "Contact Merger" Notion Custom Agent, which merged Contacts
@@ -38,9 +27,13 @@ const JEV_MODEL = "jev-latest";
 //   3. It deleted the source without approval. Leo Selie and a duplicate Lionel
 //      page went to the trash that way before anyone noticed.
 //
-// So: the copy semantics are code (a union cannot be "forgotten"), the merge is
-// gated on corroborated identity rather than on the relation alone, and nothing
-// is ever deleted. After a merge the source is moved to Notion's trash (the
+// So: the copy semantics are code (a union cannot be "forgotten"), and nothing
+// is ever deleted. `Duplicate of` is now set only by a person (no Zap writes it;
+// they write `Possible duplicate of`), so it is taken as the decision: the one
+// thing that still blocks a merge is evidence AGAINST it, two different
+// LinkedIn profiles. Until 2026-10-21 a name mismatch also declined unless Jev
+// corroborated the pair; that second-guessed a person's call and declined Anna
+// Gibaeva's duplicate on an evidence score of 1.99 against a 2.0 bar. After a merge the source is moved to Notion's trash (the
 // API's "archive"; restorable for 30 days) — never permanently deleted, and
 // never when `archiveBlocker` says a person should decide. Since 2026-10-21; it
 // was left in place with a comment before.
@@ -547,22 +540,14 @@ async function planMerge(
 interface Verdict {
   merge: boolean;
   reason: string;
-  /** True only for the "names don't match, no LinkedIn either way" decline —
-   *  the one case Jev may overturn. A LinkedIn conflict is never eligible. */
-  jevEligible?: boolean;
 }
 
 /**
- * Is this pair really one person?
+ * Should this person-set `Duplicate of` be carried out?
  *
- * A set `Duplicate of` relation is NOT evidence on its own — it is what a Zap
- * or a mis-click writes. Positive signals are a name match or a shared LinkedIn
- * profile. Two different LinkedIn profiles is a hard disqualifier and beats a
- * name match, because that is the case a shared name produces: two real people.
- *
- * A shared email DOMAIN is deliberately not a signal. Colleagues share a work
- * domain (Sachin and Minnie Dua are both @knoxxfoods.com) and strangers share
- * consumer ones.
+ * Yes, unless the records contradict it: two different LinkedIn profiles mean
+ * two real people, which is what a mis-click between same-name contacts looks
+ * like. Everything else merges, and the reason records what agreed.
  */
 function corroborate(source: PageState, target: PageState): Verdict {
   const sName = normalizeNameKey(plainTitle(source.properties["Name"]));
@@ -583,144 +568,9 @@ function corroborate(source: PageState, target: PageState): Verdict {
     return { merge: true, reason: `equivalent names ("${sName}")` };
   }
   return {
-    merge: false,
-    reason:
-      `names are not equivalent ("${sName || "?"}" vs "${tName || "?"}") and no shared ` +
-      `LinkedIn profile — a shared email address alone is not evidence of one person`,
-    jevEligible: true,
+    merge: true,
+    reason: `set by a person; names differ ("${sName || "?"}" vs "${tName || "?"}") and no LinkedIn conflict`,
   };
-}
-
-// --- Second opinion from Jev ---------------------------------------------------
-//
-// The name rule declines real duplicates whose names differ in ways token
-// sorting can't see. Both such declines in the first two months were the same
-// person: "Ustaz Syakir" vs "Syakir Samsaimon" (Ustaz is a Malay honorific, and
-// each page's Note named the other), and "New Contact" vs "Alasdair Bell" (a
-// placeholder name on a record with the identical personal-domain address).
-// A person had already set `Duplicate of` both times.
-//
-// The first questions still declined a third (2026-10-14): "Appireddy
-// Pamulapati" vs "Appi Pamulapati" — a shortened given name, the same mailbox
-// `appi@` at two Knoxx group domains, and a LinkedIn handle `appi-reddy`. They
-// only counted a personal address or a note as strong, so it scored 0.67 / 1.8.
-// The criteria now name those identifiers, and require compatible names, which
-// also pushed the one-shared-address negative further from the bar.
-//
-// So when — and only when — the rules decline on names, Jev is asked whether
-// the two records are one person and how strong the linking evidence is. Both
-// must clear their bar to merge. Everything else stands as it was: a LinkedIn
-// conflict is still a hard decline that Jev never sees, and a Jev failure falls
-// back to the rules' decline.
-
-/** Contact properties shown to Jev, by name. Only identity-bearing fields. */
-const SUMMARY_FIELDS = [
-  "Name",
-  "First Name",
-  "Last Name",
-  "Primary Email",
-  "Secondary Email",
-  "Linkedin",
-  "Job Title",
-  "Company",
-  "City",
-  "Country",
-  "Note",
-  "Bio",
-];
-const SUMMARY_TEXT_CAP = 600;
-
-/** Plain text of one Notion property value, for the types a Contact uses. */
-function plainValue(prop: any): string | string[] | null {
-  if (!prop) return null;
-  const text = (rich: any[]) =>
-    (rich ?? []).map((t: any) => firstString(t?.plain_text) ?? "").join("").trim();
-  switch (prop.type) {
-    case "title":
-      return plainTitle(prop).trim() || null;
-    case "rich_text":
-      return text(prop.rich_text).slice(0, SUMMARY_TEXT_CAP) || null;
-    case "email":
-      return firstString(prop.email);
-    case "url":
-      return firstString(prop.url);
-    case "phone_number":
-      return firstString(prop.phone_number);
-    case "select":
-      return firstString(prop.select?.name);
-    case "multi_select": {
-      const names = (prop.multi_select ?? []).map((o: any) => firstString(o?.name)).filter(Boolean);
-      return names.length ? (names as string[]) : null;
-    }
-    case "rollup": {
-      const items = (prop.rollup?.array ?? [])
-        .map((v: any) => {
-          const inner = plainValue(v);
-          return Array.isArray(inner) ? inner.join(", ") : inner;
-        })
-        .filter(Boolean);
-      return items.length ? (items as string[]) : null;
-    }
-    default:
-      return null;
-  }
-}
-
-/** The identity-bearing fields of a Contact, empty ones left out. */
-function contactSummary(page: PageState): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = {};
-  for (const field of SUMMARY_FIELDS) {
-    const value = plainValue(page.properties[field]);
-    if (value !== null && value !== "") out[field] = value;
-  }
-  return out;
-}
-
-const JEV_QUESTIONS = {
-  same_person: {
-    type: "noul",
-    instructions: "Do `record_a` and `record_b` describe the same real person?",
-    criteria: {
-      true: "The names are compatible AND a specific identifier ties the records together. Compatible names: the same surname with given names that are the same or forms of one another (a shortened or extended given name, a nickname, an honorific, different word order), or one record carries a placeholder name. Specific identifiers: the same personal email address; the same mailbox name (the part before @) at the domains of related companies; a LinkedIn handle that spells the other record's name; a note that names the other record.",
-      false:
-        "The given names are different names rather than forms of one another, or nothing specific links them: only a shared company, a shared surname, a shared common full name, or a shared generic/role address.",
-    },
-  },
-  evidence: {
-    type: "score",
-    instructions: "How strong is the identifying evidence that links `record_a` and `record_b` to one person?",
-    criteria: [
-      "Nothing links them beyond coincidence, or their given names conflict",
-      "Only weak signals such as a shared surname, a common name, or the same employer",
-      "One specific identifier with compatible names, such as an identical personal email address, the same mailbox name at related company domains, a LinkedIn handle spelling the other's name, or an explicit note",
-      "Several independent specific identifiers agree",
-    ],
-  },
-};
-
-/** Both bars must clear. Checked against jev-1.13.0: the two real declines
- *  scored 0.96 / 2.4 and 0.88 / 2.0; a one-shared-address pair, two colleagues
- *  and two different Grace Tangs scored at most 0.35 / 1.0. */
-const JEV_SAME_PERSON_MIN = 0.85;
-const JEV_EVIDENCE_MIN = 2.0;
-
-/** The merge decision from a Jev response body; a malformed one declines. */
-function jevVerdict(body: any): Verdict {
-  const p = body?.answers?.same_person?.noul;
-  const e = body?.answers?.evidence?.score;
-  if (typeof p !== "number" || typeof e !== "number") {
-    return { merge: false, reason: "Jev returned no usable answer" };
-  }
-  const scores = `Jev ${body?.model ?? "?"}: same person ${p.toFixed(2)}, evidence ${e.toFixed(1)}/3`;
-  if (p >= JEV_SAME_PERSON_MIN && e >= JEV_EVIDENCE_MIN) {
-    return { merge: true, reason: `names differ, but the records are corroborated as one person (${scores})` };
-  }
-  return { merge: false, reason: `names differ and Jev did not corroborate one person (${scores})` };
-}
-
-/** Jev statuses worth a step retry: rate limits and server-side failures. */
-function isRetryableJevStatus(status: number): boolean {
-  return status === 429 || status >= 500;
 }
 
 // --- Workflow --------------------------------------------------------------
@@ -808,39 +658,7 @@ const workflow = defineDurable(
       };
     }
 
-    let verdict = corroborate(source, target);
-    if (!verdict.merge && verdict.jevEligible) {
-      const rulesReason = verdict.reason;
-      const jev = await ctx.step("jev-same-person", async () => {
-        const res = await sdk.fetch(JEV_URL, {
-          connection: JEV_CONNECTION,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: JEV_MODEL,
-            state: { record_a: contactSummary(source), record_b: contactSummary(target) },
-            questions: JEV_QUESTIONS,
-          }),
-        });
-        const body = await res.text();
-        // Throw only where a retry can help; any other failure is returned and
-        // falls back to the rules' decline below.
-        if (isRetryableJevStatus(res.status)) {
-          throw new Error(`Jev ${res.status}: ${body.slice(0, 500)}`);
-        }
-        return { status: res.status, body };
-      });
-      if (jev.status === 200) {
-        const second = jevVerdict(JSON.parse(jev.body));
-        console.log(second.reason);
-        verdict = second.merge
-          ? second
-          : { merge: false, reason: `${rulesReason}; ${second.reason}` };
-      } else {
-        console.log(`Jev rejected the request (${jev.status}): ${jev.body.slice(0, 300)}`);
-        verdict = { merge: false, reason: `${rulesReason} (Jev unavailable: ${jev.status})` };
-      }
-    }
+    const verdict = corroborate(source, target);
     if (!verdict.merge) {
       const commented = await ctx.step("comment-declined", async () =>
         commentOnce(

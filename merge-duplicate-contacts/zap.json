@@ -11,8 +11,7 @@
     "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/hGwgBlkwTfrosS3b/"
   },
   "connections": {
-    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "typesafe": "02c36cbc-669d-8c82-9c72-7b7813e5cde0"
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
   "zapier_durable_version": "0.9.1",
   "dependencies": {
@@ -22,12 +21,6 @@
   "created_at": "2026-07-28T09:47:00.000Z",
   "version_created_at": "2026-10-21T08:09:35.897Z",
   "notion_automation": "WIRED 2026-07-28. Notion DB automation on Contacts (\"Duplicate of\" edited) POSTs to trigger.webhook_url. The payload carries ONLY the page id — zero properties — so the workflow reads `Duplicate of` from a fresh page read; anything trusting the payload would conclude the relation is empty and silently do nothing. Notion does not expose automations via API, so re-wiring after any change to the catch URL is a manual step in the Notion UI.",
-  "description": "Notion Contacts: Duplicate of set by a person -> merge the source into the target, but ONLY when identity is corroborated (equivalent names or the same LinkedIn profile, or — when names differ — a Jev same-person check; differing LinkedIn URLs are a hard decline). Fills empty target fields, ORs checkboxes, UNIONS every multi-value property, never copies the Duplicate of / Possible duplicate relations, comments on the source with what was copied, then moves it to the Notion trash (since 2026-10-21; never a permanent delete) unless it has page content or is older than the target, in which case it is left in place. Replaces the Contact Merger Notion Custom Agent.",
-  "ai_model": {
-    "model_id": "jev-latest",
-    "provider": "TypeSafe (api.typesafe.ai/v1/systemone), via sdk.fetch on the typesafe connection (API by Zapier, Bearer)",
-    "verified_against": "jev-1.13.0",
-    "note": "Added 2026-10-03 as a second opinion on the name-mismatch decline only: merge when Jev's same-person probability >= 0.85 AND evidence score >= 2/3. LinkedIn conflicts stay a hard decline Jev never sees; rule merges make no Jev call. Replayed the 6 real Duplicate-of requests: both real false declines (Ustaz Syakir, New Contact/Alasdair Bell) now merge; constructed negatives score <= 0.35. One Zapier task per Jev call plus ~$0.0001 TypeSafe usage. Criteria revised 2026-10-14 after a false decline (Appireddy/Appi Pamulapati, 0.67/1.8): they now require compatible names and name the same-mailbox-at-related-domains and LinkedIn-handle identifiers; thresholds unchanged. replay-jev.mjs over jev-cases.json: 3/3 real duplicates merge, 8/8 negatives decline, three runs. See README 'Second opinion from Jev'."
-  },
+  "description": "Notion Contacts: Duplicate of set by a person -> merge the source into the target unless the two carry different LinkedIn profiles (since 2026-10-21 the person's call stands otherwise; the Jev name-mismatch check was removed). Fills empty target fields, ORs checkboxes, UNIONS every multi-value property, never copies the Duplicate of / Possible duplicate relations, comments on the source with what was copied, then moves it to the Notion trash (never a permanent delete) unless it has page content or is older than the target, in which case it is left in place.",
   "is_private_note": "Corrected 2026-10-03: get-workflow reports is_private false, so this Zap is account-visible. The previous `true` here (and CLAUDE.md listing it as a grandfathered private Zap) were wrong."
 }
