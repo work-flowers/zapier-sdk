@@ -708,6 +708,355 @@ async function findNameMatchedContacts(fullName: string): Promise<NameMatch[]> {
   return matches;
 }
 
+// --- Possible-duplicate flags: looser candidates, judged by Jev --------------
+//
+// A new contact used to be flagged `Possible duplicate of` only against exact
+// name matches (sorted tokens). That misses the duplicates people actually
+// create: "Ustaz Syakir" / "Syakir Samsaimon" (an honorific), "Appi" /
+// "Appireddy Pamulapati" (a shortened name), "annag579 Gibeva" / "Anna Gibaeva"
+// (a mangled Luma profile), a typo'd domain. So candidates are gathered by
+// looser signals (`flagCandidateReasons`) and Jev judges each one that isn't an
+// exact name match. The flag is a review queue, never a merge: a person still
+// decides, by setting `Duplicate of`.
+//
+// Measured offline on 2026-10-21 (jev-1.13.0) over all 1,050 live contacts:
+// the looser search produced 187 candidate pairs. On the 175 that could be
+// labelled (7 duplicates), exact name alone caught 2 with 1 false flag; Jev at
+// P(same person) >= 0.6 caught 6 with none; exact name OR Jev, never across
+// two different LinkedIn profiles, caught all 7 with none. Real duplicates
+// scored >= 0.80 and different people <= 0.46, so 0.6 sits in the gap. Small
+// sample: see the README before moving the bar.
+
+/** P(same person) at or above this flags a non-exact candidate. */
+const JEV_FLAG_MIN = 0.6;
+/** Jev calls per new contact, at most: the strongest candidates first. */
+const JEV_FLAG_MAX_CANDIDATES = 5;
+
+/** The questions the offline check asked, one pair per call, exactly as
+ *  merge-duplicate-contacts asked them until 2026-10-21. Only `same_person`
+ *  decides; `evidence` is logged, and kept so the scores match the check. */
+const JEV_SAME_PERSON_QUESTIONS = {
+  same_person: {
+    type: "noul",
+    instructions: "Do `record_a` and `record_b` describe the same real person?",
+    criteria: {
+      true: "The names are compatible AND a specific identifier ties the records together. Compatible names: the same surname with given names that are the same or forms of one another (a shortened or extended given name, a nickname, an honorific, different word order), or one record carries a placeholder name. Specific identifiers: the same personal email address; the same mailbox name (the part before @) at the domains of related companies; a LinkedIn handle that spells the other record's name; a note that names the other record.",
+      false:
+        "The given names are different names rather than forms of one another, or nothing specific links them: only a shared company, a shared surname, a shared common full name, or a shared generic/role address.",
+    },
+  },
+  evidence: {
+    type: "score",
+    instructions: "How strong is the identifying evidence that links `record_a` and `record_b` to one person?",
+    criteria: [
+      "Nothing links them beyond coincidence, or their given names conflict",
+      "Only weak signals such as a shared surname, a common name, or the same employer",
+      "One specific identifier with compatible names, such as an identical personal email address, the same mailbox name at related company domains, a LinkedIn handle spelling the other's name, or an explicit note",
+      "Several independent specific identifiers agree",
+    ],
+  },
+};
+
+/** Mailbox names that say nothing about who reads them. */
+const ROLE_LOCALS = new Set([
+  "info", "hello", "admin", "contact", "sales", "support", "team", "office", "hr", "accounts", "payables",
+  "finance", "ask", "hi", "enquiries", "mail", "marketing", "partners", "careers", "jobs", "billing", "noreply",
+  "events", "orders",
+]);
+
+/** The identity-bearing side of a contact, for matching and for Jev. */
+export interface PersonRecord {
+  name: string;
+  first: string;
+  last: string;
+  /** Primary + Secondary Email, lowercased. */
+  emails: string[];
+  linkedin: string | null;
+  /** Shown to Jev only. */
+  extra?: Record<string, string | string[]>;
+}
+
+export interface FlagCandidate {
+  id: string;
+  record: PersonRecord;
+  reasons: string[];
+}
+
+function nameTokens(s: string): string[] {
+  return (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").filter(Boolean);
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** A LinkedIn profile slug, so `linkedin.com/in/foo/` and `http://www.linkedin.com/in/foo`
+ *  compare equal. "" when not a profile URL. */
+export function linkedinSlug(url: string | null): string {
+  const m = (url ?? "").toLowerCase().match(/linkedin\.com\/in\/([^/?#]+)/);
+  return m?.[1] ?? "";
+}
+
+/** Both records carry a LinkedIn profile and they differ: two real people. */
+export function linkedinConflict(a: string | null, b: string | null): boolean {
+  const sa = linkedinSlug(a);
+  const sb = linkedinSlug(b);
+  return sa !== "" && sb !== "" && sa !== sb;
+}
+
+/** The name to match on: a contact titled with an email address is matched on
+ *  its First/Last Name instead. */
+function matchName(r: PersonRecord): string {
+  if (!r.name.includes("@")) return r.name;
+  return [r.first, r.last].filter(Boolean).join(" ") || r.name.split("@")[0];
+}
+
+function compatibleFirst(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a))) return true;
+  return Math.min(a.length, b.length) >= 5 && levenshtein(a, b) <= 1;
+}
+
+function localParts(r: PersonRecord): Set<string> {
+  return new Set(r.emails.map((e) => e.split("@")[0].replace(/[^a-z0-9]/g, "")).filter(Boolean));
+}
+
+/**
+ * Why `c` is a candidate duplicate of `subject`, or [] when it isn't. The
+ * signals the offline check used: an exact name (sorted tokens), a name within
+ * two edits, a shared surname with a compatible given name, the same mailbox
+ * name at another domain, a mailbox name that spells the other's full name, the
+ * same LinkedIn profile, and a rare name word they share (`rareTokens`: held by
+ * at most two other contacts, which catches honorifics and reordered names).
+ */
+export function flagCandidateReasons(subject: PersonRecord, c: PersonRecord, rareTokens: Set<string>): string[] {
+  const reasons: string[] = [];
+  const sTok = nameTokens(matchName(subject));
+  const cTok = nameTokens(matchName(c));
+  const sKey = normalizeNameKey(matchName(subject));
+  const cKey = normalizeNameKey(matchName(c));
+  if (sKey && sKey === cKey) reasons.push("exact-name");
+  if (sKey && cKey && sKey !== cKey && levenshtein(sKey, cKey) <= 2) reasons.push("fuzzy-name");
+
+  const surnames = (r: PersonRecord, t: string[]) =>
+    new Set([...nameTokens(r.last), ...(t.length >= 2 ? [t[t.length - 1]] : [])]);
+  const firstOf = (r: PersonRecord, t: string[]) => nameTokens(r.first)[0] ?? t[0] ?? "";
+  const shared = [...surnames(subject, sTok)].filter((s) => s.length >= 2 && surnames(c, cTok).has(s));
+  if (shared.length > 0 && sKey !== cKey && compatibleFirst(firstOf(subject, sTok), firstOf(c, cTok))) {
+    reasons.push("surname+compatible-first");
+  }
+
+  const sLocals = localParts(subject);
+  const cLocals = localParts(c);
+  if ([...sLocals].some((l) => l.length >= 4 && !ROLE_LOCALS.has(l) && cLocals.has(l))) reasons.push("same-local-part");
+  const concat = (t: string[]) => (t.length >= 2 ? [t.join(""), [...t].reverse().join("")] : []);
+  const spells = (t: string[], locals: Set<string>) =>
+    concat(t).some((n) => n.length >= 6 && [...locals].some((l) => l.includes(n)));
+  if (spells(sTok, cLocals) || spells(cTok, sLocals)) reasons.push("local-part-spells-name");
+
+  const sSlug = linkedinSlug(subject.linkedin);
+  if (sSlug && sSlug === linkedinSlug(c.linkedin)) reasons.push("same-linkedin");
+
+  if (sKey !== cKey && sTok.some((t) => t.length >= 5 && rareTokens.has(t) && cTok.includes(t))) {
+    reasons.push("shared-rare-token");
+  }
+  return reasons;
+}
+
+/**
+ * Should the new contact be flagged against this candidate? Never across two
+ * different LinkedIn profiles; always on an exact name; otherwise only when Jev
+ * puts P(same person) at or above JEV_FLAG_MIN. No score (Jev unavailable, or
+ * the candidate was past the cap) means no flag.
+ */
+export function decideFlag(
+  subject: PersonRecord,
+  c: FlagCandidate,
+  pSame: number | null,
+): { flag: boolean; why: string } {
+  if (linkedinConflict(subject.linkedin, c.record.linkedin)) return { flag: false, why: "different LinkedIn profiles" };
+  if (c.reasons.includes("exact-name")) return { flag: true, why: "exact name" };
+  if (pSame === null) return { flag: false, why: "no Jev score" };
+  return pSame >= JEV_FLAG_MIN
+    ? { flag: true, why: `Jev P(same person) ${pSame.toFixed(2)}` }
+    : { flag: false, why: `Jev P(same person) ${pSame.toFixed(2)} below ${JEV_FLAG_MIN}` };
+}
+
+/** What Jev sees of a record: identity fields only, empties dropped. */
+export function jevSummary(r: PersonRecord): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  if (r.name) out.Name = r.name;
+  if (r.first) out["First Name"] = r.first;
+  if (r.last) out["Last Name"] = r.last;
+  if (r.emails[0]) out["Primary Email"] = r.emails[0];
+  if (r.emails.length > 1) out["Secondary Email"] = r.emails.slice(1);
+  if (r.linkedin) out.Linkedin = r.linkedin;
+  return { ...out, ...(r.extra ?? {}) };
+}
+
+function plainText(prop: any): string {
+  return ((prop?.title ?? prop?.rich_text ?? []) as any[])
+    .map((t) => firstString(t?.plain_text) ?? "")
+    .join("")
+    .trim();
+}
+
+/** A Contacts page from a data source query, as a PersonRecord. */
+function pageToRecord(page: any): PersonRecord {
+  const props = page?.properties ?? {};
+  const emails = [
+    cleanEmail(props["Primary Email"]?.email),
+    ...(props["Secondary Email"]?.multi_select ?? []).map((o: any) => cleanEmail(o?.name)),
+  ].filter((e): e is string => typeof e === "string");
+  const extra: Record<string, string | string[]> = {};
+  const title = plainText(props["Job Title"]);
+  if (title) extra["Job Title"] = title;
+  const company = (props.Company?.rollup?.array ?? []).map((v: any) => plainText(v)).filter(Boolean);
+  if (company.length) extra.Company = company;
+  for (const key of ["City", "Country"]) {
+    const v = firstString(props[key]?.select?.name);
+    if (v) extra[key] = v;
+  }
+  for (const key of ["Note", "Bio"]) {
+    const v = plainText(props[key]).slice(0, 600);
+    if (v) extra[key] = v;
+  }
+  return {
+    name: plainText(props.Name),
+    first: plainText(props["First Name"]),
+    last: plainText(props["Last Name"]),
+    emails,
+    linkedin: firstString(props.Linkedin?.url),
+    extra,
+  };
+}
+
+/**
+ * Live contacts that look like `subject` by any of the looser signals. One
+ * OR-query on the data source: Name contains any of the subject's name words
+ * (3+ letters) or the first three letters of its surname, or Primary Email
+ * contains one of its mailbox names. Rarity of a
+ * name word is counted on the same results. Excludes `selfId`, anything in the
+ * trash, and merged-away contacts (`Duplicate of` set).
+ */
+async function findFlagCandidates(subject: PersonRecord, selfId: string): Promise<FlagCandidate[]> {
+  const words = [...new Set([...nameTokens(matchName(subject)), ...nameTokens(subject.first), ...nameTokens(subject.last)])]
+    .filter((t) => t.length >= 3)
+    .slice(0, 6);
+  const locals = [...localParts(subject)].filter((l) => l.length >= 4 && !ROLE_LOCALS.has(l)).slice(0, 4);
+  // A misspelt surname keeps its first letters more often than not ("Gibeva" /
+  // "Gibaeva"), so the first three letters of each surname word are searched too.
+  const prefixes = nameTokens(subject.last || matchName(subject).split(" ").slice(-1)[0])
+    .filter((t) => t.length >= 4)
+    .map((t) => t.slice(0, 3));
+  const or = [
+    ...[...new Set([...words, ...prefixes])].map((w) => ({ property: "Name", title: { contains: w } })),
+    ...locals.map((l) => ({ property: "Primary Email", email: { contains: l } })),
+  ];
+  if (or.length === 0) return [];
+
+  const pages: any[] = [];
+  let cursor: string | null = null;
+  for (let guard = 0; guard < 3; guard++) {
+    const res = await sdk.fetch(`${NOTION_API}/data_sources/${CONTACTS_DS}/query`, {
+      method: "POST",
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({ filter: { or }, page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
+    });
+    if (!res.ok) break;
+    const body: any = await res.json();
+    pages.push(...(body?.results ?? []));
+    cursor = body?.has_more === true ? firstString(body?.next_cursor) : null;
+    if (!cursor) break;
+  }
+
+  const live = pages.filter(
+    (p) =>
+      p?.in_trash !== true &&
+      p?.archived !== true &&
+      !sameNotionId(firstString(p?.id), selfId) &&
+      (p?.properties?.[DUPLICATE_OF_PROP]?.relation ?? []).length === 0,
+  );
+  const records = live.map((p) => ({ id: firstString(p?.id) as string, record: pageToRecord(p) })).filter((x) => x.id);
+  // Rare: a name word held by at most two OTHER contacts. Counted on these
+  // results, which hold every contact whose Name contains the word.
+  const rare = new Set(
+    words.filter((w) => records.filter((x) => nameTokens(matchName(x.record)).includes(w)).length <= 2),
+  );
+  const out: FlagCandidate[] = [];
+  for (const x of records) {
+    if (out.some((o) => sameNotionId(o.id, x.id))) continue;
+    const reasons = flagCandidateReasons(subject, x.record, rare);
+    if (reasons.length > 0) out.push({ id: x.id, record: x.record, reasons });
+  }
+  // Strongest first: Jev is capped at JEV_FLAG_MAX_CANDIDATES calls.
+  return out.sort((a, b) => b.reasons.length - a.reasons.length);
+}
+
+/**
+ * Jev's P(same person) for each candidate that needs a judgement (not an exact
+ * name, no LinkedIn conflict), one pair per call as in the offline check, at
+ * most JEV_FLAG_MAX_CANDIDATES. Best-effort and never throws: a 429/5xx is
+ * retried twice inside the step, and any failure leaves that candidate unscored
+ * (so unflagged, unless it is an exact name match).
+ */
+async function scoreFlagCandidates(
+  subject: PersonRecord,
+  candidates: FlagCandidate[],
+): Promise<{ scores: Record<string, { pSame: number; evidence: number | null }>; model: string | null }> {
+  const scores: Record<string, { pSame: number; evidence: number | null }> = {};
+  let model: string | null = null;
+  const toJudge = candidates
+    .filter((c) => !c.reasons.includes("exact-name") && !linkedinConflict(subject.linkedin, c.record.linkedin))
+    .slice(0, JEV_FLAG_MAX_CANDIDATES);
+  for (const c of toJudge) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await sdk.fetch(JEV_URL, {
+          connection: JEV_CONNECTION,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: JEV_MODEL,
+            state: { record_a: jevSummary(subject), record_b: jevSummary(c.record) },
+            questions: JEV_SAME_PERSON_QUESTIONS,
+          }),
+        });
+        const text = await res.text();
+        if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+          continue;
+        }
+        if (res.status !== 200) {
+          console.log(`Jev rejected the duplicate check for ${c.id} (${res.status}): ${text.slice(0, 200)}`);
+          break;
+        }
+        const body = JSON.parse(text);
+        model = firstString(body?.model) ?? model;
+        const p = body?.answers?.same_person?.noul;
+        const e = body?.answers?.evidence?.score;
+        if (typeof p === "number") scores[c.id] = { pSame: p, evidence: typeof e === "number" ? e : null };
+        break;
+      } catch (err) {
+        console.log(`Jev duplicate check failed for ${c.id}: ${String((err as Error)?.message ?? err)}`);
+        break;
+      }
+    }
+  }
+  return { scores, model };
+}
+
 /** Map Luma approval_status to the Notion "Approval Status" select option. */
 function mapApprovalStatus(status: string | null): string {
   switch ((status ?? "").toLowerCase()) {
@@ -1240,6 +1589,10 @@ const workflow = defineDurable(
     ];
     let contactCreated = false;
     let nameMatchedFlags: string[] = [];
+    let duplicateCheck: {
+      model: string | null;
+      candidates: Array<{ id: string; reasons: string[]; flag: boolean; why: string; score: { pSame: number; evidence: number | null } | null }>;
+    } | null = null;
     let primaryChoice: { primary: string; secondaries: string[]; reason: string } | null = null;
     let domainCheck: { jevCalled: boolean; model: string | null; verdicts: Record<string, DomainVerdict> | null } | null =
       null;
@@ -1317,12 +1670,39 @@ const workflow = defineDurable(
         }),
       );
 
-      // Flag a brand-new contact against every name-equivalent record so it
-      // surfaces for review. Best-effort — never fails the run.
+      // Flag a brand-new contact against likely duplicates so they surface for
+      // review: exact name matches, plus looser candidates Jev judges to be
+      // the same person (see "Possible-duplicate flags"). Best-effort — none
+      // of these three steps fails the run.
+      const subject: PersonRecord = {
+        name: fullName,
+        first: guest.firstName ?? "",
+        last: guest.lastName ?? "",
+        emails: [primary, ...secondaries],
+        linkedin: null,
+      };
+      const flagCandidates: FlagCandidate[] = await ctx.step("find-flag-candidates", async () => {
+        try {
+          return await findFlagCandidates(subject, newContactPageId);
+        } catch (err) {
+          console.log(`flag-candidate query failed: ${String((err as Error)?.message ?? err)}`);
+          return [];
+        }
+      });
+      let jevFlag: Awaited<ReturnType<typeof scoreFlagCandidates>> = { scores: {}, model: null };
+      if (flagCandidates.length > 0) {
+        jevFlag = await ctx.step("jev-flag-candidates", async () => scoreFlagCandidates(subject, flagCandidates));
+      }
+      duplicateCheck = {
+        model: jevFlag.model,
+        candidates: flagCandidates.map((c) => {
+          const score = jevFlag.scores[c.id] ?? null;
+          return { id: c.id, reasons: c.reasons, ...decideFlag(subject, c, score ? score.pSame : null), score };
+        }),
+      };
+      const toFlag = duplicateCheck.candidates.filter((c) => c.flag).map((c) => c.id);
       nameMatchedFlags = await ctx.step("flag-name-matched-contacts", async () => {
-        const matches = (await findNameMatchedContacts(fullName))
-          .map((m) => m.id)
-          .filter((id) => !sameNotionId(id, newContactPageId));
+        const matches = toFlag.filter((id) => !sameNotionId(id, newContactPageId));
         if (matches.length === 0) return [];
         const existing = (await readPossibleDuplicateLinks(newContactPageId)) ?? [];
         const union = [...existing];
@@ -1589,6 +1969,7 @@ const workflow = defineDurable(
       contactPageId,
       contactCreated,
       nameMatchedFlags,
+      duplicateCheck,
       sameOrgNameMatch,
       secondariesAdded,
       collidingPageIds,
