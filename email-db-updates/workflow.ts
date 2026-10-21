@@ -313,7 +313,11 @@ function pageUrlToUuid(url: string): string | null {
 function parseMailMetadata(text: string): MailMetadata | null {
   const mailMatch = text.match(/<mail>([\s\S]*?)<\/mail>/);
   if (!mailMatch) return null;
-  const mailBody = mailMatch[1];
+  // Notion has rendered line breaks as both `<br>` and (since ~2026-10-20)
+  // `<br />`. Normalise once here so the separator split, extractField and the
+  // context unescape below only ever see `<br>`. Before this, a `<br />` block
+  // parsed to all-empty fields and the run finished as a silent no-op.
+  const mailBody = mailMatch[1].replace(/<br\s*\/?>/gi, "<br>");
 
   const messages = mailBody
     .split(/(?:<br>|\s)*-{3,}(?:<br>|\s)*/)
@@ -642,9 +646,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     const meta = await ctx.step("parse-mail", async () =>
       parseMailMetadata(parsedText),
     );
-    if (!meta) {
-      console.log(`Mail block on ${pageId} could not be parsed; skipping.`);
-      return { skipped: true, reason: "mail block unparseable", pageId };
+    // A mail block that yields neither a sender nor a message id is a real
+    // email whose format we failed to understand (Notion changed its rendering
+    // once already) — throw so it surfaces as a red run, never a silent skip.
+    if (!meta || (!meta.from && !meta.messageId)) {
+      throw new Error(
+        `Mail block on ${pageId} parsed to no From and no MessageId — the mail-block format has likely changed.`,
+      );
     }
     console.log(
       `Parsed mail: from=${meta.from} to=${meta.to.length} cc=${meta.cc.length} messageId=${meta.messageId}`,

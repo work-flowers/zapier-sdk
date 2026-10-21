@@ -9,7 +9,7 @@ Notion DB automation on the **Emails** data source — **When page added** → *
 ## What it does
 
 1. **Polls for the mail block** (up to ~90s; Notion populates it asynchronously after page creation). Mail blocks are **not exposed by the public Notion API** (they come back as `unsupported`), so the page is fetched through Notion MCP via the *MCP Client by Zapier* app — the same route the Worker and the original Zap used. Each fetch is a billed action call, so the loop is one fetch plus up to 8 wait-and-retry rounds. When the API adds mail-block support, switch to `blocks.children` and drop the MCP dependency.
-2. **Parses the latest message** in the thread: `From`, `To`, `Cc`, `Subject`, `MessageId`; `Gmail Thread ID` and `Date Received` come from the page's own properties, with mail-header fallback for the date.
+2. **Parses the latest message** in the thread: `From`, `To`, `Cc`, `Subject`, `MessageId`; `Gmail Thread ID` and `Date Received` come from the page's own properties, with mail-header fallback for the date. A block that yields **neither a sender nor a message id throws** (see "Mail-block format").
 3. **Resolves addresses**:
    - External addresses → Contact page IDs via the **email → page-id Zapier Table** (`01JYEPSEARXB2Z6BJRCMFGXBC2`; free reads; one row per address, Primary *and* Secondary, kept in sync by [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table/)). Blocklisted addresses (Zapier Table `01KQY6RB1TJ9X7BAYBRRRKB35S`) and `@work.flowers` ones are dropped first.
    - Unknown addresses are classified with AI by Zapier (individual vs. service account); a Contact page is created for each individual (capped at 10 per run), **with the Contacts default template applied** (repo rule 5) and **with the person's name when the email reveals one** (see below), and its address indexed straight into the Table so back-to-back emails from the same new sender can't race the sync durable into a duplicate contact.
@@ -22,6 +22,7 @@ flowchart TD
     A["Webhook: Emails DB automation<br/>(page added)"] --> B{"Poll via Notion MCP:<br/>mail block present?<br/>(≤9 fetches, 10s apart)"}
     B -- "never appears" --> S(["Skip (clean no-op)"])
     B -- yes --> C["Parse latest message:<br/>From / To / Cc / MessageId;<br/>Thread ID + Date from properties"]
+    C -- "no From and no MessageId" --> X(["Throw (red run):<br/>mail-block format changed"])
     C --> D["Internal users:<br/>users.list → @work.flowers IDs"]
     C --> E["External addresses:<br/>drop blocklisted + internal"]
     E --> F{"Email → page-id<br/>Table lookup"}
@@ -39,6 +40,14 @@ flowchart TD
     L -- "yes: wait 90s<br/>(enrichment settles)" --> M
     L -- no --> M["Inherit from contacts:<br/>Related Company → Companies,<br/>open Deals → Deals (merged,<br/>never dropped)"]
 ```
+
+## Mail-block format
+
+Notion renders the mail block as enhanced markdown: messages latest-first, separated by `---`, each a run of `Header: value` lines joined by line-break tags. **Notion changed those tags from `<br>` to `<br />` between 2026-10-20 00:33 and 2026-10-21 07:51 UTC**, and the block also began opening with a leading `---`. The parser matched only `<br>`, so the leading `<br /><br />` was taken as the "latest message" and every field came back empty. Each run then *finished* with nothing patched and no alert. Two emails were hit before it was noticed (the Palmera NDA thread and a Scheduled newsletter).
+
+`parseMailMetadata` now normalises any `<br>`, `<br/>` or `<br />` to `<br>` once, before splitting, so the separator split, `extractField` and the context unescape all see one form. Verified on five real blocks pulled from run journals: the three `<br>`-era ones (16, 19 and 20 Oct) parse byte-identically to the old code, and both `<br />` ones now resolve their From/To/Cc, MessageId and display names.
+
+**A mail block that parses to no `From` and no `MessageId` now throws** instead of finishing. That is the shape of the next format change, and a red run with a Zapier alert is how it should surface (the repo's unrecognized-payload rule), not a green no-op.
 
 ## Naming a new contact
 
@@ -119,7 +128,7 @@ Carried over from the Worker (differences from the original Zap): the `Contacts`
 | `alerts@github.com` | service | ✅ |
 | `mchen@terrascope.com` | individual | ✅ |
 
-**Naming** (added 2026-07-31). The `Email Context` input is the latest message, `<br>`-unescaped and capped at 4000 chars:
+**Naming** (added 2026-07-31). The `Email Context` input is the latest message, line-break-unescaped and capped at 4000 chars:
 
 | Case | Address | Name / confidence | Correct? |
 | --- | --- | --- | --- |
