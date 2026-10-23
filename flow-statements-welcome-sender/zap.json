@@ -1,12 +1,12 @@
 {
   "name": "flow-statements-welcome-sender",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a16861-a9b3-7273-b340-6021abe2d66a",
+  "current_version_id": "01a16861-bc74-7f32-b52f-29f058672198",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASYlNr6VP-QQvHS-NBx02A",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "Flow Statements welcome sequence — sender",
     "description": "Hourly sender for the Flow Statements welcome sequence (Buttondown Basic has no Automations). Reads active rows due in the Welcome Sequence Zapier Table, re-checks each subscriber is still regular, and sends that step's private `imported` Buttondown email to that one subscriber. Then advances the row: offsets are days from confirmed_at (0, 4, 11, 18, 25, 32), with catch-up sends at least 2 days apart. A row is paused, and the run goes red, after 3 consecutive send failures.",
     "enable_on_publish": false
