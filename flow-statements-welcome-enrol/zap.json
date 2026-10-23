@@ -1,0 +1,32 @@
+{
+  "name": "flow-statements-welcome-enrol",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "Flow Statements welcome sequence — enrol",
+    "description": "Buttondown confirmed subscriber -> one row in the Welcome Sequence Zapier Table (next_step 1, due now, status active), which flow-statements-welcome-sender works through hourly. Insert-only upsert on the lowercased email, so a second confirmation never resets a subscriber's sequence. Skips non-regular subscribers and the two known list-bombing patterns (+km<hex> plus-tags; referrer /blog/page/2/ with no form id).",
+    "enable_on_publish": false
+  },
+  "trigger": {
+    "selected_api": "ButtondownCLIAPI@2.0.4",
+    "action": "confirmedSubscriber",
+    "authentication_id": "63486162",
+    "params": {},
+    "trigger_note": "Same app version, trigger and connection as new-buttondown-subscriber-update-in-notion, whose live claim on this combination is proven. Confirmed, not created: double opt-in keeps unconfirmed bot signups out. 63486162 is the numeric id of the 'workflowers' Buttondown connection (02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe).",
+    "authentication_note": "The official Buttondown app connection, used only to claim the trigger. The workflow itself never calls Buttondown."
+  },
+  "connections": {},
+  "tables": {
+    "01M5M4KH7C1KCFD3CDRSAF46XA": "Welcome Sequence — one row per subscriber, created 2026-10-23. Written here (insert only), read and advanced by flow-statements-welcome-sender. Columns: email (f1), subscriber_id (f2), confirmed_at (f3), next_step (f4), next_send_at (f5), last_sent_step (f6), last_sent_at (f7), status (f8), stop_reason (f9), fail_count (f10), last_error (f11)."
+  },
+  "parked_note": "Parked disabled until the six refreshed sequence emails exist in Buttondown and their ids are in flow-statements-welcome-sender's SEQUENCE. Enrolling earlier would queue subscribers whose welcome email then arrives late. Enable this Zap and the sender together.",
+  "zapier_durable_version": "0.12.5",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.102.2"
+  }
+}
