@@ -5,7 +5,7 @@ Hourly sender for the **Flow Statements welcome sequence**: a welcome email plus
 - [`flow-statements-welcome-enrol`](../flow-statements-welcome-enrol/) adds a row to the **Welcome Sequence** Table when a subscriber confirms.
 - This Zap works through that Table every hour and sends whatever is due.
 
-**Status: parked (disabled).** All five emails exist in Buttondown (created 2026-10-24) and their ids are in `SEQUENCE`. What's left is enabling both Zaps; see *Going live*.
+**Status: enabled 2026-10-24.** All five emails exist in Buttondown (created 2026-10-24) and their ids are in `SEQUENCE`.
 
 ## The sequence
 
@@ -82,7 +82,7 @@ Table `01M5M4KH7C1KCFD3CDRSAF46XA` (**Welcome Sequence**), one row per subscribe
 
 1. ~~Create the five `imported` emails and put their ids into `SEQUENCE`.~~ Done 2026-10-24.
 2. Optionally walk a test row through the real emails with `only_email` + `now`. Each email can only be sent to one subscriber once, so use an address that hasn't had it.
-3. `enable-workflow` on this Zap, then on `flow-statements-welcome-enrol`, and update both `zap.json` files and the root README.
+3. ~~`enable-workflow` on this Zap, then on `flow-statements-welcome-enrol`.~~ Done 2026-10-24.
 
 ## Testing (2026-10-23, `run-durable`, live Table and Buttondown)
 
