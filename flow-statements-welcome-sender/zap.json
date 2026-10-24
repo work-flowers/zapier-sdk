@@ -8,7 +8,7 @@
   "deploy": {
     "state": "published",
     "workflow_name": "Flow Statements welcome sequence — sender",
-    "description": "Hourly sender for the Flow Statements welcome sequence (Buttondown Basic has no Automations). Reads active rows due in the Welcome Sequence Zapier Table, re-checks each subscriber is still regular, and sends that step's private `imported` Buttondown email to that one subscriber. Then advances the row: offsets are days from confirmed_at (0, 4, 11, 18, 25, 32), with catch-up sends at least 2 days apart. A row is paused, and the run goes red, after 3 consecutive send failures.",
+    "description": "Hourly sender for the Flow Statements welcome sequence (Buttondown Basic has no Automations). Reads active rows due in the Welcome Sequence Zapier Table, re-checks each subscriber is still regular, and sends that step's private `imported` Buttondown email to that one subscriber. Then advances the row: offsets are days from confirmed_at (0, 4, 11, 18, 25), with catch-up sends at least 2 days apart. A row is paused, and the run goes red, after 3 consecutive send failures.",
     "enable_on_publish": false
   },
   "trigger": {
@@ -30,7 +30,7 @@
   "tables": {
     "01M5M4KH7C1KCFD3CDRSAF46XA": "Welcome Sequence — sequence state, one row per subscriber. Rows are created by flow-statements-welcome-enrol; this Zap reads status=active rows and updates them after each send. Columns: email (f1), subscriber_id (f2), confirmed_at (f3), next_step (f4), next_send_at (f5), last_sent_step (f6), last_sent_at (f7), status (f8), stop_reason (f9), fail_count (f10), last_error (f11)."
   },
-  "parked_note": "Parked disabled until the six refreshed sequence emails exist in Buttondown and their ids replace the nulls in SEQUENCE. A due step with no id fails the row, so enabling early would pause every subscriber after three hours. Enable this Zap and the enrol Zap together.",
+  "parked_note": "Parked disabled until Dennis enables the welcome sequence. All five emails exist in Buttondown and their ids are in flow-statements-welcome-sender's SEQUENCE (2026-10-24). Enable the sender, then the enrol Zap.",
   "zapier_durable_version": "0.12.5",
   "dependencies": {
     "zod": "4.4.3",

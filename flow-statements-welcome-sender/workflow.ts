@@ -25,15 +25,15 @@ const WELCOME_TABLE = "01M5M4KH7C1KCFD3CDRSAF46XA";
 // issue, which the per-subscriber endpoint would also accept. Changing an
 // offset reschedules everyone still waiting on that step.
 //
-// The ids are null until the refreshed emails exist in Buttondown. A due step
-// with no id throws, so the Zap must stay disabled until all six are filled.
+// The copy for each email lives in emails/ next to this file.
+//
+// All five were created as private `imported` emails on 2026-10-24.
 const SEQUENCE: ReadonlyArray<{ step: number; offsetDays: number; emailId: string | null; note: string }> = [
-  { step: 1, offsetDays: 0, emailId: null, note: "New welcome email" },
-  { step: 2, offsetDays: 4, emailId: null, note: "I'm Not Vibe-Coding the Next Salesforce (from em_26s9k9k7gn9xbarq0grgz61zns)" },
-  { step: 3, offsetDays: 11, emailId: null, note: "Five practical WhatsApp automations for small teams (from em_2ps5r1kk548bvryp1d9dyq560w)" },
-  { step: 4, offsetDays: 18, emailId: null, note: "Why Notion Workers + Dashboards are my New BI Stack (from em_4tsdpj2bjq8xh9tmzma3tnr26m)" },
-  { step: 5, offsetDays: 25, emailId: null, note: "How Knoxx Foods Built the Operational Foundations for AI (from em_6kppy625nv8cp8nzan86h4fyq2)" },
-  { step: 6, offsetDays: 32, emailId: null, note: "AI Is Writing Faster Than We Can Read (from em_32ng61zqng88na5dmfxe0nhf90)" },
+  { step: 1, offsetDays: 0, emailId: "em_7xspe63xkp8qf9cx6tzeyg776c", note: "Welcome to Flow Statements (emails/01-welcome.md)" },
+  { step: 2, offsetDays: 4, emailId: "em_7n1k088fjy8vjvn8e97ce8f8kw", note: "Five practical WhatsApp automations for small teams (from em_2ps5r1kk548bvryp1d9dyq560w)" },
+  { step: 3, offsetDays: 11, emailId: "em_0pyqbbr72298jry887gskf5a1e", note: "Why Notion Workers + Dashboards are my New BI Stack (from em_4tsdpj2bjq8xh9tmzma3tnr26m)" },
+  { step: 4, offsetDays: 18, emailId: "em_6dtst7n8pp887rwpz2bpy7s1vb", note: "How Knoxx Foods Built the Operational Foundations for AI (from em_6kppy625nv8cp8nzan86h4fyq2)" },
+  { step: 5, offsetDays: 25, emailId: "em_0h0nzs4vft99ttxaffpq3s75xk", note: "AI Is Writing Faster Than We Can Read (from em_32ng61zqng88na5dmfxe0nhf90)" },
 ];
 const LAST_STEP = SEQUENCE.length;
 

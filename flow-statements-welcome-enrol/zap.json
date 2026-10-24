@@ -23,7 +23,7 @@
   "tables": {
     "01M5M4KH7C1KCFD3CDRSAF46XA": "Welcome Sequence — one row per subscriber, created 2026-10-23. Written here (insert only), read and advanced by flow-statements-welcome-sender. Columns: email (f1), subscriber_id (f2), confirmed_at (f3), next_step (f4), next_send_at (f5), last_sent_step (f6), last_sent_at (f7), status (f8), stop_reason (f9), fail_count (f10), last_error (f11)."
   },
-  "parked_note": "Parked disabled until the six refreshed sequence emails exist in Buttondown and their ids are in flow-statements-welcome-sender's SEQUENCE. Enrolling earlier would queue subscribers whose welcome email then arrives late. Enable this Zap and the sender together.",
+  "parked_note": "Parked disabled until Dennis enables the welcome sequence. All five emails exist in Buttondown and their ids are in flow-statements-welcome-sender's SEQUENCE (2026-10-24). Enable the sender, then the enrol Zap.",
   "zapier_durable_version": "0.12.5",
   "dependencies": {
     "zod": "4.4.3",
