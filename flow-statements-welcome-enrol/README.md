@@ -2,7 +2,7 @@
 
 Enrols each newly confirmed Flow Statements subscriber in the five-email welcome sequence. It writes one row to the **Welcome Sequence** Zapier Table, and [`flow-statements-welcome-sender`](../flow-statements-welcome-sender/) sends the emails from there. The sender's README covers the sequence itself and the reason it runs as Zaps rather than Buttondown Automations.
 
-**Status: parked (disabled)** until the five sequence emails exist in Buttondown. Enable it together with the sender (see the sender's README, *Going live*).
+**Status: enabled 2026-10-24**, together with the sender.
 
 ## Trigger
 
