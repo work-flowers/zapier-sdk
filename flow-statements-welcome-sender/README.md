@@ -1,22 +1,23 @@
 # flow-statements-welcome-sender
 
-Hourly sender for the **Flow Statements welcome sequence**: six emails of refreshed evergreen posts, sent to each new subscriber over about a month. Buttondown is on the Basic plan, which has no Automations (`/v1/automations` returns a permission error), so the sequence runs as two Zaps. Buttondown still does all the sending, so its unsubscribe link and suppression rules apply to every email.
+Hourly sender for the **Flow Statements welcome sequence**: a welcome email plus four refreshed evergreen posts, sent to each new subscriber over about a month. Buttondown is on the Basic plan, which has no Automations (`/v1/automations` returns a permission error), so the sequence runs as two Zaps. Buttondown still does all the sending, so its unsubscribe link and suppression rules apply to every email.
 
 - [`flow-statements-welcome-enrol`](../flow-statements-welcome-enrol/) adds a row to the **Welcome Sequence** Table when a subscriber confirms.
 - This Zap works through that Table every hour and sends whatever is due.
 
-**Status: parked (disabled).** The six sequence emails don't exist yet, so `SEQUENCE` in `workflow.ts` still holds `null` ids. See *Going live*.
+**Status: parked (disabled).** All five emails exist in Buttondown (created 2026-10-24) and their ids are in `SEQUENCE`. What's left is enabling both Zaps; see *Going live*.
 
 ## The sequence
 
-| Step | Days after `confirmed_at` | Email |
-| --- | --- | --- |
-| 1 | 0 | New welcome email (to be written) |
-| 2 | 4 | I'm Not Vibe-Coding the Next Salesforce (refreshed from `em_26s9k9k7gn9xbarq0grgz61zns`) |
-| 3 | 11 | Five practical WhatsApp automations for small teams (from `em_2ps5r1kk548bvryp1d9dyq560w`) |
-| 4 | 18 | Why Notion Workers + Dashboards are my New BI Stack (from `em_4tsdpj2bjq8xh9tmzma3tnr26m`) |
-| 5 | 25 | How Knoxx Foods Built the Operational Foundations for AI (from `em_6kppy625nv8cp8nzan86h4fyq2`) |
-| 6 | 32 | AI Is Writing Faster Than We Can Read (from `em_32ng61zqng88na5dmfxe0nhf90`) |
+| Step | Days after `confirmed_at` | Email | Buttondown id |
+| --- | --- | --- | --- |
+| 1 | 0 | [Welcome to Flow Statements](emails/01-welcome.md) (new) | `em_7xspe63xkp8qf9cx6tzeyg776c` |
+| 2 | 4 | [Five practical WhatsApp automations for small teams](emails/02-whatsapp-automations.md) (refreshed from `em_2ps5r1kk548bvryp1d9dyq560w`) | `em_7n1k088fjy8vjvn8e97ce8f8kw` |
+| 3 | 11 | [Why Notion Workers + Dashboards are my New BI Stack](emails/03-notion-workers-bi-stack.md) (from `em_4tsdpj2bjq8xh9tmzma3tnr26m`) | `em_0pyqbbr72298jry887gskf5a1e` |
+| 4 | 18 | [How Knoxx Foods Built the Operational Foundations for AI](emails/04-knoxx-foods.md) (from `em_6kppy625nv8cp8nzan86h4fyq2`) | `em_6dtst7n8pp887rwpz2bpy7s1vb` |
+| 5 | 25 | [AI Is Writing Faster Than We Can Read](emails/05-ai-writing-faster.md) (from `em_32ng61zqng88na5dmfxe0nhf90`) | `em_0h0nzs4vft99ttxaffpq3s75xk` |
+
+The copy for each email is in [`emails/`](emails/), one Markdown file per step with its subject in the front matter. Buttondown holds the live copy: edit an email there with `PATCH /v1/emails/{id}` (an `imported` email stays editable after it has been sent) and keep the file in step. "I'm Not Vibe-Coding the Next Salesforce" was in the original plan and was dropped on 2026-10-24.
 
 The step map is the `SEQUENCE` constant in `workflow.ts`. **Never point a step at an original sent issue**, even though the endpoint would accept one. Each step needs its own new email, with refreshed copy, a 2–3 line intro and the full body. Each must be created in this order:
 
@@ -49,7 +50,7 @@ flowchart TD
   D -- regular --> E{last_sent_step >= next_step?}
   E -- yes --> ADV
   E -- no --> F["Buttondown: POST /subscribers/{id}/emails/{email_id}"]
-  F -- "200, or 400 EMAIL_ALREADY_SENT" --> ADV["row: last_sent_step = step; next_step + 1, next_send_at = confirmed_at + offset (≥ 2 days from now); or status completed after step 6"]
+  F -- "200, or 400 EMAIL_ALREADY_SENT" --> ADV["row: last_sent_step = step; next_step + 1, next_send_at = confirmed_at + offset (≥ 2 days from now); or status completed after the last step"]
   F -- other error / no email id --> FAIL["row: fail_count + 1, last_error"]
   FAIL -- "fail_count reaches 3" --> PAUSE["row: status paused; run throws (Zapier error alert)"]
 ```
@@ -79,14 +80,13 @@ Table `01M5M4KH7C1KCFD3CDRSAF46XA` (**Welcome Sequence**), one row per subscribe
 
 ## Going live
 
-1. Write the welcome email and create the six refreshed `imported` emails (see *The sequence*; refresh notes are in the build handoff).
-2. Put their ids into `SEQUENCE`, open a PR, and merge. The merge republishes this Zap, still disabled.
-3. Optionally walk a test row through the real emails with `only_email` + `now`. Each email can only be sent to one subscriber once, so use an address that hasn't had it.
-4. `enable-workflow` on this Zap, then on `flow-statements-welcome-enrol`, and update both `zap.json` files and the root README.
+1. ~~Create the five `imported` emails and put their ids into `SEQUENCE`.~~ Done 2026-10-24.
+2. Optionally walk a test row through the real emails with `only_email` + `now`. Each email can only be sent to one subscriber once, so use an address that hasn't had it.
+3. `enable-workflow` on this Zap, then on `flow-statements-welcome-enrol`, and update both `zap.json` files and the root README.
 
 ## Testing (2026-10-23, `run-durable`, live Table and Buttondown)
 
-The tests ran against a copy of the workflow whose `SEQUENCE` pointed at two private `[TEST]` emails, with step 3 left `null`. They used a test row for dennis@work.flowers.
+The tests ran on the original six-step plan, against a copy of the workflow whose `SEQUENCE` pointed at two private `[TEST]` emails, with step 3 left `null`. They used a test row for dennis@work.flowers.
 
 | Case | Result |
 | --- | --- |
@@ -106,7 +106,7 @@ Both test rows were deleted afterwards. The two `[TEST]` emails (`em_7mpx0k3aqe8
 ## Open questions from the build handoff
 
 - Whether per-subscriber sends of `imported` emails record opens and clicks anywhere. Analytics read `null` straight after the send.
-- `secondary_id` read `19` straight after each `PATCH` to `imported` (seen again on 2026-10-23), then `null`. Still to confirm: that sequence emails don't consume issue numbers for regular sends.
+- `secondary_id` read `19` straight after each `PATCH` to `imported` (on all five sequence emails on 2026-10-24 too), then `null` on read-back. Still to confirm: that sequence emails don't consume issue numbers for regular sends.
 - Delete the `[TEST]` emails once both are settled.
 
 ## Maintenance notes
