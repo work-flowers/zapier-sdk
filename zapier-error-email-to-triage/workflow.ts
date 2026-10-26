@@ -54,6 +54,17 @@ const MAX_RUN_PAGES = 10;
 
 const ALERT_SENDER = "notifications@mail.zapier.com";
 
+/** This Zap's own name and workflow id. Its own alerts are skipped: on
+ *  2026-10-26 Zapier's daily compute-spend limit stopped runs from starting,
+ *  each unstarted run sent a "couldn't run" email, and each email triggered
+ *  another unstarted run — ~16 runs a minute until the Zap was disabled. An
+ *  unstarted run never reaches this code, so the trigger's Gmail query
+ *  excludes the name too (zap.json); this guard covers a run that does start
+ *  and fails the same way every time (e.g. Notion down). Zapier's email to the
+ *  owner is still the alert for this Zap's own failures. */
+const SELF_ZAP_NAME = "zapier-error-email-to-triage";
+const SELF_WORKFLOW_ID = "01a101d0-37d9-7174-add7-b0528051e06e";
+
 /** Status options on the triage data source. A repeat of a `Resolved` ticket
  *  reopens it; `Won't fix` is a deliberate verdict and stays closed. */
 const STATUS_NEW = "Untriaged";
@@ -215,6 +226,7 @@ function extractAlert(raw: unknown): { alert: Alert } | { skip: string } {
     }
     return { skip: `not-an-alert: from "${from}", subject "${subject}"` };
   }
+  if (subjectZap === SELF_ZAP_NAME) return { skip: "self-alert" };
 
   const body = firstString(m.body_plain, m.text_body, m.body) ?? "";
   const parsed = parseAlertBody(body);
@@ -225,6 +237,7 @@ function extractAlert(raw: unknown): { alert: Alert } | { skip: string } {
         `Body starts: ${body.replace(/\s+/g, " ").slice(0, 400)}`,
     );
   }
+  if (parsed.workflowId === SELF_WORKFLOW_ID) return { skip: "self-alert" };
   return {
     alert: {
       kind,
