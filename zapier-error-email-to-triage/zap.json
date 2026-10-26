@@ -1,7 +1,7 @@
 {
   "name": "zapier-error-email-to-triage",
   "workflow_id": "01a101d0-37d9-7174-add7-b0528051e06e",
-  "current_version_id": "01a101d0-6909-778e-8048-2d3f951a7830",
+  "current_version_id": "01a17a70-f8d3-772d-9ee4-a861e1d0907e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQYbbQ6uXzAZPIFTEMWbMQ",
   "enabled": false,
   "is_private": false,
