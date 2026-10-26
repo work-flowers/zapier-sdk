@@ -2,7 +2,7 @@
 
 When a meeting on `dennis@work.flowers` ends, this Zap logs it as a Harvest time entry if one of the guests works for a Harvest client. The entry is filed on that client's active project under the **Advisory** task. Its notes are the event title and its hours are the event's duration, the same as an entry made with Harvest's own "import from calendar".
 
-**Status:** ⏸️ Ships disabled (`enable_on_publish: false`). Enable it with `enable-workflow <id>` once the first live write has been checked (see [Not yet verified](#not-yet-verified)).
+**Status:** ✅ Enabled 2026-10-26 (shipped parked, then enabled by hand). Client meetings are no longer imported by hand in Harvest: a manual import after the Zap has logged a meeting creates a duplicate.
 
 ## What it does
 

@@ -3,7 +3,7 @@
   "workflow_id": "01a17729-420c-7e57-b99b-d5d38a63daaa",
   "current_version_id": "01a17729-7740-7899-8953-4f0ede50eeca",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQx_uqIwYyhU0bJcO7Xckg",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -33,5 +33,6 @@
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "@zapier/zapier-sdk": "0.115.1"
-  }
+  },
+  "enabled_note": "Enabled by hand with enable-workflow on 2026-10-26, after shipping parked. external_reference was probed live first (see README)."
 }
