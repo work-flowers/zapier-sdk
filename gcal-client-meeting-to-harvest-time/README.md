@@ -65,6 +65,8 @@ These ran through `run-durable` against the live runner on 2026-10-26. None of t
 | Same event with my attendance declined | `skipped: declined` |
 | `{"foo":1}` | throws `Unrecognized Google Calendar event payload` |
 
+**`external_reference` was probed directly on 2026-10-26** through the `harvest_wf` connection. A `POST /v2/time_entries` carrying the same body shape returned `201`, and Harvest stored the reference. It also set `service: "www.google.com"`, so the entry shows a Google icon that links to the event. `GET /v2/time_entries?external_reference_id=<id>` found exactly that entry, and an unknown id returns nothing. The probe entry was deleted straight away.
+
 ## Not yet verified
 
-The **create** path has not run yet, because running it writes a real Harvest entry. In particular, Harvest has not yet been seen to accept `external_reference` on a time entry created with a personal connection (the filter on `external_reference_id` was verified, and returns nothing for an unknown id). If Harvest rejects it, the run fails with Harvest's 4xx message. The fix would then be to drop `external_reference` and keep a Zapier Table of logged event ids instead.
+The workflow's own **create** step has not run end to end, because that writes a real entry. The first client meeting that ends after the Zap is enabled will exercise it.
