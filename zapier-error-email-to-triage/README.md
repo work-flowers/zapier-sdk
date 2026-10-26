@@ -9,8 +9,10 @@ It replaces the `errorsDelta` sync in the notion-workers `zapier-durables-docs` 
 Gmail **New Email Matching Search** on dennis@work.flowers:
 
 ```
-from:notifications@mail.zapier.com subject:("had an error" OR "couldn't run")
+from:notifications@mail.zapier.com subject:("had an error" OR "couldn't run") -subject:"zapier-error-email-to-triage"
 ```
+
+**This Zap never processes its own alerts.** On 2026-10-26 Zapier's platform-wide daily compute-spend limit (`compute_spend_global_exceeded`) stopped runs from starting. Each unstarted run sent a `couldn't run` email, and each email triggered another unstarted run, about 16 runs a minute until the Zap was disabled. An unstarted run never reaches the code, so the exclusion has to be in the Gmail query. `extractAlert()` also skips an alert naming this Zap or its workflow id (`skipped: self-alert`), which covers a run that starts and fails the same way every time. Zapier's email to the owner remains the alert for this Zap's own failures.
 
 Zapier sends two alert subjects for Code Zaps, and both are ticketed:
 
@@ -29,7 +31,9 @@ flowchart TD
   B -- yes --> Z1[skip: empty-payload]
   B -- no --> C{Sender + subject<br/>match an alert?}
   C -- no --> Z2[skip: not-an-alert]
-  C -- yes --> D{Body parses?<br/>workflow id + message}
+  C -- yes --> SA{About this Zap<br/>itself?}
+  SA -- yes --> Z4[skip: self-alert]
+  SA -- no --> D{Body parses?<br/>workflow id + message}
   D -- no --> X[throw: template changed]
   D -- yes --> E{check-account:<br/>getWorkflow}
   E -- not found --> Z3[skip: not a work.flowers Zap<br/>e.g. Knoxx account]
@@ -74,6 +78,7 @@ Writes:
 This repo throws on unrecognised payloads (see `CLAUDE.md`):
 
 - **An empty ping skips.**
+- **An alert about this Zap itself skips** (`self-alert`), to prevent a self-trigger loop. See "Trigger".
 - **A non-alert email skips.** The Gmail search is fuzzy, so a non-alert match is expected noise, not a schema change.
 - **An email from Zapier's alert sender with an alert subject whose body no longer parses THROWS.** That means Zapier changed the template, and skipping it would silently stop all ticketing.
 
@@ -89,7 +94,7 @@ Two alerts for the same new signature arriving within seconds of each other can 
 ## Testing
 
 ```shell
-npm test        # offline, 12 checks: both real alert emails in fixtures/, run matching,
+npm test        # offline, 13 checks: both real alert emails in fixtures/, the self-alert skip, run matching,
                 # journal parsing, and signature/title parity with worker tickets ZAP-54 and ZAP-57
 ```
 

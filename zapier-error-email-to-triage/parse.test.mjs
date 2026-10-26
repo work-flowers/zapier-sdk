@@ -98,6 +98,16 @@ check("other mail from another sender is skipped, not thrown", () => {
   assert.ok("skip" in r2);
 });
 
+check("this Zap's own alerts are skipped (2026-10-26 self-trigger loop)", () => {
+  const byName = fixture("couldnt-run.json");
+  byName.subject = 'Your Zap "zapier-error-email-to-triage" couldn\'t run';
+  byName.body_plain = "nothing parseable";
+  assert.deepEqual(t.extractAlert(byName), { skip: "self-alert" });
+  const byId = fixture("had-an-error.json");
+  byId.body_plain = byId.body_plain.replace(/zapier\.com\/workflow\/[0-9a-f-]{36}/i, "zapier.com/workflow/01a101d0-37d9-7174-add7-b0528051e06e");
+  assert.deepEqual(t.extractAlert(byId), { skip: "self-alert" });
+});
+
 check("an alert whose body no longer parses THROWS (template drift must surface)", () => {
   const f = fixture("had-an-error.json");
   f.body_plain = "Something completely different";
