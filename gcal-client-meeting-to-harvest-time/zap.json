@@ -1,0 +1,37 @@
+{
+  "name": "gcal-client-meeting-to-harvest-time",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "gcal-client-meeting-to-harvest-time",
+    "description": "When a meeting on dennis@work.flowers ends, log it as a Harvest time entry if a guest's email domain belongs to a Harvest client (Domain + Harvest Client ID in the Company IDs Zapier Table 01JM8PH8YM93A482M8BFZ6WKW6). Files it on the client's single active project, task Advisory, with the event title as notes and the event duration as hours. Skips declined, all-day, internal-only and already-logged meetings (by external reference = event id, or a same-day entry with the same title from Harvest's own calendar import).",
+    "enable_on_publish": false
+  },
+  "trigger": {
+    "selected_api": "GoogleCalendarCLIAPI@1.16.0",
+    "action": "event_ended_v2",
+    "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "params": {
+      "calendarid": "dennis@work.flowers"
+    },
+    "trigger_note": "Polling 'Event Ended' trigger, one delivery per event instance id (a recurring event's instances each carry their own id, e.g. `<series>_20261026T063000Z`), so the durable polling-dedupe bug (CLAUDE.md) does not bite: an ended event is never 'updated'. Payload sampled with run-action on 2026-10-26; Zapier adds `duration_minutes`/`duration_hours` to the API event."
+  },
+  "connections": {
+    "harvest_wf": "02df9d5d-89ea-8dab-bb40-8ee0c2ac4362"
+  },
+  "connections_note": "`harvest_wf` is the Harvest connection \"Harvest dennis@work.flowers : Company Flow Pte. Ltd.\", the same one the timer Zaps bind. All Harvest calls go through sdk.fetch to the v2 API: the Zapier Harvest app's Create Time Entry action cannot set `external_reference`, which is what makes a replay find the entry it already made. The trigger authenticates with the work.flowers Google Calendar connection (same as gcal-block-sweep's `gcal_wf`).",
+  "connectionless_apps": {
+    "TableCLIAPI": "listTableRecords on the Company IDs Table — no connection, no task cost"
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "Company IDs — read only. Rows with a Harvest Client ID are clients; their Domain decides whether a guest is from that client. Maintained by notion-companies-to-zapier-table."
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  }
+}
