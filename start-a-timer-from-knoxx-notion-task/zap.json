@@ -1,7 +1,7 @@
 {
   "name": "start-a-timer-from-knoxx-notion-task",
   "workflow_id": "01a0f05b-ba10-76f3-9fc1-a596551d4db2",
-  "current_version_id": "01a0f05b-ecd3-73ee-97e4-3c6fc1347293",
+  "current_version_id": "01a180b3-cfa8-7561-ba7f-a7f607bf6711",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYPMY-6P-xJaqT0pIV7JIw",
   "enabled": true,
   "is_private": false,
