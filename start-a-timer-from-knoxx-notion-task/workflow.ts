@@ -160,6 +160,17 @@ function timeEntryIdFrom(res: unknown): string | null {
 }
 
 // --- Workflow --------------------------------------------------------------
+// Harvest ignores the externalReferenceService / ServiceIconUrl inputs: it sets
+// the service to the permalink's host and looks the icon up in its own platform
+// registry by that host. Notion's page URLs moved to app.notion.com, which the
+// registry doesn't know (the entry gets Harvest's "missing service" image), so
+// point the permalink at www.notion.so, which it does. Those links still open
+// the page.
+function harvestPermalink(url: string | null): string {
+  if (!url) return "";
+  return url.replace(/^https:\/\/(app\.notion\.com|notion\.so)\//, "https://www.notion.so/");
+}
+
 const workflow = defineDurable(
   "start-a-timer-from-knoxx-notion-task",
   async (ctx, rawInput) => {
@@ -243,7 +254,7 @@ const workflow = defineDurable(
           notes,
           externalReferenceId: notes,
           externalReferenceGroupId: "Knoxx",
-          externalReferencePermalink: task.url ?? "",
+          externalReferencePermalink: harvestPermalink(task.url),
           externalReferenceService: "notion.com",
           externalReferenceServiceIconUrl:
             "https://img.logo.dev/notion.com?token=pk_MgvuyiQuRe6IT_XWNAUgrA",
