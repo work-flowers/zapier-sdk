@@ -1,12 +1,14 @@
 # save-tagged-docs-sweep
 
+> **⏸️ Disabled 2026-10-28.** Zapier fixed W6ZE93-VMEWP: the trigger Zap now re-fires when a document it has already seen is tagged again (verified in run history from 2026-10-22), so this backstop is redundant. The workflow is kept, disabled, in case a late tag is ever missed again.
+
 Daily backstop for [`save-tagged-docs-to-notion`](../save-tagged-docs-to-notion/). It lists the Readwise Reader documents tagged **`sendtonotion`** and creates the **"Article Share"** Social Content page for any the shared dedup ledger is missing.
 
 ## Why it exists
 
 The trigger Zap's Readwise trigger is deduped on the document id by the durable runtime (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA), so it fires **once per document, ever**. Reader auto-tags articles when they're saved, which usually uses up that one firing, so a `sendtonotion` tag added later never reaches the workflow. Nothing errors. Missed tags were backfilled by hand on 2026-10-01 and 2026-10-14 before this sweep existed.
 
-**Retire it** once Zapier ships the fix and a late `sendtonotion` tag is seen firing the trigger Zap.
+**Retired 2026-10-28**, after Zapier shipped the fix (see the note at the top).
 
 ## Why no Readwise token is needed
 
