@@ -292,8 +292,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           externalReferenceGroupId: "Notion",
           externalReferencePermalink: harvestPermalink(task.url),
           externalReferenceService: "notion.app",
-          externalReferenceServiceIconUrl:
-            "https://img.logo.dev/notion.so?token=pk_MgvuyiQuRe6IT_XWNAUgrA",
+          // Ignored by Harvest (see harvestPermalink). Token-free on purpose: the
+          // publish analyzer rejects the logo.dev key as a hardcoded credential.
+          externalReferenceServiceIconUrl: "https://www.notion.so/images/favicon.ico",
           spentDate: date,
         },
       }),
