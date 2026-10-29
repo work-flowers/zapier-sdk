@@ -1,5 +1,7 @@
 # gcal-block-sweep-peter
 
+> **2026-10-28: Zapier fixed W6ZE93-VMEWP** — `event_updated` now re-fires for an occurrence it has already delivered (live probe and run history, see `CLAUDE.md`), so moves, renames and declines reach the trigger Zaps' update/delete branches directly. This sweep stays on: the create pass still covers the 30-day horizon, and the reconcile pass still catches "this and following" truncations, which emit no per-occurrence event. Its reconcile pass is now a backstop rather than the only update path.
+
 **Peter's copy of [`gcal-block-sweep`](../gcal-block-sweep/)** — the same workflow, repointed at Peter's two Google Calendars, Peter's two connections and Peter's own **GCal Sync Map (Peter)** Zapier Table (`01M2HT9XPZEASFV09J4A3QTDGT`). The logic is identical to Dennis's file apart from the constants block, the names and **one deliberate deviation** (in the `scw_to_wf` direction, SCW Focus time / Out of office / working-location events are never mirrored — see below), so a fix in either copy should be ported to the other by diff. The original's README carries the full account of *why* every pass exists; this one records what is specific to Peter's deployment.
 
 Daily horizon backstop, **coming-week reconciler**, and manual cutover backfill for Peter's two-way calendar-blocking pair ([`scw-events-to-workflowers-block-peter`](../scw-events-to-workflowers-block-peter/) / [`workflowers-events-to-scw-busy-peter`](../workflowers-events-to-scw-busy-peter/)).

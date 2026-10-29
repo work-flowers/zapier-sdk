@@ -8,21 +8,19 @@ Migration of the classic Zap **"Sync Company Name Updates to Xero, Harvest, and
 Zapier Table"**.
 
 - **Workflow ID:** `01a028c7-92f0-747d-939f-2b147b4b3e18` (account-visible)
-- **Trigger:** a `WebHookCLIAPI` catch hook, fed by the **classic hand-off Zap**
-  *"Company Renamed → hand off to durable"* (see [Classic hand-off](#classic-hand-off)).
-  Until 2026-10 this durable polled Notion `updated_data_source_item_properties`
-  itself, but that trigger fires **once per company, ever** on durables, so a
-  real rename of an existing company never arrived.
-- **Catch URL:** filled into `zap.json` `trigger.webhook_url` by the publish
-  pipeline on merge.
+- **Trigger:** Notion `updated_data_source_item_properties` (`NotionCLIAPI@2.39.1`)
+  on **Companies**, watching only **Company Name**, on the work.flowers Notion
+  connection. Restored 2026-10-29 after Zapier fixed W6ZE93-VMEWP. From
+  2026-10-15 to 2026-10-29 a classic hand-off Zap fed a catch hook instead,
+  because durables fired this trigger **once per company, ever** (see
+  [Classic hand-off](#classic-hand-off-retired-2026-10-29)).
 - **Editor:** <https://zapier.com/durables-editor/01a028c7-92f0-747d-939f-2b147b4b3e18>
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    N["Classic Zap: Notion Updated Data Source Item<br/>Companies · Company Name"] -- "POST source, id = page_id_lastEdited, page_id" --> A["Catch hook"]
-    A --> P{"Empty ping?"}
+    N["Notion Updated Data Source Item<br/>Companies · Company Name"] --> P{"Empty ping?"}
     P -- yes --> S0(["Skip — empty-payload"])
     P -- no --> Q{"page_id readable?"}
     Q -- no --> E0(["Throw — unrecognised payload"])
@@ -67,7 +65,9 @@ flowchart TD
   Xero Zaps here. The classic Zap pulled it from a Zap component variable, which
   has no durable equivalent.
 
-## Classic hand-off
+## Classic hand-off (retired 2026-10-29)
+
+> **Retired 2026-10-29.** Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so this durable is back on the native Notion trigger. Turn the classic Zap *"Company Renamed → hand off to durable"* **off** once the republish lands: its catch URL stops working when the trigger is replaced. The `classic-handoff` branch in `workflow.ts` stays, unused. The rest of this section is kept as a record.
 
 **Why it exists:** durables add a dedupe layer keyed on the trigger record's raw
 `id` (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA). Notion's trigger
@@ -171,7 +171,7 @@ with a `page_id` reaches the page fetch. A hand-off **without** one throws
 instead of falling back to the composite `id`, and so does a non-UUID `page_id`.
 A raw trigger page and a bare page-id string still work for replays. No
 `run-durable` test: every path past the fetch is a production rename. **The
-first real proof is the setup test in [Classic hand-off](#classic-hand-off):
+first real proof is the setup test in [Classic hand-off](#classic-hand-off-retired-2026-10-29):
 rename one company twice and check that both renames produce a run.**
 
 `tsc` reports two errors in this file (`TS2589`/`TS2322` on the

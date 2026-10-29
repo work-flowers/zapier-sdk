@@ -3,7 +3,7 @@
   "workflow_id": "01a13a8f-c173-7323-8660-3445e913e7fb",
   "current_version_id": "01a13a8f-f763-7136-b8bc-bedb5547bc90",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXLWkMNOpWgLixI41TTyeA",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -38,5 +38,6 @@
   "dependencies": {
     "zod": "4.4.3",
     "@zapier/zapier-sdk": "0.102.2"
-  }
+  },
+  "retired": "2026-10-28 — disabled with disable-workflow after Zapier bug W6ZE93-VMEWP was verified fixed: the trigger Zap's Readwise trigger now re-fires on later tag changes to an already-delivered document (repeat ids seen from 2026-10-22). Re-enable only if a late `sendtonotion` tag is ever missed again."
 }

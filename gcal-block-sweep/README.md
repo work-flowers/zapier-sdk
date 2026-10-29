@@ -1,5 +1,7 @@
 # gcal-block-sweep
 
+> **2026-10-28: Zapier fixed W6ZE93-VMEWP** — `event_updated` now re-fires for an occurrence it has already delivered (live probe and run history, see `CLAUDE.md`), so moves, renames and declines reach the trigger Zaps' update/delete branches directly. This sweep stays on: the create pass still covers the 30-day horizon, and the reconcile pass still catches "this and following" truncations, which emit no per-occurrence event. Its reconcile pass is now a backstop rather than the only update path.
+
 Daily horizon backstop, **coming-week reconciler**, and manual cutover backfill for the two-way calendar-blocking pair ([`scw-events-to-workflowers-block`](../scw-events-to-workflowers-block/) / [`workflowers-events-to-scw-busy`](../workflowers-events-to-scw-busy/)).
 
 **Why it exists (create):** the trigger Zaps refuse to *create* a mirror for an occurrence starting more than 30 days out, because `expand_recurring: true` fires an open-ended weekly series ~14 years (~730 instances) ahead in one burst, and Zapier's polling dedupe means a skipped occurrence never re-fires on its own. Something has to mirror those occurrences when they eventually approach. This sweep runs every morning, scans the week rolling **into** the horizon (default window: days **23..30** from now — a full week of overlap so a few missed days self-heal), in both directions, and creates any mirror the shared **GCal Sync Map** table (`01M13QPJ5GRJV33096MBNSN1Q5`) says is missing. Everything already mapped is a free Table read.
