@@ -67,7 +67,9 @@ flowchart TD
 
 ## Classic hand-off (retired 2026-10-29)
 
-> **Retired 2026-10-29.** Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so this durable is back on the native Notion trigger. Turn the classic Zap *"Company Renamed → hand off to durable"* **off** once the republish lands: its catch URL stops working when the trigger is replaced. The `classic-handoff` branch in `workflow.ts` stays, unused. The rest of this section is kept as a record.
+> **Retired 2026-10-29.** Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so this durable is back on the native Notion trigger. The classic Zap *"Company Renamed → hand off to durable"* was turned off on 2026-10-29. The `classic-handoff` branch in `workflow.ts` stays, unused. The rest of this section is kept as a record.
+>
+> **Verified 2026-10-29:** two renames of 3Cricket produced two runs on the native trigger (02:02Z and 02:07Z), each renaming Xero, Harvest and Drive. The classic Zap is off.
 
 **Why it exists:** durables add a dedupe layer keyed on the trigger record's raw
 `id` (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA). Notion's trigger
