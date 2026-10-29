@@ -83,6 +83,7 @@
       "selected_api": "WebHookCLIAPI@1.1.1",
       "action": "hook_v2",
       "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/Y69AnJjpYIfSVC1D/"
-    }
+    },
+    "classic_zap_disabled": "2026-10-29 — confirmed by Dennis, before this PR merged. Renames made between then and the publish of the native trigger reach no durable run and need a manual replay (or a re-save of the name)."
   }
 }
