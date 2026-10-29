@@ -84,6 +84,7 @@
       "action": "hook_v2",
       "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/Y69AnJjpYIfSVC1D/"
     },
-    "classic_zap_disabled": "2026-10-29 — confirmed by Dennis, before this PR merged. Renames made between then and the publish of the native trigger reach no durable run and need a manual replay (or a re-save of the name)."
+    "classic_zap_disabled": "2026-10-29 — confirmed by Dennis, before this PR merged. Renames made between then and the publish of the native trigger reach no durable run and need a manual replay (or a re-save of the name).",
+    "native_trigger_verified": "2026-10-29: two renames of 3Cricket (→ '3Cricket (test)' → '3Cricket') produced two runs on version 01a18561 with the native Notion trigger, 02:02:43Z and 02:07:59Z, on the same page id. Each renamed Xero, Harvest and Drive; the Table step skipped as already-current (the Companies mirror got there first). A real rename of Faith Ibiza Ltd at 01:58Z, made after the classic Zap was turned off but before the publish, was also picked up (run at 01:59Z)."
   }
 }
