@@ -1,6 +1,6 @@
 # slack-thread-to-notion-discussion
 
-Slack → Notion half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825, modelled on Linear's Slack integration). Mention a ticket ID (`TKT-###`) or paste a Notion page URL in any public Slack thread and the bot asks in-thread whether to link it (a single **Approve** button, open to anyone in the thread). On approval the thread links to that Notion page: a page-level discussion opens (on a page that already has an open page-level thread it joins the most recently created one — the API cannot open a second thread; accepted while TKT-825 is paused), the whole thread backfills into it, and from then on every human message in the thread mirrors as a Notion comment under the Slack author's own name (`display_name`, no name-prefix hack).
+Slack → Notion half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825, modelled on Linear's Slack integration). Mention a ticket ID (`TKT-###`) or paste a Notion page URL in any public Slack thread and the bot asks in-thread whether to link it (a single **Approve** button, open to anyone in the thread). On approval the thread links to that Notion page: the thread gets a Notion discussion of its own: a page-level one when the page has no open page-level thread, otherwise one on a 💬 callout block appended to the end of the page (see *Why an anchor block* below), the whole thread backfills into it, and from then on every human message in the thread mirrors as a Notion comment under the Slack author's own name (`display_name`, no name-prefix hack).
 
 Companions: [`notion-comment-to-slack-thread`](../notion-comment-to-slack-thread/) (reverse direction) and [`slack-notion-thread-sync-sweep`](../slack-notion-thread-sync-sweep/) (resolve detection + self-healing backstop).
 
@@ -32,8 +32,11 @@ flowchart TD
     AP -- "callback: run finished" --> RD[read decision: getActionRun,\nelse callback body]
     RD -- Approved --> RC{thread linked meanwhile?}
     RC -- yes --> S7[skip]
-    RC -- no --> P[create page-level discussion\nwith Slack permalink header]
-    P --> M[write thread_map row state=active]
+    RC -- no --> OP{page already has an open\npage-level thread?}
+    OP -- no --> P[create page-level discussion\nwith Slack permalink header]
+    OP -- yes --> AB[append 💬 callout anchor block\nopen discussion on that block]
+    P --> M[write thread_map row state=active\nf5 = anchor block id or empty]
+    AB --> M
     M --> F[fetch full thread via thread_replies]
     F --> BF[backfill each human message in order\n+ message_map rows]
     BF --> OK[post confirmation reply in thread]
@@ -63,3 +66,13 @@ flowchart TD
 | Tasks data source (`Ticket ID` unique_id) | `27a91b07-11ac-81ed-973f-000ba6da1441` |
 
 Design + spike evidence: [Notion task TKT-825](https://www.notion.so/3ce91b0711ac811aa266cfae9b977315).
+
+## Why an anchor block
+
+The Notion API cannot open a second page-level thread. A page-parented comment opens a fresh discussion only when the page has none open; otherwise it joins the **most recently created** open thread (re-verified 2026-10-30). Until 2026-10-30 the link step posted page-parented regardless, and that day it linked a Slack thread to a task's open status-update thread, so every later status update on the task was mirrored into Slack.
+
+So the link step first lists the page's open comments (`GET /v1/comments` returns only unresolved ones). If any is page-parented, it appends a 💬 callout carrying the Slack link and opens the discussion on that block. Verified live 2026-10-30 on a throwaway page: the block comment got its own `discussion_id`, a page-parented comment posted afterwards still joined the page-level thread rather than the block's, and [`notion-comment-to-slack-thread`](../notion-comment-to-slack-thread/)'s unscoped `new_comment` trigger fired on the block comment. The block id lands in `thread_map` f5, which [`slack-notion-thread-sync-sweep`](../slack-notion-thread-sync-sweep/) already queries before the page id.
+
+- **Residual race:** a thread opened on the page between the check and the post is still joined. The window is seconds.
+- **Several Slack threads per page** now work: each one past the first gets its own anchor block and discussion.
+- When Notion's API can open a second page-level thread, drop the anchor and always post page-parented.
