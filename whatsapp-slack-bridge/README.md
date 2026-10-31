@@ -9,8 +9,34 @@ Three durables replacing three classic Zaps, sharing one [`shared.ts`](shared.ts
 | Deployment | Entry file | Trigger | Replaces |
 | --- | --- | --- | --- |
 | `whatsapp-message-to-slack` | [`workflow.inbound.ts`](workflow.inbound.ts) | WhatsApp `new_message` | "WhatsApp -> Slack" |
-| `slack-reply-to-whatsapp` | [`workflow.outbound.ts`](workflow.outbound.ts) | Slack `anywhere_message` | "Slack Replies -> WhatsApp" |
+| `slack-reply-to-whatsapp` | [`workflow.outbound.ts`](workflow.outbound.ts) | **None (manual)** since 2026-10-31 — handed `whatsapp-*` messages by [`slack-thread-to-notion-discussion`](../slack-thread-to-notion-discussion/) | "Slack Replies -> WhatsApp" |
 | `whatsapp-message-status` | [`workflow.status.ts`](workflow.status.ts) | WhatsApp `message_status_updated` | "Message Delivery" |
+
+### One Slack trigger for the workspace (since 2026-10-31)
+
+`slack-reply-to-whatsapp` used to hold its own Slack `anywhere_message` trigger,
+the same one [`slack-thread-to-notion-discussion`](../slack-thread-to-notion-discussion/)
+uses, so every public Slack message started two runs. From 2026-12-01 every
+successful run costs at least 1 task, and both Zaps skipped almost everything:
+about 1,100 runs a month each. Now `slack-thread-to-notion-discussion` holds the
+only trigger, and hands a message in a `whatsapp-*` channel to this deployment
+with `triggerWorkflow`, as a pointer `{ source: "slack-router", channel,
+channel_name, ts, thread_ts? }`.
+
+- **The raw message is re-read here.** That trigger runs with `raw: "no"`, whose
+  processed payload has no `files`, `subtype` or `bot_id`. The outbound workflow
+  fetches the message from Slack with `conversations.replies` through `slack_wf`
+  (1 task) and continues exactly as before. A message deleted before the re-read
+  is skipped; any other Slack refusal throws.
+- **A reply is never relayed twice.** Before sending, the workflow looks up the
+  Slack ts in the Messages Table (free) and skips if it is already logged as
+  `outbound`. That covers the cutover minute, when the old trigger and the
+  hand-off could both fire, and any redelivery.
+- **Cost:** a relayed reply now costs the router's run (1 task, the
+  `triggerWorkflow` hand-off) plus this run (1 for the re-read, plus the sends).
+  That is a task or two more per reply, against ~1,100 skipped runs a month saved.
+- A raw Slack event (the old trigger's shape) is still accepted, for a manual
+  re-run.
 
 Each deployment publishes its entry file as `workflow.ts` alongside `shared.ts`,
 the same shape as [`internal-user-ids-to-table-and-notion`](../internal-user-ids-to-table-and-notion/).
@@ -45,11 +71,14 @@ flowchart TD
     end
 
     subgraph outbound["slack-reply-to-whatsapp"]
-        SL["Slack<br/>anywhere_message<br/>(whole workspace)"] --> G1{"Subtype / bot /<br/>whatsapp-* channel?"}
+        SL["Hand-off from<br/>slack-thread-to-notion-discussion<br/>(whatsapp-* channels only)"] --> RR["Re-read the raw<br/>message from Slack"]
+        RR --> G1{"Subtype / bot /<br/>whatsapp-* channel?"}
         G1 -->|"not ours"| X1["return — 0 tasks"]
         G1 -->|ours| G2{"Contact mapped<br/>to this channel?"}
         G2 -->|no| X2["return — 0 tasks"]
-        G2 -->|yes| WIN{"Inbound within<br/>24 hours?"}
+        G2 -->|yes| DUP{"Slack ts already<br/>logged outbound?"}
+        DUP -->|yes| X3["return — already relayed"]
+        DUP -->|no| WIN{"Inbound within<br/>24 hours?"}
         WIN -->|no| WARN["Warn in thread:<br/>use :whatsapp: reaction"]
         WIN -->|yes| FILES{"Attachments?"}
         FILES -->|yes| PUB["Make each file public<br/>→ send as image/video/<br/>audio/document"]
@@ -238,8 +267,9 @@ correct `inboundFileUrl()` in [`shared.ts`](shared.ts).
 ## Known gaps
 
 - **The Slack trigger is still workspace-wide.** `anywhere_message` accepts no
-  channel filter, so every public message still transits Zapier. The cost and
-  error problems are solved; the privacy one isn't. The upgrade path is a small
+  channel filter, so every public message still transits Zapier, now through
+  `slack-thread-to-notion-discussion`'s trigger rather than this bridge's own.
+  The cost and error problems are solved; the privacy one isn't. The upgrade path is a small
   Slack app subscribed to `message.channels`, which Slack delivers only for
   channels the bot is **in** — and the bot is only in `whatsapp-*` channels — so
   it scales to an unbounded number of channels. Deliberately not built: a second

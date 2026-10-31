@@ -3,18 +3,32 @@
 //
 // A human's reply in a `whatsapp-*` Slack channel -> a WhatsApp message back to
 // the customer. Migration of the classic "Slack Replies -> WhatsApp" Zap.
+//
+// Since 2026-10-31 this deployment has NO trigger of its own. The workspace's
+// one "message posted anywhere" Slack trigger lives on
+// slack-thread-to-notion-discussion, which hands a `whatsapp-*` channel message
+// over with triggerWorkflow as a pointer, `{ source: "slack-router", channel,
+// channel_name, ts, thread_ts? }`. This workflow re-reads the raw message from
+// Slack, because the router's processed payload lacks the raw fields used below
+// (files, subtype, bot_id). Two Zaps on one trigger paid the per-run task
+// minimum twice for every Slack message in the workspace. A raw Slack event
+// (the old trigger's shape) is still accepted, e.g. for a manual re-run.
 import { defineDurable } from "@zapier/zapier-durable";
+import { createZapierSdk } from "@zapier/zapier-sdk";
 import {
   BUSINESS_PHONE,
   C_PHONE,
+  M_DIRECTION,
   M_MESSAGE_ID,
   SERVICE_WINDOW_MS,
+  SLACK_CONNECTION,
   acceptsCaption,
   findContactByChannel,
   findMessageRowsByTs,
   firstString,
   isBridgeChannelName,
   isoFromEpochMs,
+  labeledValue,
   lastInboundAtMs,
   mediaTypeFor,
   normalizeInput,
@@ -36,14 +50,65 @@ import {
  */
 const RELAYABLE_SUBTYPES = new Set(["file_share", "thread_broadcast"]);
 
+const sdk = createZapierSdk();
+
+/** `source` on a hand-off from slack-thread-to-notion-discussion. */
+const FORWARD_SOURCE = "slack-router";
+
+/**
+ * Re-read one message, raw, from Slack. `conversations.replies` answers for a
+ * thread reply and for a top-level message alike (keyed on the thread root,
+ * bounded to this ts). Null when the message is gone (deleted before this ran).
+ * Any other Slack refusal throws: a hand-off we can't read is a real reply
+ * that would otherwise be dropped silently. Must be called inside a ctx.step.
+ */
+async function readSlackMessage(
+  channel: string,
+  ts: string,
+  threadTs: string | null,
+): Promise<Record<string, any> | null> {
+  const qs =
+    `channel=${encodeURIComponent(channel)}&ts=${encodeURIComponent(threadTs ?? ts)}` +
+    `&oldest=${encodeURIComponent(ts)}&latest=${encodeURIComponent(ts)}&inclusive=true&limit=10`;
+  const res = await sdk.fetch(`https://slack.com/api/conversations.replies?${qs}`, {
+    connection: SLACK_CONNECTION,
+  });
+  if (!res.ok) throw new Error(`Slack conversations.replies ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const json = (await res.json()) as { ok?: boolean; error?: string; messages?: Array<Record<string, any>> };
+  if (json.ok !== true) {
+    if (json.error === "thread_not_found" || json.error === "message_not_found") return null;
+    throw new Error(`Slack conversations.replies refused: ${json.error ?? "unknown error"}`);
+  }
+  return (json.messages ?? []).find((m) => m?.ts === ts) ?? null;
+}
+
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "slack-reply-to-whatsapp",
   async (ctx, rawInput) => {
-    const p = (normalizeInput(rawInput) ?? {}) as Record<string, any>;
+    let p = (normalizeInput(rawInput) ?? {}) as Record<string, any>;
+
+    // --- Hand-off from slack-thread-to-notion-discussion --------------------
+    if (firstString(p.source) === FORWARD_SOURCE) {
+      const fwdChannel = firstString(p.channel);
+      const fwdTs = firstString(p.ts);
+      if (!fwdChannel || !fwdTs) {
+        throw new Error(`hand-off from ${FORWARD_SOURCE} has no channel/ts (keys: ${Object.keys(p).join(", ")})`);
+      }
+      const fwdThreadTs = firstString(p.thread_ts);
+      const message = await ctx.step("read-forwarded-message", async () =>
+        readSlackMessage(fwdChannel, fwdTs, fwdThreadTs),
+      );
+      if (!message) {
+        return { skipped: true, reason: "forwarded message no longer exists in Slack" };
+      }
+      // The raw message carries no channel; the hand-off does.
+      p = { ...message, channel: fwdChannel, channel_name: firstString(p.channel_name) };
+    }
 
     // --- Free early exits ---------------------------------------------------
-    // This trigger fires for every public message in the workspace, so almost
-    // every run ends here. The classic Zap had no cheap way to discard one: it
+    // Under its old trigger this fired for every public message in the
+    // workspace, so almost every run ended here. A hand-off is already a
+    // whatsapp-* message, but the checks still apply to its raw re-read. The classic Zap had no cheap way to discard one: it
     // went straight into a Find Record with success-on-miss off, so every
     // Slack message posted anywhere outside a whatsapp-* channel produced a
     // hard Zap error. Returning early costs no task and raises nothing.
@@ -88,6 +153,19 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     const slackTs = firstString(p.ts);
     const threadTs = firstString(p.thread_ts);
+
+    // --- Already relayed? ---------------------------------------------------
+    // Every send logs its Slack ts as an outbound row, so a second delivery of
+    // the same reply (a Slack redelivery, a manual re-run, or the brief overlap
+    // at the 2026-10-31 cutover when the old trigger and the hand-off could
+    // both fire) is dropped here instead of messaging the customer twice.
+    // Table reads are free.
+    if (slackTs) {
+      const prior = await ctx.step("find-prior-relay", async () => findMessageRowsByTs(slackTs));
+      if (prior.some((r: any) => labeledValue((r?.data ?? {})[M_DIRECTION]) === "outbound")) {
+        return { skipped: true, reason: "reply already relayed (its Slack ts is logged as outbound)" };
+      }
+    }
 
     // --- The 24-hour service window ---------------------------------------
     // WhatsApp only allows a freeform message within 24h of the customer's last

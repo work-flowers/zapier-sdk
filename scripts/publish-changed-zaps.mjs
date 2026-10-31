@@ -694,7 +694,21 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   if (startMode === "trigger" && afterTriggers.length === 0) {
     fail(`${dir}: PUBLISHED but the trigger was dropped (triggers[] empty) on ${id} — needs immediate attention.`);
   }
-  if (startMode === "manual" && afterTriggers.length > 0) {
+  // Going trigger -> manual RELEASES a claim, and a release is asynchronous
+  // too: the old entry can read back as `releasing` for a few seconds. Poll the
+  // same way, and count only claims that are still held. First exercised
+  // 2026-10-31 (whatsapp-slack-bridge's slack-reply-to-whatsapp going manual).
+  const heldClaims = (ts) => ts.filter((t) => t?.status !== "releasing" && t?.status !== "released");
+  for (
+    let attempt = 0;
+    triggerChanged && startMode === "manual" && heldClaims(afterTriggers).length > 0 && attempt < 5;
+    attempt++
+  ) {
+    sleepSync(3000);
+    after = unwrap(sdk(["get-workflow", id]));
+    afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
+  }
+  if (startMode === "manual" && heldClaims(afterTriggers).length > 0) {
     fail(`${dir}: PUBLISHED but a trigger appeared unexpectedly on ${id} — needs attention.`);
   }
   // A claim can succeed on the WRONG trigger, which the presence check above

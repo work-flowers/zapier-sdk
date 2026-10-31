@@ -8,13 +8,17 @@ Companions: [`notion-comment-to-slack-thread`](../notion-comment-to-slack-thread
 
 `SlackCLIAPI@1.40.1` / `anywhere_message` ("New Public Message Posted Anywhere") — **public channels only** (v1 scope). Deployed Slack triggers are event subscriptions: delivery in seconds, and thread replies DO fire with `thread_ts` (verified by deployed test 2026-09-01 — sample polls never show replies, which is documented test-time behaviour, not a limitation).
 
-Every public message invokes the durable, but non-matching messages exit at the free guard path (plain code + Zapier Table reads consume no tasks).
+Every public message invokes the durable. Non-matching messages exit at the guard path, and from 2026-12-01 each of those runs still costs the 1-task minimum (plain code and Table reads add nothing).
+
+**This is the workspace's only `anywhere_message` trigger (since 2026-10-31).** [`whatsapp-slack-bridge`](../whatsapp-slack-bridge/)'s `slack-reply-to-whatsapp` deployment used to hold its own copy, so every public message started two runs. Now a message in a `whatsapp-*` channel is handed to that deployment with `triggerWorkflow` (step `forward-to-whatsapp-bridge`, input `{ source: "slack-router", channel, channel_name, ts, thread_ts? }`), and is never treated as a Notion thread. The bridge re-reads the raw message itself, so this Zap's `raw: "no"` payload shape doesn't matter to it. The channel test is by name, mirroring the bridge's `CHANNEL_PREFIX`. Keep both in step, and keep `BRIDGE_OUTBOUND_WORKFLOW` pointing at `slack-reply-to-whatsapp`'s workflow id.
 
 ```mermaid
 flowchart TD
     T[Slack message posted anywhere public] --> B{bot author?}
     B -- yes --> S1[skip - echo layer 1]
-    B -- no --> K[key = thread_ts or ts]
+    B -- no --> WA{channel name starts whatsapp-?}
+    WA -- yes --> FW[triggerWorkflow: hand to whatsapp-slack-bridge\nslack-reply-to-whatsapp - stop]
+    WA -- no --> K[key = thread_ts or ts]
     K --> L{thread_map has key?}
     L -- "yes, active" --> D{already in message_map?}
     D -- yes --> S2[skip - already mirrored]

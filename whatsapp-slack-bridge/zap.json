@@ -47,14 +47,19 @@
       "current_version_id": "01a13916-77d5-729f-8773-fc3f88a19121",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR5n77hHpWvLlf4Xfcbumw",
       "enabled": true,
-      "trigger": {
-        "selected_api": "SlackCLIAPI@1.39.2",
-        "action": "anywhere_message",
-        "authentication_id": "020cae54-a27c-86d6-93a9-27b012c17e74",
-        "params": { "listen_for_bots": false, "raw": true },
-        "params_note": "`listen_for_bots: false` is LOAD-BEARING, not a preference. whatsapp-message-to-slack posts into these same channels as a bot; if bot messages were delivered here, every inbound WhatsApp message would be relayed straight back to the customer in a loop. The workflow body also guards on `bot_id` as a second line of defence.",
-        "scope_note": "This trigger fires for EVERY public message in the workspace — it accepts no channel filter (its only inputs are listen_for_bots and raw). The workflow discards non-WhatsApp messages with an early `return`, which costs no task and raises no error. See `known_gaps.workspace_wide_trigger`.",
-        "trigger_status": "active"
+      "trigger": null,
+      "trigger_annotations": {
+        "trigger_note": "MANUAL since 2026-10-31: no trigger of its own. slack-thread-to-notion-discussion holds the workspace's only Slack anywhere_message trigger and hands every whatsapp-* channel message to this deployment with triggerWorkflow, as {source: 'slack-router', channel, channel_name, ts, thread_ts?}. This workflow re-reads the raw message from Slack (conversations.replies through slack_wf, 1 task). Why: two Zaps on one trigger each paid the per-run task minimum (from 2026-12-01) on every Slack message in the workspace, ~1,100 runs a month each, almost all of them skips.",
+        "retired_trigger": {
+          "selected_api": "SlackCLIAPI@1.39.2",
+          "action": "anywhere_message",
+          "authentication_id": "020cae54-a27c-86d6-93a9-27b012c17e74",
+          "params": {
+            "listen_for_bots": false,
+            "raw": true
+          }
+        },
+        "retired_trigger_note": "The trigger this deployment held until 2026-10-31. listen_for_bots: false was load-bearing (whatsapp-message-to-slack posts into these channels as a bot); the router's trigger has listen_for_bots: \"no\", and its isBot check plus this workflow's bot_id check still guard the loop."
       },
       "created_at": "2026-07-29T08:51:48.056Z",
       "version_created_at": "2026-10-14T06:25:36.537Z",
@@ -150,7 +155,7 @@
     ]
   },
   "known_gaps": {
-    "workspace_wide_trigger": "slack-reply-to-whatsapp still reads every public Slack message, because `anywhere_message` accepts no channel filter. The cost and error problems are solved by the early return, but the privacy point is not: every public message still transits Zapier. The upgrade path is a small Slack app subscribed to `message.channels`, which Slack delivers only for channels the bot is IN — and the bot is only in whatsapp-* channels — so it scales to an unbounded number of channels. Deliberately not built now: a second moving part for a problem the early return already solves.",
+    "workspace_wide_trigger": "Since 2026-10-31 the workspace-wide trigger lives on slack-thread-to-notion-discussion, which hands whatsapp-* messages to slack-reply-to-whatsapp; before that this deployment held its own copy. Either way every public Slack message is read, because `anywhere_message` accepts no channel filter. The cost and error problems are solved by the early return, but the privacy point is not: every public message still transits Zapier. The upgrade path is a small Slack app subscribed to `message.channels`, which Slack delivers only for channels the bot is IN — and the bot is only in whatsapp-* channels — so it scales to an unbounded number of channels. Deliberately not built now: a second moving part for a problem the early return already solves.",
     "channel_name_collision": "A new contact whose slugged name is already taken falls back to `whatsapp-<slug>-<last4 of phone>`. If BOTH are taken, the run posts to #zap-alerts naming both attempts and asks a human to create the channel and paste its ID into the Table, rather than dropping the message silently. It does not search Slack for the existing channel — that would mean depending on a second account-private custom action.",
     "template_zap_untouched": "The classic 'Send Template Message' Zap (:whatsapp: reaction -> `reeng` template) is out of scope and still live. Two things follow. It reads `WhatsApp Username`, which this migration finally populates with the real WhatsApp profile name instead of the sender's own phone number, so it starts greeting people properly with no change to it. And it still sends a MARKETING-category template (confirmed via get_approved_templates) without checking `WhatsApp Marketing Opt-In` — 4 of the 6 contacts who have a Slack channel are opted out. That exposure is unchanged by this migration.",
     "opt_out_scope": "An opt-out blocks proactive sends only; it never blocks a reply inside the service window, since a customer messaging us is consent to reply. This account does no outbound marketing from these three workflows, so today the flag is recorded and surfaced in Slack rather than enforced anywhere in them.",

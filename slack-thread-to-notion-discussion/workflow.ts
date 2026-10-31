@@ -3,9 +3,14 @@
 // pending-create path only fires on a SOURCE change — hence this comment.
 import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
+import { createZapierSdk as createExperimentalSdk } from "@zapier/zapier-sdk/experimental";
 import { z } from "zod";
 
 const sdk = createZapierSdk();
+// triggerWorkflow lives on the experimental surface and uses the durable's
+// ambient account credentials (no connection). `any` because the experimental
+// method shapes shift release to release (same as luma-manager-email-to-table).
+const workflows = createExperimentalSdk() as any;
 
 // --- Bindings ----------------------------------------------------------------
 const SLACK_APP_KEY = "SlackCLIAPI";
@@ -44,6 +49,23 @@ const BACKFILL_CAP = 50;
 // Slack expires an unanswered approval after 30 days; the callback outlives it
 // by a day so the expiry (if Zapier reports one) still arrives first.
 const APPROVAL_CALLBACK_SECONDS = 31 * 24 * 60 * 60;
+
+// --- WhatsApp bridge hand-off -------------------------------------------------
+// This is the workspace's ONLY "message posted anywhere" Slack trigger. Until
+// 2026-10-31 whatsapp-slack-bridge's slack-reply-to-whatsapp deployment had its
+// own copy, so every Slack message started two runs, and from 2026-12-01 each
+// successful run costs at least 1 task. A message in a `whatsapp-*` channel is
+// now handed to that deployment (manual, no trigger of its own) and is never
+// treated as a Notion thread. It receives only a pointer and re-reads the raw
+// message from Slack, because this trigger's processed payload is not the raw
+// shape it needs (files, subtype, bot_id).
+//
+// No cycle: the bridge never calls back here, and anything it posts to Slack
+// is a bot message, which the trigger (listen_for_bots: no) and the isBot
+// check below both drop.
+const BRIDGE_CHANNEL_PREFIX = "whatsapp-"; // whatsapp-slack-bridge shared.ts CHANNEL_PREFIX
+const BRIDGE_OUTBOUND_WORKFLOW = "019fad12-a4d6-7a4e-bb4a-cfdc65a148a8"; // slack-reply-to-whatsapp
+const BRIDGE_FORWARD_SOURCE = "slack-router";
 
 const InputSchema = z.unknown();
 type Input = Record<string, unknown>;
@@ -563,6 +585,26 @@ const workflow = defineDurable<Input, unknown>(
     if (msg.isBot) {
       console.log(`bot message ${msg.channelId}/${msg.ts} — skipping`);
       return { skipped: "bot-message", ts: msg.ts };
+    }
+
+    // 0. A WhatsApp bridge channel: hand it to the bridge and stop here.
+    if (msg.channelName.toLowerCase().startsWith(BRIDGE_CHANNEL_PREFIX)) {
+      const threadTs = firstString((payload as Record<string, unknown>).thread_ts);
+      const fired = await ctx.step("forward-to-whatsapp-bridge", async () => {
+        const res = await workflows.triggerWorkflow({
+          workflow: BRIDGE_OUTBOUND_WORKFLOW,
+          input: {
+            source: BRIDGE_FORWARD_SOURCE,
+            channel: msg.channelId,
+            channel_name: msg.channelName,
+            ts: msg.ts,
+            ...(threadTs ? { thread_ts: threadTs } : {}),
+          },
+        });
+        return { triggerId: (res?.data?.id as string | undefined) ?? null };
+      });
+      console.log(`message ${msg.channelId}/${msg.ts} is in #${msg.channelName} — forwarded to the WhatsApp bridge`);
+      return { forwarded: "slack-reply-to-whatsapp", ts: msg.ts, triggerId: fired.triggerId };
     }
 
     // 1. Already-linked thread? (Table reads are free.)
