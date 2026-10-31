@@ -3,7 +3,8 @@
   "workflow_id": "01a05bff-37b5-7b12-b5aa-3bbafe623e84",
   "current_version_id": "01a18bf2-3d9a-772a-9c7b-f7d727232cdc",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXFDiWkQneWQ0eZXslP2ug",
-  "enabled": true,
+  "enabled": false,
+  "disabled_note": "Disabled 2026-10-31 by Dennis, with its two companions: the full two-way comment sync wasn't worth its cost once Next Gen Zap billing starts (2026-12-01; ~1,100 runs a month each for the two event Zaps, nearly all skips). The thread_map and message_map Tables are kept: thread_map is the record of which Slack thread belongs to which Notion page, and a lighter page <-> thread reference may replace this later. Code is kept as-is so it can be re-enabled.",
   "is_private": false,
   "deploy": {
     "state": "published",

@@ -1,5 +1,7 @@
 # notion-comment-to-slack-thread
 
+> **⏸️ Disabled 2026-10-31**, together with its companions. The full two-way comment sync wasn't worth its cost once Next Gen Zap billing starts on 2026-12-01: the two event-driven Zaps ran ~1,100 times a month each, nearly all skips, and from then on every run costs at least 1 task. The code and the `thread_map` / `message_map` Tables are kept. `thread_map` already records which Slack thread belongs to which Notion page, which is the part worth keeping; a lighter page ↔ thread reference may replace this sync later. To bring it back, `enable-workflow` all three and set `enabled` in each `zap.json`.
+
 Notion → Slack half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825). A new comment in a linked task discussion posts into the linked Slack thread as a bot message under `<author> (via Notion)`.
 
 Companions: [`slack-thread-to-notion-discussion`](../slack-thread-to-notion-discussion/) (reverse direction) and [`slack-notion-thread-sync-sweep`](../slack-notion-thread-sync-sweep/) (resolve detection + backstop).
