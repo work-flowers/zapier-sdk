@@ -405,6 +405,36 @@ async function fetchPage(sinceIso: string, page: number): Promise<any[]> {
   return JSON.parse(body)?.BankTransactions ?? [];
 }
 
+/**
+ * The windowed read, as ONE step so the page walk is a single retry unit.
+ *
+ * Lives in a helper that takes `ctx` because of the publish-time analyzer: a
+ * step in the workflow body whose callback reaches `sdk.runAction` through a
+ * function call is refused as `malformed-run-action` ("Pass appKey, actionType,
+ * and actionKey on the sdk.runAction call"). It refused this Zap's republish on
+ * 2026-10-31, on a body unchanged since 2026-08-07; xero-invoice-alerts hit the
+ * same rule on 2026-10-07 and was fixed the same way. The analyzer does not
+ * follow `ctx` into a helper. The step id is unchanged.
+ */
+function fetchWindow(
+  ctx: DurableContext,
+  sinceIso: string,
+): Promise<{ rows: any[]; pages: number; truncated: boolean }> {
+  return ctx.step("fetch-bank-transactions", async () => {
+    const rows: any[] = [];
+    let pages = 0;
+    let truncated = false;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const batch = await fetchPage(sinceIso, page);
+      pages = page;
+      rows.push(...batch);
+      if (batch.length < 100) break;
+      if (page === MAX_PAGES) truncated = true;
+    }
+    return { rows, pages, truncated };
+  });
+}
+
 // --- Per-item steps ----------------------------------------------------------
 
 /**
@@ -473,19 +503,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 2. Read Xero. Bounded pages, all inside ONE step so the whole fetch is a
     //    single retry unit and a partial page walk is never half-applied.
-    const fetch = await ctx.step("fetch-bank-transactions", async () => {
-      const rows: any[] = [];
-      let pages = 0;
-      let truncated = false;
-      for (let page = 1; page <= MAX_PAGES; page++) {
-        const batch = await fetchPage(sinceIso, page);
-        pages = page;
-        rows.push(...batch);
-        if (batch.length < 100) break;
-        if (page === MAX_PAGES) truncated = true;
-      }
-      return { rows, pages, truncated };
-    });
+    const fetch = await fetchWindow(ctx, sinceIso);
 
     // Deterministic order, so the per-item step names below are stable across
     // retries regardless of what order Xero returned things in.

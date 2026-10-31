@@ -128,7 +128,14 @@ jobs:
       # The workflow map is deliberately NOT regenerated here. Its data block is
       # derived from zap.json (workflow_id, enabled), so the committed map goes
       # stale; it is refreshed by hand only (see the zap-map skill).
+      # Runs even when the publish step FAILED: the publisher writes each
+      # deployment's new current_version_id into zap.json as soon as that
+      # deployment publishes, so a run that dies on a later directory has
+      # already changed Zapier for the earlier ones. Skipping this step then
+      # left zap.json behind the deployed state (PR #279, 2026-10-31: two
+      # deployments published, then an analyzer refusal on the third).
       - name: Commit the sync-back
+        if: ${{ !cancelled() }}
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
