@@ -3,7 +3,7 @@
   "workflow_id": "01a0d89d-2a35-7f0d-bd8a-7695a7356100",
   "current_version_id": "01a0d89d-3a3f-713a-b76a-82244b1ef1ee",
   "trigger_url": null,
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -48,5 +48,9 @@
       "scw-events-to-workflowers-block-peter",
       "gcal-block-sweep-peter"
     ]
+  },
+  "disabled": {
+    "date": "2026-10-31",
+    "reason": "Peter rolling off the SCW engagement; disabled via disable-workflow (MCP), not republished."
   }
 }

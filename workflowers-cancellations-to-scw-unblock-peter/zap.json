@@ -3,7 +3,7 @@
   "workflow_id": "01a0db9d-4ee0-79d5-bad9-a3a041fcf9d4",
   "current_version_id": "01a0db9d-5b66-7480-9a2b-17459b6fd541",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUmSCK0xV7DDf0hS0zCICg",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -35,5 +35,9 @@
     "01M2HT9XPZEASFV09J4A3QTDGT": "GCal Sync Map (Peter) — shared with Peter's whole blocking family, never with Dennis's. Read for the loop guard (a cancelled event whose id is a Mirror Event ID is the sync's own deletion echoing back) and the mapping lookup; the matched row's Status is written to 'deleted'."
   },
   "replicates": "workflowers-cancellations-to-scw-unblock",
-  "description": "Peter's copy: work.flowers calendar cancellations → delete the corresponding private Busy block on Peter's SCW calendar and mark the GCal Sync Map (Peter) row deleted."
+  "description": "Peter's copy: work.flowers calendar cancellations → delete the corresponding private Busy block on Peter's SCW calendar and mark the GCal Sync Map (Peter) row deleted.",
+  "disabled": {
+    "date": "2026-10-31",
+    "reason": "Peter rolling off the SCW engagement; disabled via disable-workflow (MCP), not republished."
+  }
 }

@@ -3,7 +3,7 @@
   "workflow_id": "01a0db9d-6bdc-71ca-8554-962828c61550",
   "current_version_id": "01a0db9d-77e7-7b45-ad9f-0378f1dc914a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXZaJi3ns0IwHOS5jqRbaw",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -37,5 +37,9 @@
     "01M2HT9XPZEASFV09J4A3QTDGT": "GCal Sync Map (Peter) — source occurrence id -> mirror event id, both directions. SHARED with scw-events-to-workflowers-block-peter, the two -cancellations- companions and gcal-block-sweep-peter; never with Dennis's Zaps. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7 — the SOURCE title, for debugging; the mirror itself is always 'Busy'), Source Updated (f8)."
   },
   "replicates": "workflowers-events-to-scw-busy",
-  "description": "Peter's copy: mirror Peter's work.flowers calendar events onto Peter's SCW calendar as private bare 'Busy' blocks — times only, no details. Creates, moves and deletes the block in step with the source."
+  "description": "Peter's copy: mirror Peter's work.flowers calendar events onto Peter's SCW calendar as private bare 'Busy' blocks — times only, no details. Creates, moves and deletes the block in step with the source.",
+  "disabled": {
+    "date": "2026-10-31",
+    "reason": "Peter rolling off the SCW engagement; disabled via disable-workflow (MCP), not republished."
+  }
 }
