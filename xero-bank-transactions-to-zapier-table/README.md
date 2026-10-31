@@ -246,6 +246,7 @@ error text — the error text alone made this look like a burst when it was a da
 
 ## Maintainer notes
 
+- **Per-transaction steps go through `indexedStep(ctx, id, run)`** (since 2026-10-31). Zapier's publish-time analyzer began refusing template-literal step ids in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The ids are unchanged.
 - **One connection: `xero_wf`.** New as of `019fd4b2` — the body calls Xero now, where previously the
   credential lived on the trigger and the body only touched the Table. Note the shape mismatch:
   reads return `{"xero_wf":{"connection_id":…}}` (snake_case), the publish/update flags take

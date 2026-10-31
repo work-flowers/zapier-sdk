@@ -152,6 +152,7 @@ at about one call a minute, using ~1,440 of the tenant's 5,000 Xero calls a day.
 
 ## Maintainer notes
 
+- **Per-contact steps go through `indexedStep(ctx, id, run)`** (since 2026-10-31). Zapier's publish-time analyzer began refusing template-literal step ids in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The ids are unchanged.
 - **`everyDay` takes `hod` (e.g. `"6:30 AM"`), not `moh`.** `moh` belongs to `everyHour`, where it
   must be the string `"00"`, not the integer `0`, if this Zap ever goes back to hourly. Verify
   `triggers[0].status == "active"` after every publish regardless.

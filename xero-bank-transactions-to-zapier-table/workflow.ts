@@ -1,5 +1,5 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/xero-bank-transactions-to-zapier-table
-import { defineDurable } from "@zapier/zapier-durable";
+import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
 
@@ -405,6 +405,20 @@ async function fetchPage(sinceIso: string, page: number): Promise<any[]> {
   return JSON.parse(body)?.BankTransactions ?? [];
 }
 
+// --- Per-item steps ----------------------------------------------------------
+
+/**
+ * A step whose id carries a loop index. The runtime needs the index (two steps
+ * with one id in a run collide), but Zapier's publish-time analyzer, which
+ * began refusing on 2026-09-03 after this Zap's last publish, rejects a
+ * template-literal step id in the workflow body and does not follow `ctx` into
+ * a helper. The ids are exactly the ones the body used before, so in-flight
+ * runs replay against the same journal. Same helper as xero-invoice-alerts.
+ */
+function indexedStep<T>(ctx: DurableContext, id: string, run: () => Promise<T>): Promise<T> {
+  return ctx.step(id, run);
+}
+
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "xero-bank-transactions-to-zapier-table",
   async (ctx, rawInput) => {
@@ -513,7 +527,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const snap = batch[i];
       const tag = String(i).padStart(3, "0");
 
-      const existing = await ctx.step(`find-row-${tag}`, async () => findRows(snap.bank_transaction_id));
+      const existing = await indexedStep(ctx, `find-row-${tag}`, async () => findRows(snap.bank_transaction_id));
 
       if (existing.length === 0) {
         if (dryRun) {
@@ -525,7 +539,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           );
           continue;
         }
-        await ctx.step(`create-row-${tag}`, async () =>
+        await indexedStep(ctx, `create-row-${tag}`, async () =>
           sdk.createTableRecords({
             table: TABLE_ID,
             keyMode: "names",
@@ -536,11 +550,11 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         // Two runs for the same transaction can both find nothing and both
         // create. Re-read and converge: earliest ULID wins, strays go. Deletes
         // are idempotent, so whichever racer gets here second is still correct.
-        const after = await ctx.step(`dedupe-after-create-${tag}`, async () =>
+        const after = await indexedStep(ctx, `dedupe-after-create-${tag}`, async () =>
           findRows(snap.bank_transaction_id),
         );
         if (after.length > 1) {
-          await ctx.step(`delete-duplicates-${tag}`, async () =>
+          await indexedStep(ctx, `delete-duplicates-${tag}`, async () =>
             sdk.deleteTableRecords({
               table: TABLE_ID,
               records: after.slice(1).map((r: any) => r.id),
@@ -559,7 +573,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
       // Already mirrored. Clear any strays first so the key stays unique.
       if (existing.length > 1 && !dryRun) {
-        await ctx.step(`delete-duplicates-${tag}`, async () =>
+        await indexedStep(ctx, `delete-duplicates-${tag}`, async () =>
           sdk.deleteTableRecords({
             table: TABLE_ID,
             records: existing.slice(1).map((r: any) => r.id),
@@ -616,7 +630,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         continue;
       }
 
-      await ctx.step(`update-row-${tag}`, async () =>
+      await indexedStep(ctx, `update-row-${tag}`, async () =>
         sdk.updateTableRecords({
           table: TABLE_ID,
           keyMode: "names",
