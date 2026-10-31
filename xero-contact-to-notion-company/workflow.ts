@@ -1,5 +1,5 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/xero-contact-to-notion-company
-import { defineDurable } from "@zapier/zapier-durable";
+import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
 
@@ -279,6 +279,20 @@ async function warmTableCache(recordId: string, contactId: string): Promise<void
   });
 }
 
+// --- Per-item steps ----------------------------------------------------------
+
+/**
+ * A step whose id carries a loop index. The runtime needs the index (two steps
+ * with one id in a run collide), but Zapier's publish-time analyzer, which
+ * began refusing on 2026-09-03 after this Zap's last publish, rejects a
+ * template-literal step id in the workflow body and does not follow `ctx` into
+ * a helper. The ids are exactly the ones the body used before, so in-flight
+ * runs replay against the same journal. Same helper as xero-invoice-alerts.
+ */
+function indexedStep<T>(ctx: DurableContext, id: string, run: () => Promise<T>): Promise<T> {
+  return ctx.step(id, run);
+}
+
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "xero-contact-to-notion-company",
   async (ctx, rawInput) => {
@@ -348,7 +362,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       const c = candidates[i];
       const tag = String(i).padStart(3, "0");
 
-      const row = await ctx.step(`find-company-${tag}`, async () => findCompanyRow(c.accountNumber));
+      const row = await indexedStep(ctx, `find-company-${tag}`, async () => findCompanyRow(c.accountNumber));
 
       if (!row) {
         // An Account Number that matches no known company. Almost always a
@@ -413,14 +427,14 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
       // Notion FIRST — it is the source of truth, and the other durable's
       // dedupe guard reads it.
-      await ctx.step(`write-notion-${tag}`, async () => {
+      await indexedStep(ctx, `write-notion-${tag}`, async () => {
         await writeXeroIdToNotion(pageId, c.contactId);
         return { pageId, contactId: c.contactId };
       });
 
       // Then warm the Table so the gate closes without waiting on the mirror.
       // Free, and it cannot diverge — it is the value just written to Notion.
-      await ctx.step(`warm-table-${tag}`, async () => {
+      await indexedStep(ctx, `warm-table-${tag}`, async () => {
         await warmTableCache(String(row.id), c.contactId);
         return { recordId: String(row.id) };
       });

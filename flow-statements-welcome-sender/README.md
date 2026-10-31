@@ -1,9 +1,9 @@
 # flow-statements-welcome-sender
 
-Hourly sender for the **Flow Statements welcome sequence**: a welcome email plus four refreshed evergreen posts, sent to each new subscriber over about a month. Buttondown is on the Basic plan, which has no Automations (`/v1/automations` returns a permission error), so the sequence runs as two Zaps. Buttondown still does all the sending, so its unsubscribe link and suppression rules apply to every email.
+Daily sender for the **Flow Statements welcome sequence**: a welcome email plus four refreshed evergreen posts, sent to each new subscriber over about a month. Buttondown is on the Basic plan, which has no Automations (`/v1/automations` returns a permission error), so the sequence runs as two Zaps. Buttondown still does all the sending, so its unsubscribe link and suppression rules apply to every email.
 
-- [`flow-statements-welcome-enrol`](../flow-statements-welcome-enrol/) adds a row to the **Welcome Sequence** Table when a subscriber confirms.
-- This Zap works through that Table every hour and sends whatever is due.
+- [`flow-statements-welcome-enrol`](../flow-statements-welcome-enrol/) adds a row to the **Welcome Sequence** Table when a subscriber confirms, and sends the welcome email (step 1) straight away.
+- This Zap works through that Table once a day, at 9:00 AM, and sends whatever is due: steps 2–5, plus any welcome that failed to send at enrolment.
 
 **Status: enabled 2026-10-24.** All five emails exist in Buttondown (created 2026-10-24) and their ids are in `SEQUENCE`.
 
@@ -28,7 +28,9 @@ The send endpoint rejects drafts ("You can't programmatically send emails with s
 
 ## Trigger
 
-**Schedule by Zapier** `everyHour` at `:00`, weekends included. The tick payload is ignored, and the clock is read in a step.
+**Schedule by Zapier** `everyDay` at 9:00 AM account time (Asia/Singapore), weekends included. The tick payload is ignored, and the clock is read in a step.
+
+It was `everyHour` until 2026-10-31. From 2026-12-01 every successful durable run costs at least 1 task, so hourly was ~720 tasks a month, nearly all of them runs with nothing due. Daily is ~30. The steps are days apart, so each now goes out at the first 9 AM run after it falls due, up to a day later than before. The welcome alone couldn't wait that long, so enrol sends it.
 
 Manual runs (`trigger-workflow <id> --input '…'`) take:
 
@@ -42,7 +44,7 @@ Manual runs (`trigger-workflow <id> --input '…'`) take:
 
 ```mermaid
 flowchart TD
-  A[Schedule: every hour] --> B["Table: status=active rows with next_send_at <= now, oldest first, max 50"]
+  A[Schedule: every day, 9:00 AM] --> B["Table: status=active rows with next_send_at <= now, oldest first, max 50"]
   B --> C[For each row]
   C --> D[Buttondown: GET subscriber]
   D -- "type not regular / 404" --> STOP["row: status stopped + stop_reason"]
@@ -58,7 +60,7 @@ flowchart TD
 - **Offsets are relative to `confirmed_at`**, so a late run doesn't push every later email back. Changing an offset in `SEQUENCE` reschedules everyone still waiting on that step.
 - **Catch-up spacing.** A subscriber who fell behind (because the Zap was off, or because sends kept failing) gets their overdue steps at least **2 days apart** (`MIN_GAP_MS`), not one an hour. The scheduled gaps are all 4 days or more, so this only applies when catching up.
 - **Repeat sends are impossible.** Buttondown answers a second send of one email to one subscriber with `400 {"detail":"EMAIL_ALREADY_SENT"}` (found during testing). `isAlreadySent` reads that exact error as success. If a send lands but the row update after it fails, the next run gets this answer and advances the row instead of failing three times. The `last_sent_step` guard covers the same case without making the call.
-- **Failures are counted, not thrown.** Each per-row step returns its error instead of throwing, so one bad row can't exhaust a step's retries and stop every other row from sending. The row stays on its step and the next hourly run retries it. On the **3rd consecutive failure** the row is set to `paused` and the run throws once, which raises Zapier's error alert (the repo's throw posture). Because the row is paused, the alert doesn't repeat every hour. To resume a row, set `status` back to `active` (and clear `fail_count`, or the next failure re-pauses it immediately).
+- **Failures are counted, not thrown.** Each per-row step returns its error instead of throwing, so one bad row can't exhaust a step's retries and stop every other row from sending. The row stays on its step and the next daily run retries it. On the **3rd consecutive failure** the row is set to `paused` and the run throws once, which raises Zapier's error alert (the repo's throw posture). Because the row is paused, the alert doesn't repeat every day. To resume a row, set `status` back to `active` (and clear `fail_count`, or the next failure re-pauses it immediately).
 - **Unsubscribes stop the sequence.** The subscriber is re-fetched before every send. Any `type` other than `regular` (or a 404) stops the row with a `stop_reason`.
 
 ## Operating the Table
@@ -111,6 +113,6 @@ Both test rows were deleted afterwards. The two `[TEST]` emails (`em_7mpx0k3aqe8
 
 ## Maintenance notes
 
-- **Cost:** an idle hour costs nothing beyond the free Table read. Each row handled costs two `sdk.fetch` tasks (the subscriber GET and the send), so about 12 tasks per subscriber over the whole sequence.
-- **Concurrency:** runs are hourly and short. Two overlapping runs could both pick up a row, but the second send would get `EMAIL_ALREADY_SENT`, so no one gets an email twice.
-- `MAX_ROWS_PER_RUN` (50) bounds a run. If more rows are due, the rest wait an hour.
+- **Cost:** from 2026-12-01 an idle run costs its 1-task minimum (the Table read itself is free), so ~30 tasks a month. Each row handled costs two `sdk.fetch` tasks (the subscriber GET and the send). Steps 2–5 come to 8 tasks per subscriber here, plus 1 for the welcome in enrol.
+- **Concurrency:** runs are daily and short, and enrol can send a welcome at the same moment. Two overlapping runs could both pick up a row, but the second send would get `EMAIL_ALREADY_SENT`, so no one gets an email twice. The same holds if this run picks up a fresh row while enrol is still sending its welcome.
+- `MAX_ROWS_PER_RUN` (50) bounds a run. If more rows are due, the rest wait a day.

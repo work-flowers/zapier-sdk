@@ -28,7 +28,7 @@ flowchart TD
   X -- no --> B[Create DRAFT bill EXP-n:<br/>contact, account by Category,<br/>due +30 days, receipt attached]
   B --> TB
   TB --> W[Claim: Xero bill link,<br/>Status = Payment Pending]
-  W -. later, hourly .-> A[xero-invoice-alerts sees the<br/>bill PAID → claim Status = Paid]
+  W -. later, weekday mornings .-> A[xero-invoice-alerts sees the<br/>bill PAID → claim Status = Paid]
 ```
 
 ## What the bill looks like
@@ -64,7 +64,7 @@ flowchart TD
 | Submitted / Under review | the claimant / reviewer |
 | **Approved** | a human; this fires the Notion automation |
 | **Payment Pending** | this Zap, in the same update that writes the bill link |
-| **Paid** | [`xero-invoice-alerts`](../xero-invoice-alerts/), on its hourly read, once Xero shows the bill `PAID` |
+| **Paid** | [`xero-invoice-alerts`](../xero-invoice-alerts/), on its weekday-morning read, once Xero shows the bill `PAID` |
 
 The Paid step lives in `xero-invoice-alerts` and not in a Zap of its own because Xero has no push trigger for a paid bill. `updated_invoice_v2` ("Updated Sales Invoice") delivers sales invoices only: across 18 runs of `xero-invoice-paid-to-gmail-confirmation`, every one was `ACCREC`, while about 20 bills were paid over the same period. The alternative, a "New Bill / paid" polling trigger, would cost about 1,440 Xero calls a day. `xero-invoice-alerts` already reads every invoice updated in the last 7 days each hour, paid bills included, so the check adds **no Xero calls**, and its Table read is free. A bill paid while that Zap is down for more than 7 days is never seen; set that claim to Paid by hand.
 

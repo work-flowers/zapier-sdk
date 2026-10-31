@@ -1,6 +1,6 @@
 # Xero Contact → Notion Company
 
-Durable workflow (trigger **`read`** — "Every Hour" — `ScheduleCLIAPI@1.7.0`) that completes the
+Durable workflow (trigger **`read`** — "Every Day" at 6:30 AM — `ScheduleCLIAPI@1.7.0`) that completes the
 company/contact link in the **Xero → Notion** direction: a Xero contact carrying a Notion Company ID
 in its **Account Number** gets its `ContactID` written onto the matching Notion Company page.
 
@@ -19,7 +19,8 @@ never runs. That is why this cannot simply be folded into it.
 
 ## What it does
 
-1. **Trigger** — *Every Hour*, top of the hour, weekends included. Costs Xero nothing.
+1. **Trigger** — *Every Day* at 6:30 AM (account time, Asia/Singapore), weekends included. Costs Xero
+   nothing. It was hourly until 2026-10-31; see [Cost](#cost).
 2. **Read Xero once** — `GET /Contacts?where=UpdatedDateUTC>=<today−7d>&summaryOnly=true`, bounded to
    3 pages. Observed volume is ~12 contacts per 13 days, so one page is the norm by a wide margin.
 3. **Keep only contacts with an Account Number** — that field is the deliberate human signal that a
@@ -30,7 +31,7 @@ never runs. That is why this cannot simply be folded into it.
 
 ```mermaid
 flowchart TD
-    T["⏰ Schedule: Every Hour<br/><i>top of the hour · 0 Xero calls</i>"] --> Q["🏦 Xero · GET /Contacts<br/><b>where UpdatedDateUTC >= today−7d</b><br/><i>summaryOnly · 1 call · max 3 pages</i>"]
+    T["⏰ Schedule: Every Day 6:30 AM<br/><i>0 Xero calls</i>"] --> Q["🏦 Xero · GET /Contacts<br/><b>where UpdatedDateUTC >= today−7d</b><br/><i>summaryOnly · 1 call · max 3 pages</i>"]
     Q --> F{"Account Number<br/>present?"}
     F -- no --> IG["⏹ ignored<br/><i>most contacts</i>"]
     F -- yes --> L["🔎 [Table] Company IDs<br/>find by Notion Company ID<br/><i>free</i>"]
@@ -138,11 +139,22 @@ empty input `{}` is a real run. **Run the dry version before every publish** —
 actually reached the decision logic rather than stopping at the fetch. A sibling Zap shipped a
 column-wiping bug precisely because its pre-publish test died before reaching its extraction code.
 
+## Cost
+
+From 2026-12-01 every successful durable run costs at least 1 task, and each fire here makes one
+Xero read (`runAction`, 1 task), plus one Notion `sdk.fetch` per link written. Daily that is about
+**30 tasks a month**. Hourly it was about 720, to process ~12 contacts every 13 days, which is why
+the schedule moved to daily on 2026-10-31. Linking is not time-sensitive, so a day's delay is fine.
+
+A Xero polling trigger isn't the cheaper route it looks like: polls cost no tasks, but a durable
+trigger still has no interval field (checked against SDK 0.119.0 on 2026-10-31). A poller would run
+at about one call a minute, using ~1,440 of the tenant's 5,000 Xero calls a day.
+
 ## Maintainer notes
 
-- **`moh` must be the string `"00"`, not the integer `0`**, even though `list-trigger-input-fields`
-  declares it `value_type: INTEGER`. Real choices are `"00"/"15"/"30"/"45"` — check with
-  `list-trigger-input-field-choices ScheduleCLIAPI everyHour moh`. Verify
+- **Per-contact steps go through `indexedStep(ctx, id, run)`** (since 2026-10-31). Zapier's publish-time analyzer began refusing template-literal step ids in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The ids are unchanged.
+- **`everyDay` takes `hod` (e.g. `"6:30 AM"`), not `moh`.** `moh` belongs to `everyHour`, where it
+  must be the string `"00"`, not the integer `0`, if this Zap ever goes back to hourly. Verify
   `triggers[0].status == "active"` after every publish regardless.
 - **`summaryOnly=true` still returns `AccountNumber`.** Xero omits the key entirely when it is empty,
   so its absence on a given contact is not evidence the parameter dropped it.

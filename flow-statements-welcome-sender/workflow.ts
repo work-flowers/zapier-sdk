@@ -5,11 +5,15 @@ import { z } from "zod";
 
 const sdk = createZapierSdk();
 
-// Hourly sender for the Flow Statements welcome sequence. Buttondown's Basic
+// Daily sender for the Flow Statements welcome sequence. Buttondown's Basic
 // plan has no Automations, so the sequence state lives in a Zapier Table
 // (written by flow-statements-welcome-enrol) and this Zap sends each due step
 // as a one-subscriber send of an `imported` Buttondown email. Buttondown
 // still does the sending, so the unsubscribe link and suppression rules apply.
+//
+// Step 1 (the welcome) is normally sent by flow-statements-welcome-enrol at
+// confirmation, so this Zap meets most rows at step 2. It still handles step 1
+// for a row whose welcome failed there. Daily since 2026-10-31, hourly before.
 
 // --- Bindings --------------------------------------------------------------
 const BUTTONDOWN_CONNECTION = "buttondown_api";
@@ -28,6 +32,9 @@ const WELCOME_TABLE = "01M5M4KH7C1KCFD3CDRSAF46XA";
 // The copy for each email lives in emails/ next to this file.
 //
 // All five were created as private `imported` emails on 2026-10-24.
+//
+// Step 1's email id and step 2's offset are copied into
+// flow-statements-welcome-enrol, which sends the welcome. Change them together.
 const SEQUENCE: ReadonlyArray<{ step: number; offsetDays: number; emailId: string | null; note: string }> = [
   { step: 1, offsetDays: 0, emailId: "em_7xspe63xkp8qf9cx6tzeyg776c", note: "Welcome to Flow Statements (emails/01-welcome.md)" },
   { step: 2, offsetDays: 4, emailId: "em_7n1k088fjy8vjvn8e97ce8f8kw", note: "Five practical WhatsApp automations for small teams (from em_2ps5r1kk548bvryp1d9dyq560w)" },
@@ -38,13 +45,13 @@ const SEQUENCE: ReadonlyArray<{ step: number; offsetDays: number; emailId: strin
 const LAST_STEP = SEQUENCE.length;
 
 // A subscriber who fell behind (the Zap was off, or sends kept failing) gets
-// their overdue steps no closer together than this, rather than one an hour.
+// their overdue steps no closer together than this, rather than one a run.
 const MIN_GAP_MS = 2 * 86400000;
 
 // Consecutive send failures before a row is paused and the run goes red.
 const FAIL_ALERT_THRESHOLD = 3;
 
-// Rows handled per run, oldest due first. The rest wait for the next hour.
+// Rows handled per run, oldest due first. The rest wait for the next run.
 const MAX_ROWS_PER_RUN = 50;
 
 const DAY_MS = 86400000;
@@ -135,7 +142,7 @@ function errorText(err: unknown): string {
 // publish-time analyzer refuses template-literal ids in the workflow body.
 // Every step here returns its failure instead of throwing, so one bad row
 // can't exhaust a step's retries and kill the run for every other row; the
-// next hourly run is the retry.
+// next daily run is the retry.
 async function processRow(
   ctx: DurableContext,
   row: Row,
@@ -161,7 +168,7 @@ async function processRow(
 
   // 1. Re-fetch the subscriber: an unsubscribe since the last step ends the
   //    sequence. Buttondown would suppress the send anyway, but stopping here
-  //    keeps the row honest and stops the hourly re-checks.
+  //    keeps the row honest and stops the daily re-checks.
   const sub = await ctx.step(`${p}-subscriber`, async () => {
     try {
       const res = await sdk.fetch(`${BUTTONDOWN_API}/subscribers/${encodeURIComponent(row.subscriberId)}`, {
@@ -216,7 +223,7 @@ async function processRow(
   }
 
   // 5. Failure: leave the step where it is so the next run retries, and count
-  //    it. At the threshold, pause the row so it stops retrying hourly, and
+  //    it. At the threshold, pause the row so it stops retrying daily, and
   //    let the run go red once.
   if (failure) {
     const failCount = row.failCount + 1;

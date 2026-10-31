@@ -5,9 +5,26 @@ import { createZapierSdk } from "@zapier/zapier-sdk";
 const sdk = createZapierSdk();
 
 // Enrols each newly confirmed Flow Statements subscriber in the welcome
-// sequence by writing one row to the Welcome Sequence Table. Sending is the
-// job of flow-statements-welcome-sender, which reads that Table hourly; this
-// Zap never talks to Buttondown beyond receiving the trigger.
+// sequence by writing one row to the Welcome Sequence Table, then sends step 1
+// (the welcome email) straight away and moves the row on to step 2. Steps 2-5
+// are the job of flow-statements-welcome-sender, which reads that Table once a
+// day. If the welcome send fails, the row stays on step 1, due now, and the
+// sender's next daily run retries it.
+//
+// Sending here rather than in the sender is what let the sender drop from
+// hourly to daily without a new subscriber waiting up to a day for the
+// welcome. It costs no extra task: from 2026-12-01 this run is billed its
+// 1-task minimum anyway, and the send fetch is that one task.
+
+// --- Bindings --------------------------------------------------------------
+const BUTTONDOWN_CONNECTION = "buttondown_api";
+const BUTTONDOWN_API = "https://api.buttondown.com/v1";
+
+// Step 1 of the sequence, and when step 2 falls due. Both are copies of the
+// sender's SEQUENCE entries; change them together.
+const WELCOME_EMAIL_ID = "em_7xspe63xkp8qf9cx6tzeyg776c";
+const STEP_2_OFFSET_DAYS = 4;
+const DAY_MS = 86400000;
 
 // Welcome Sequence Table, shared with flow-statements-welcome-sender. Keyed on
 // `email`, lowercased. One row per subscriber, ever.
@@ -23,7 +40,7 @@ const BOT_REFERRER_SUFFIX = "/blog/page/2/";
 
 type Outcome =
   | { skipped: string; email?: string }
-  | { enrolled: string; recordId: string | null; next_send_at: string };
+  | { enrolled: string; recordId: string | null; welcome: "sent" | "already-sent" | "failed"; error?: string };
 
 // --- Pure helpers ----------------------------------------------------------
 function normalizeInput(rawInput: unknown): unknown {
@@ -57,6 +74,20 @@ function isEmptyPing(raw: unknown): boolean {
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+/**
+ * Buttondown refuses a second send of one email to one subscriber with
+ * `400 {"code":"invalid_input","detail":"EMAIL_ALREADY_SENT"}`. The subscriber
+ * already has the email, so this one error reads as success. Same predicate
+ * as flow-statements-welcome-sender's.
+ */
+export function isAlreadySent(status: number, body: string): boolean {
+  return status === 400 && body.includes("EMAIL_ALREADY_SENT");
+}
+
+function errorText(err: unknown): string {
+  return String((err as Error)?.message ?? err).slice(0, 500);
 }
 
 /** Why this confirmed subscriber is a bot signup, or null when it isn't. */
@@ -147,5 +178,57 @@ export default defineDurable("flow-statements-welcome-enrol", async (ctx, rawInp
   }
 
   console.log(`enrolled ${email} (row ${result.recordId})`);
-  return { enrolled: email, recordId: result.recordId, next_send_at: result.now } satisfies Outcome;
+
+  // Send the welcome (step 1) now. The step returns its failure rather than
+  // throwing, so a Buttondown error doesn't burn retries: the row is left on
+  // step 1, due now, and the sender's next daily run is the retry, with its
+  // own 3-strikes pause and alert.
+  const sent = await ctx.step("send-welcome", async () => {
+    try {
+      const res = await sdk.fetch(
+        `${BUTTONDOWN_API}/subscribers/${encodeURIComponent(subscriberId)}/emails/${WELCOME_EMAIL_ID}`,
+        { connection: BUTTONDOWN_CONNECTION, method: "POST" },
+      );
+      if (res.ok) return { ok: true as const, duplicate: false };
+      const body = await res.text();
+      if (isAlreadySent(res.status, body)) return { ok: true as const, duplicate: true };
+      return { ok: false as const, error: `send ${res.status}: ${body.slice(0, 300)}` };
+    } catch (err) {
+      return { ok: false as const, error: `send: ${errorText(err)}` };
+    }
+  });
+
+  // Record the outcome on the row. On success the row moves to step 2, due
+  // confirmed_at + 4 days, exactly as the sender would have left it.
+  if (result.recordId) {
+    await ctx.step("record-welcome", async () => {
+      const confirmedMs = Date.parse(result.now);
+      const data: Record<string, unknown> = sent.ok
+        ? {
+            last_sent_step: 1,
+            last_sent_at: new Date().toISOString(),
+            next_step: 2,
+            next_send_at: new Date(confirmedMs + STEP_2_OFFSET_DAYS * DAY_MS).toISOString(),
+            fail_count: 0,
+            last_error: "",
+          }
+        : { fail_count: 1, last_error: sent.error };
+      await sdk.updateTableRecords({
+        table: WELCOME_TABLE,
+        keyMode: "names",
+        records: [{ id: result.recordId as string, data }],
+      });
+      return { ok: true };
+    });
+  }
+
+  if (!sent.ok) {
+    console.log(`welcome to ${email} failed (${sent.error}); the sender retries it on its next run`);
+    return { enrolled: email, recordId: result.recordId, welcome: "failed", error: sent.error } satisfies Outcome;
+  }
+  return {
+    enrolled: email,
+    recordId: result.recordId,
+    welcome: sent.duplicate ? "already-sent" : "sent",
+  } satisfies Outcome;
 });
