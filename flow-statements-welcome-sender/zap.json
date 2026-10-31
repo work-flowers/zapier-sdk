@@ -8,19 +8,20 @@
   "deploy": {
     "state": "published",
     "workflow_name": "Flow Statements welcome sequence — sender",
-    "description": "Hourly sender for the Flow Statements welcome sequence (Buttondown Basic has no Automations). Reads active rows due in the Welcome Sequence Zapier Table, re-checks each subscriber is still regular, and sends that step's private `imported` Buttondown email to that one subscriber. Then advances the row: offsets are days from confirmed_at (0, 4, 11, 18, 25), with catch-up sends at least 2 days apart. A row is paused, and the run goes red, after 3 consecutive send failures.",
+    "description": "Daily sender for the Flow Statements welcome sequence (Buttondown Basic has no Automations). Reads active rows due in the Welcome Sequence Zapier Table, re-checks each subscriber is still regular, and sends that step's private `imported` Buttondown email to that one subscriber. Then advances the row: offsets are days from confirmed_at (0, 4, 11, 18, 25), with catch-up sends at least 2 days apart. A row is paused, and the run goes red, after 3 consecutive send failures.",
     "enable_on_publish": false
   },
   "trigger": {
     "selected_api": "ScheduleCLIAPI@1.7.0",
-    "action": "everyHour",
+    "action": "everyDay",
     "authentication_id": null,
     "params": {
-      "moh": "00",
+      "hod": "9:00 AM",
       "weekends": "yes"
     },
-    "trigger_note": "Hourly on the hour, weekends included. The tick payload is ignored; the clock comes from a ctx.step. Schedule by Zapier needs no connection.",
-    "params_note": "`moh` MUST be the string \"00\", not the integer 0 (see xero-contact-to-notion-company).",
+    "trigger_note": "Daily at 9:00 AM account time (Asia/Singapore), weekends included; hourly until 2026-10-31. The tick payload is ignored; the clock comes from a ctx.step. Schedule by Zapier needs no connection.",
+    "cadence_note": "Moved from hourly to daily on 2026-10-31. From 2026-12-01 every successful durable run costs at least 1 task, so hourly was ~720 tasks a month, nearly all of them runs with nothing due. Daily is ~30. Steps 2-5 are days apart, so they now go out at the first 9 AM run after they fall due. The welcome (step 1) is sent by flow-statements-welcome-enrol at confirmation, so it does not wait for this run; this Zap only retries a welcome that failed there.",
+    "params_note": "`everyDay` takes `hod` (and optional `weekends`/`timezone_override`), not `moh`. If this ever goes back to everyHour, `moh` MUST be the string \"00\", not the integer 0.",
     "manual_run_note": "trigger-workflow <id> --input '{\"dryRun\":true}' lists what is due and what would happen. Add \"only_email\":\"<address>\" to handle one row, and \"now\":\"<RFC3339>\" to treat that instant as the current time (walk a test row through the sequence without waiting days)."
   },
   "connections": {

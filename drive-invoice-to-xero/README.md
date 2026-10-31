@@ -341,6 +341,9 @@ owned and populated by a **separate workflow** —
 
 > **This workflow is only as correct as that one is current.**
 
+That workflow runs **daily at 6:00 AM** since 2026-10-31 (it was hourly), so the Table can be up to a
+day behind Xero. An invoice dropped into Drive on the day it was paid can still raise a draft bill.
+
 Its predecessor, the classic Zap *"Process New Reconciled Transactions"*, had its create step
 paused on 2026-07-28, and the Table quietly fell ~5 days behind — **7 of 43** live `SPEND`
 transactions over 2026-06-01..2026-07-28 were missing, all of them the newest ones. Nothing

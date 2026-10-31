@@ -8,7 +8,7 @@
   "deploy": {
     "state": "published",
     "workflow_name": "Flow Statements welcome sequence — enrol",
-    "description": "Buttondown confirmed subscriber -> one row in the Welcome Sequence Zapier Table (next_step 1, due now, status active), which flow-statements-welcome-sender works through hourly. Insert-only upsert on the lowercased email, so a second confirmation never resets a subscriber's sequence. Skips non-regular subscribers and the two known list-bombing patterns (+km<hex> plus-tags; referrer /blog/page/2/ with no form id).",
+    "description": "Buttondown confirmed subscriber -> one row in the Welcome Sequence Zapier Table (next_step 1, due now, status active), then sends step 1 (the welcome email) at once and moves the row to step 2; flow-statements-welcome-sender sends steps 2-5 from a daily run, and retries a failed welcome. Insert-only upsert on the lowercased email, so a second confirmation never resets a subscriber's sequence. Skips non-regular subscribers and the two known list-bombing patterns (+km<hex> plus-tags; referrer /blog/page/2/ with no form id).",
     "enable_on_publish": false
   },
   "trigger": {
@@ -17,9 +17,12 @@
     "authentication_id": "63486162",
     "params": {},
     "trigger_note": "Same app version, trigger and connection as new-buttondown-subscriber-update-in-notion, whose live claim on this combination is proven. Confirmed, not created: double opt-in keeps unconfirmed bot signups out. 63486162 is the numeric id of the 'workflowers' Buttondown connection (02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe).",
-    "authentication_note": "The official Buttondown app connection, used only to claim the trigger. The workflow itself never calls Buttondown."
+    "authentication_note": "The official Buttondown app connection, used only to claim the trigger. The welcome send goes through the separate buttondown_api connection alias."
   },
-  "connections": {},
+  "connections": {
+    "buttondown_api": "0266a579-c573-8fac-b7cc-d32af9a6fd41"
+  },
+  "connections_note": "Added 2026-10-31, when this Zap took over sending the welcome email. The same 'API by Zapier' connection the sender uses (Buttondown API key, domain filter api.buttondown.com); sdk.fetch through it makes the one per-subscriber send.",
   "tables": {
     "01M5M4KH7C1KCFD3CDRSAF46XA": "Welcome Sequence — one row per subscriber, created 2026-10-23. Written here (insert only), read and advanced by flow-statements-welcome-sender. Columns: email (f1), subscriber_id (f2), confirmed_at (f3), next_step (f4), next_send_at (f5), last_sent_step (f6), last_sent_at (f7), status (f8), stop_reason (f9), fail_count (f10), last_error (f11)."
   },

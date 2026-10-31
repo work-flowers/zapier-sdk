@@ -8,7 +8,7 @@ const sdk = createZapierSdk();
 // --- Bindings --------------------------------------------------------------
 // This workflow used to be driven by Xero's `bank_transaction` POLLING trigger,
 // which delivered one transaction per run. It is now driven by a SCHEDULE
-// trigger (`ScheduleCLIAPI` / `everyHour`, no connection — `auth_type` is "")
+// trigger (`ScheduleCLIAPI` / `everyDay`, no connection — `auth_type` is "")
 // and reads Xero itself, in a bounded date window, once per fire.
 //
 // WHY: a durable trigger has no polling-interval field. The `--trigger` payload
@@ -70,11 +70,11 @@ const MIRRORED_FIELDS = [
 // --- Window tuning ---------------------------------------------------------
 //
 // The window is [newest mirrored row − OVERLAP_DAYS, today]. The overlap is
-// what makes this self-healing: a run that fails, or an hour the Zap spent
+// what makes this self-healing: a run that fails, or a day the Zap spent
 // disabled, is simply re-read on the next fire. The old polling trigger could
 // not do that — it primed its dedupe on first poll, so a gap stayed a gap
 // forever (see known_gaps.no_backfill_by_design in zap.json). The overlap also
-// means recent rows get re-read every hour, which finally lets the update path
+// means recent rows get re-read on every fire, which finally lets the update path
 // correct the stale `reference` / `currency_rate` / `has_attachments` values
 // Xero fills in AFTER a transaction is created.
 

@@ -7,7 +7,8 @@ const sdk = createZapierSdk();
 
 // --- Why this Zap exists ---------------------------------------------------
 //
-// It replaces THREE Xero polling triggers with one hourly schedule:
+// It replaces THREE Xero polling triggers with one schedule (weekdays 9 AM;
+// hourly until 2026-10-31):
 //
 //   xero-draft-bill-to-slack-alert            bill / status=draft       -> Slack
 //   xero-bill-approved-to-subcontractor-email bill / status=authorised  -> Gmail
@@ -71,7 +72,7 @@ const KEY_FIELD = "xero_invoice_id";
 // and records it in the "Expense Claim Bills" Table as `pending`. Xero has no
 // push trigger for a bill being paid (`updated_invoice_v2` delivers sales
 // invoices only — verified 2026-10-07 against this account's run history), so
-// the paid check rides on THIS Zap's hourly read, which already includes every
+// the paid check rides on THIS Zap's scheduled read, which already includes every
 // paid bill updated in the window: zero extra Xero calls, and the Table read
 // is free. A pending bill seen here as PAID moves its claim to "Paid".
 const CLAIM_BILLS_TABLE = "01M4BBZ4ET36BQ29EAXJ5833JZ";
@@ -510,7 +511,7 @@ function paidClaimBills(
  * Move one claim to Paid and close its Table row. A Notion failure (claim
  * deleted, property renamed) closes the row as `error` with the message rather
  * than leaving it pending, so it surfaces ONCE — the run fails at the end —
- * instead of turning every hourly run red.
+ * instead of turning every scheduled run red.
  */
 async function markClaimPaid(
   ctx: DurableContext,
@@ -871,7 +872,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
       // 3b. Record state. A skipped-by-filter invoice still records its
       //     alerted status, so the filter is not re-evaluated (and not
-      //     re-logged) every single hour for the rest of time.
+      //     re-logged) on every fire for the rest of time.
       if (dryRun) {
         if (shouldAlert && !skipReason) alerted.push({ invoiceId, number: full.invoiceNumber, channel, outcome: "dry-run" });
         continue;

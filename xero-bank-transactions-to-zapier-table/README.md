@@ -1,6 +1,6 @@
 # Xero Bank Transactions → Zapier Table
 
-Durable workflow (trigger **`read`** — "Every Hour" — `ScheduleCLIAPI@1.7.0`) that mirrors Xero
+Durable workflow (trigger **`read`** — "Every Day" at 6:00 AM — `ScheduleCLIAPI@1.7.0`) that mirrors Xero
 bank transactions into the **Xero Bank Transactions** Zapier Table, one row per transaction.
 Migrated from the classic Zap *"Process New Reconciled Transactions"*.
 
@@ -12,12 +12,13 @@ Migrated from the classic Zap *"Process New Reconciled Transactions"*.
 > ### 🔁 It is schedule-driven, not Xero-poll-driven (since `019fd4b2`, 2026-08-06)
 >
 > It used to be triggered by Xero's `bank_transaction` **polling** trigger, which cost **~1,440 Xero
-> API calls a day**. It is now triggered by an hourly **schedule** and reads Xero itself, in a
-> bounded window, for **~24–48 calls a day**. See [Why a schedule](#why-a-schedule-and-not-a-poller).
+> API calls a day**. It is now triggered by a daily **schedule** (hourly until 2026-10-31) and reads
+> Xero itself, in a bounded window, for **~1–3 calls a day**. See [Why a schedule](#why-a-schedule-and-not-a-poller).
 
 ## What it does
 
-1. **Trigger** — *Every Hour*, at the top of the hour, weekends included. Costs Xero nothing.
+1. **Trigger** — *Every Day* at 6:00 AM (account time, Asia/Singapore), weekends included. Costs Xero
+   nothing. It was hourly until 2026-10-31; see [Cost and freshness](#cost-and-freshness).
 2. **Window** — read the newest mirrored row's date (free Table read) and read Xero from
    **7 days before it** up to today. That overlap is what makes the sync self-healing.
 3. **Fetch** — `GET /BankTransactions?where=Date>=DateTime(y,m,d)`, hard-bounded to **3 pages** and
@@ -30,7 +31,7 @@ Migrated from the classic Zap *"Process New Reconciled Transactions"*.
 
 ```mermaid
 flowchart TD
-    T["⏰ Schedule: Every Hour<br/><i>top of the hour · 0 Xero calls</i>"] --> L["🔎 Zapier Table<br/>newest row's date<br/><i>free</i>"]
+    T["⏰ Schedule: Every Day 6:00 AM<br/><i>0 Xero calls</i>"] --> L["🔎 Zapier Table<br/>newest row's date<br/><i>free</i>"]
     L --> W{"newest row<br/>readable?"}
     W -- no --> WB["⚠️ fall back to<br/>today − 30d<br/><i>logged</i>"]
     W -- yes --> WA["window = newest − 7d … today"]
@@ -119,11 +120,25 @@ ours to set:
 | | Xero calls/day |
 | --- | --- |
 | `bank_transaction` polling trigger | ~1,440 |
-| Hourly schedule + one windowed read | **~24–48** |
+| Hourly schedule + one windowed read (until 2026-10-31) | ~24–48 |
+| Daily schedule + one windowed read | **~1–3** |
+
+### Cost and freshness
+
+From 2026-12-01 every successful durable run costs at least 1 task, and each fire here makes at
+least one Xero read (`runAction`, 1 task per page). Hourly that was ~720+ tasks a month; daily it is
+**~30**. Xero's bank feeds arrive about once a day anyway, so most hourly fires found nothing new.
+
+**The trade:** [`drive-invoice-to-xero`](../drive-invoice-to-xero/) reads this Table to decide whether
+an invoice is already paid, and the mirror can now be up to a day behind. An invoice dropped into
+Drive on the day it was paid can therefore raise a draft bill that has to be deleted by hand.
+
+A polling trigger is still not the answer: a durable trigger has no interval field (rechecked against
+SDK 0.119.0 on 2026-10-31), so it would poll at ~1/min — the ~1,440 calls a day in the table above.
 
 ### The overlap is what makes it self-healing
 
-The window starts **7 days before the newest mirrored row**, not at it. So a failed run, or an hour
+The window starts **7 days before the newest mirrored row**, not at it. So a failed run, or a day
 the Zap spent disabled, is simply re-read on the next fire — up to `OVERLAP_DAYS` deep. The polling
 trigger could never do that: it primed its dedupe on first poll, so a gap stayed a gap permanently.
 That single property retires two of this Zap's three documented gaps.
@@ -211,8 +226,8 @@ is strictly better for the downstream match.
 
 | Gap | Status |
 | --- | --- |
-| **No backfill** — a missed run was permanently lost | ✅ **Closed going forward.** The window re-reads up to `OVERLAP_DAYS` (7) behind the newest row, so a failed run or a disabled hour self-heals on the next fire. |
-| **Stale columns** — values Xero fills in after creation were never corrected | ✅ **Closed for recent rows.** Everything inside the window is re-read hourly, so the update path finally fires. Rows older than the window keep their stale values. |
+| **No backfill** — a missed run was permanently lost | ✅ **Closed going forward.** The window re-reads up to `OVERLAP_DAYS` (7) behind the newest row, so a failed run or a disabled day self-heals on the next fire. |
+| **Stale columns** — values Xero fills in after creation were never corrected | ✅ **Closed for recent rows.** Everything inside the window is re-read on every fire, so the update path finally fires. Rows older than the window keep their stale values. |
 | **Restatement of an old transaction** — more than 7 days after its date | ⚠️ **Open, and not a regression.** It falls outside every window. The polling trigger was no better: *New Bank Transaction* fires on creation, not restatement. If it ever matters, switch the fetch to Xero's `If-Modified-Since` header, which selects on modification time rather than transaction date. |
 
 **The historical gap is still unfilled, and that's still accepted.** The ~7 `SPEND` transactions
@@ -236,13 +251,11 @@ error text — the error text alone made this look like a burst when it was a da
   reads return `{"xero_wf":{"connection_id":…}}` (snake_case), the publish/update flags take
   `connectionId` (camelCase). `app_versions` is deliberately omitted, matching
   `drive-invoice-to-xero`, which also calls `XeroCLIAPI` via `runAction` with `app_versions: null`.
-- **`moh` must be the string `"00"`, not the integer `0`** — even though
-  `list-trigger-input-fields` declares it `value_type: INTEGER`. Its real choices are the zero-padded
-  strings `"00"/"15"/"30"/"45"`; check with
-  `list-trigger-input-field-choices ScheduleCLIAPI everyHour moh`. Publishing the integer was
-  rejected with `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'` — worth noting,
-  because a bad trigger param is documented elsewhere in this repo as failing *silently*. Don't rely
-  on either behaviour: verify `triggers[0].status == "active"` after every publish.
+- **`everyDay` takes `hod` (e.g. `"6:00 AM"`), not `moh`.** `moh` is `everyHour`'s, and there it must
+  be the string `"00"`, not the integer `0`: publishing the integer was rejected with
+  `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'`. A bad trigger param is documented
+  elsewhere in this repo as failing *silently*, so rely on neither behaviour: verify
+  `triggers[0].status == "active"` after every publish.
 - **Never write `new Date` (or `Date.now()`) in the workflow body outside a `ctx.step`.** The durable
   runtime's `Date` Proxy throws `DeterminismViolation` before it even inspects its arguments, so a
   deterministic `new Date(Date.UTC(...))` fails as hard as a clock read. The only clock read here is

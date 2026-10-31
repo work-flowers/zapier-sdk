@@ -1,6 +1,6 @@
 # Xero Invoice Alerts
 
-Durable workflow (trigger **`read`** — "Every Hour" — `ScheduleCLIAPI@1.7.0`) that reads Xero
+Durable workflow (trigger **`read`** — "Every Day" at 9:00 AM, weekdays — `ScheduleCLIAPI@1.7.0`) that reads Xero
 invoices updated in the last 7 days and sends the three alerts that used to be three separate Zaps,
 deduped through its own state Table.
 
@@ -17,7 +17,8 @@ deduped through its own state Table.
 
 ## What it does
 
-1. **Trigger** — *Every Hour*, top of the hour, weekends included. Costs Xero nothing.
+1. **Trigger** — *Every Day* at 9:00 AM (account time, Asia/Singapore), **weekdays only**. Costs Xero
+   nothing. It was hourly until 2026-10-31; see [Cadence and cost](#cadence-and-cost).
 2. **Read Xero once** — `GET /Invoices?where=UpdatedDateUTC>=<today−7d>`, bounded to 3 pages.
 3. **Classify** each invoice. Anything that isn't one of the three cases below is ignored, which is
    the large majority: `PAID`, `VOIDED`, `DELETED`, `SUBMITTED`, and authorised *sales* invoices.
@@ -34,7 +35,7 @@ deduped through its own state Table.
 
 ```mermaid
 flowchart TD
-    T["⏰ Schedule: Every Hour<br/><i>top of the hour · 0 Xero calls</i>"] --> P["🔎 probe alert-state table<br/><i>free</i>"]
+    T["⏰ Schedule: weekdays 9:00 AM<br/><i>0 Xero calls</i>"] --> P["🔎 probe alert-state table<br/><i>free</i>"]
     P --> PR{"table empty?"}
     PR -- "yes" --> PRIME["🌱 PRIMING RUN<br/>record state · send NOTHING<br/><i>mirrors a poller's first poll</i>"]
     PR -- "no" --> Q
@@ -87,12 +88,34 @@ basis from *polls per day* to *fires per day*.
 | | Xero calls/day |
 | --- | --- |
 | Three polling triggers | ~4,320 |
-| One hourly schedule + one windowed read | **~24** (+1 per alert actually sent) |
+| One hourly schedule + one windowed read (until 2026-10-31) | ~24 (+1 per alert actually sent) |
+| One weekday schedule + one windowed read | **~1** (+1 per alert actually sent) |
 
 Of Xero's 47 triggers, only `updated_invoice_v2` supports push delivery (it's the one with a
 `trigger_preference` field), and it was already in use by
 [`xero-invoice-paid-to-gmail-confirmation`](../xero-invoice-paid-to-gmail-confirmation/). Webhooks
 were not an option for any of these three.
+
+### Cadence and cost
+
+From 2026-12-01 every successful durable run costs at least 1 task, and each fire here makes at
+least one Xero read (`runAction`, 1 task per page), plus one detail read and one send per alert.
+Hourly was ~720+ tasks a month, almost all of it fires that found nothing to alert on. Since
+2026-10-31 it fires **once each weekday at 9:00 AM**, ~22 fires a month.
+
+**The trade:** a draft bill, a draft sales invoice or a bill approval now waits up to a working day
+for its alert, and a Friday change waits until Monday. A paid expense claim also moves to **Paid**
+the next weekday morning. The 7-day window comfortably covers the weekend, and `MAX_ALERTS_PER_RUN`
+(25) still drains any larger backlog across later fires.
+
+**Wanted next:** fires at 9 AM, 1 PM and 5 PM each weekday (~65 a month), deployed as two extra
+deployments of this same source. That waits on `scripts/publish-changed-zaps.mjs` learning to create
+a pending deployment inside `deployments[]`, which it can't do today.
+
+A polling trigger is still ruled out (rechecked against SDK 0.119.0 on 2026-10-31): a durable
+trigger has no interval field, so the three pollers this replaced would be back to ~4,320 Xero calls
+a day. `updated_invoice_v2` is push, but it delivers sales invoices only, so it can't carry the two
+bill channels.
 
 ### The window is on `UpdatedDateUTC`, not `Date`
 
@@ -101,7 +124,7 @@ its original `Date`, so a window on `Date` would never see the approval — the 
 event this Zap detects. `UpdatedDateUTC` bumps on both creation and status change, which is exactly
 the event set required.
 
-The 7-day overlap also makes the sync **self-healing**: a failed run, or an hour the Zap spent
+The 7-day overlap also makes the sync **self-healing**: a failed run, or a day the Zap spent
 disabled, is simply re-read on the next fire. A polling trigger could never do that — it primed its
 dedupe on first poll, so a gap was permanent.
 
@@ -141,7 +164,7 @@ window re-reads it.
   its state **unrecorded**, so the next fire picks it up and the backlog drains gradually.
 - **A skipped invoice still records state.** A bill failing the `490` filter, or a vendor with no
   email, records its alerted status anyway — otherwise the filter would be re-evaluated and re-logged
-  every hour forever. `last_skip_reason` keeps the reason visible and `alert_count` is not bumped.
+  on every fire forever. `last_skip_reason` keeps the reason visible and `alert_count` is not bumped.
 
 ## Behaviour ported from the retired Zaps
 
@@ -184,10 +207,9 @@ no state. It is the safe way to inspect this Zap.
 
 - **Per-invoice steps go through `indexedStep(ctx, id, run)`.** Zapier's publish-time analyzer began refusing template-literal step IDs in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The IDs (`find-state-003`, …) are unchanged, so runs already in progress replay against the same journal.
 
-- **`moh` must be the string `"00"`, not the integer `0`** — even though `list-trigger-input-fields`
-  declares it `value_type: INTEGER`. The real choices are `"00"/"15"/"30"/"45"`; confirm with
-  `list-trigger-input-field-choices ScheduleCLIAPI everyHour moh`. Publishing the integer is rejected
-  with `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'` — loudly, unlike the *silent*
+- **`everyDay` takes `hod` (e.g. `"9:00 AM"`) and `weekends`, not `moh`.** `moh` is `everyHour`'s, and
+  there it must be the string `"00"`, not the integer `0` — publishing the integer is rejected with
+  `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'`, loudly, unlike the *silent*
   trigger-claim failures documented elsewhere in this repo. Rely on neither: verify
   `triggers[0].status == "active"` after every publish.
 - **`details.webhook_url` on this trigger is Zapier's own plumbing** for the schedule subscription,

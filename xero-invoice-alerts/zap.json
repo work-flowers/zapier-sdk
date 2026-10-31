@@ -7,16 +7,17 @@
   "is_private": false,
   "trigger": {
     "selected_api": "ScheduleCLIAPI@1.7.0",
-    "action": "everyHour",
+    "action": "everyDay",
     "authentication_id": null,
     "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. Xero, Slack and Gmail are all bound as connection ALIASES instead, because every one of them is called from the workflow body.",
     "params": {
-      "moh": "00",
-      "weekends": "yes"
+      "hod": "9:00 AM",
+      "weekends": "no"
     },
-    "params_note": "`moh` (Time Offset) MUST be the STRING \"00\", not the integer 0, even though `list-trigger-input-fields` declares it `value_type: INTEGER`. Its real choices are the zero-padded strings \"00\"/\"15\"/\"30\"/\"45\" — check with `list-trigger-input-field-choices ScheduleCLIAPI everyHour moh`. Publishing the integer is rejected with `ZAPIER_VALIDATION_ERROR: '0' is not an allowed value for 'moh'`.",
+    "params_note": "`everyDay` params: `hod` (required) plus optional `weekends`/`timezone_override` — NOT `moh`, which is everyHour's. `hod` is in the account timezone (Asia/Singapore). Verify `triggers[0].status == \"active\"` after every publish.",
+    "cadence_note": "Daily at 9:00 AM on weekdays since 2026-10-31; was everyHour, weekends included. From 2026-12-01 every successful durable run costs at least 1 task and each fire also makes at least one Xero read, so hourly cost ~720+ tasks a month. Weekdays-daily is ~22. An alert now waits up to a working day (Friday 9 AM to Monday 9 AM over a weekend). The 7-day window still covers the weekend gap. Wanted next: three fires a weekday (9 AM, 1 PM, 5 PM) as extra deployments of this source, which needs scripts/publish-changed-zaps.mjs to create a pending deployment inside deployments[]. Polling is still not an option: a durable trigger has no interval field (checked against @zapier/zapier-sdk 0.119.0 on 2026-10-31), so a Xero poller runs at ~1/min, ~1,440 Xero calls a day against the tenant's 5,000. updated_invoice_v2 is push but delivers sales invoices only, so it cannot carry the two bill channels.",
     "status": "active",
-    "trigger_note": "SCHEDULE trigger — hourly, top of the hour, weekends included. `details.webhook_url` is https://hooks.zapier.com/hooks/standard/20495893/855338bda2e7439cb065eb211945e43b/ which is Zapier's OWN plumbing for the schedule subscription, NOT a catch URL for any external service to call. Nothing external should ever POST here.",
+    "trigger_note": "SCHEDULE trigger — daily at 9:00 AM account time, weekdays only (hourly until 2026-10-31; see cadence_note). `details.webhook_url` is https://hooks.zapier.com/hooks/standard/20495893/855338bda2e7439cb065eb211945e43b/ which is Zapier's OWN plumbing for the schedule subscription, NOT a catch URL for any external service to call. Nothing external should ever POST here.",
     "manual_run_note": "`trigger-workflow 019fd4cc-6d23-7aa4-964a-ddc6cf489a1b --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD send, sending nothing and writing no state. That is the safe way to inspect this Zap against live Xero data."
   },
   "connections": {
@@ -70,14 +71,14 @@
   },
   "xero_api_usage": {
     "before": "~4,320 calls/day across the three pollers (3 x ~1,440 at the account default interval).",
-    "after": "~24/day — one hourly `GET /Invoices` filtered on UpdatedDateUTC — plus one `GET /Invoices/{id}` per alert actually sent, which is a handful a week.",
+    "after": "~1/weekday since 2026-10-31 (~24/day while hourly) — one `GET /Invoices` per fire, filtered on UpdatedDateUTC — plus one `GET /Invoices/{id}` per alert actually sent, which is a handful a week.",
     "account_total_after": "With this Zap plus the converted xero-bank-transactions-to-zapier-table, the whole tenant now runs at roughly 75-120 Xero calls/day against the 5,000 ceiling, down from ~7,200 (144% of cap). Zero Xero POLLING triggers remain in the account; the only active Xero trigger is xero-invoice-paid-to-gmail-confirmation's `updated_invoice_v2`, which is a REST hook and does not poll."
   },
   "window": {
     "field": "UpdatedDateUTC",
     "overlap_days": 7,
     "why_not_date": "A bill issued three weeks ago and approved today still carries its ORIGINAL `Date`, so a window on `Date` would never see the approval — the single most important event this Zap detects. `UpdatedDateUTC` bumps on both creation and status change, which is exactly the event set required.",
-    "self_healing": "The window is re-read every fire, so a failed run or an hour spent disabled is simply picked up next time, up to 7 days deep. A polling trigger could not do this: it primes its dedupe on first poll, so a gap was permanent.",
+    "self_healing": "The window is re-read every fire, so a failed run or a day spent disabled is simply picked up next time, up to 7 days deep. A polling trigger could not do this: it primes its dedupe on first poll, so a gap was permanent.",
     "caps": "MAX_PAGES 3 (Xero returns 100/page, each page one API call), MAX_INVOICES 200, MAX_ALERTS_PER_RUN 25. A capped run logs a WARNING and never truncates silently."
   },
   "dedupe": {
@@ -90,7 +91,7 @@
     "rule": "`last_alerted_status` is the dedupe key: an alert fires only when an invoice's current QUALIFYING status differs from the status we last alerted on. So a bill alerts once as DRAFT and again when it becomes AUTHORISED, but never twice for the same status however many times the 7-day window re-reads it.",
     "priming": "If the state table read SUCCEEDS and returns zero rows, the run records state for every qualifying invoice and sends NOTHING — mirroring how a Zapier polling trigger primes its dedupe on first poll. Without it, the first fire would alert on every qualifying invoice in the window at once. A FAILED read is deliberately NOT treated as empty (it throws and the step retries), because mistaking a failure for an empty table would silently suppress every alert.",
     "blast_radius": "MAX_ALERTS_PER_RUN (25) is a safety valve, not an optimisation: if the table were ever emptied or mis-primed, one fire could otherwise post hundreds of messages. Anything over the cap keeps its state UNRECORDED so the next fire picks it up and the backlog drains gradually.",
-    "why_a_skipped_invoice_still_records": "A bill that fails the Subcontractor Fees filter, or a vendor with no email in Xero, still records its alerted status — otherwise the filter would be re-evaluated and re-logged every hour forever. `last_skip_reason` keeps the reason visible, and `alert_count` is not incremented."
+    "why_a_skipped_invoice_still_records": "A bill that fails the Subcontractor Fees filter, or a vendor with no email in Xero, still records its alerted status — otherwise the filter would be re-evaluated and re-logged on every fire forever. `last_skip_reason` keeps the reason visible, and `alert_count` is not incremented."
   },
   "routing": {
     "slack-bill-draft": "ACCPAY + DRAFT -> Slack #finance (C08GRA41E1J). Message text and the go.xero.com AccountsPayable deep link ported verbatim.",
@@ -99,7 +100,7 @@
     "ignored": "Everything else, which is the large majority: PAID, VOIDED, DELETED, SUBMITTED, and authorised sales invoices.",
     "detail_refetch": "Every invoice about to be alerted on is re-read in full via GET /Invoices/{id}. Xero's invoice LIST response is not guaranteed to carry `LineItems` or the contact's `EmailAddress`, and both are load-bearing — line items drive the 490 filter and the sales-invoice body, and the email address is the recipient. Re-reading costs ~1 call per alert (rare) and cannot silently degrade, which depending on what the list happens to include would."
   },
-  "description": "Hourly schedule -> GET /Invoices where UpdatedDateUTC >= today-7d -> classify each invoice (ACCPAY+DRAFT, ACCPAY+AUTHORISED, ACCREC+DRAFT) -> for anything whose qualifying status differs from the status last alerted on, re-read the invoice in full and send its alert (Slack #finance, or an approval email to a subcontractor) -> record state in the Xero Invoice Alert State Table. Replaces three Xero polling triggers that together cost ~4,320 Xero API calls/day.",
+  "description": "Weekday 9:00 AM schedule -> GET /Invoices where UpdatedDateUTC >= today-7d -> classify each invoice (ACCPAY+DRAFT, ACCPAY+AUTHORISED, ACCREC+DRAFT) -> for anything whose qualifying status differs from the status last alerted on, re-read the invoice in full and send its alert (Slack #finance, or an approval email to a subcontractor) -> record state in the Xero Invoice Alert State Table. Replaces three Xero polling triggers that together cost ~4,320 Xero API calls/day.",
   "determinism_note": "The workflow body runs in the durable runtime's GUARDED mode, where `Date` is replaced by a Proxy whose `construct` trap throws DeterminismViolation BEFORE inspecting its arguments — so even a deterministic `new Date(Date.UTC(y,m,d))` is rejected as hard as a clock read. All date arithmetic here is integer maths (`daysFromCivil` / `isoDateFromEpochMs` / `isoTimestampFromEpochMs`, copied from drive-invoice-to-xero); the ONLY clock read is inside `ctx.step(\"now\")`, so its value is fixed for every retry of a run. Verified by grep before publish and by a real run-durable in the 0.12.3 runtime.",
   "version_history": [
     {
