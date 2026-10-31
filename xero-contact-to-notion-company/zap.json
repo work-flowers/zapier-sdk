@@ -1,7 +1,7 @@
 {
   "name": "xero-contact-to-notion-company",
   "workflow_id": "019fdb77-594e-7426-a1f2-9c0b153d986c",
-  "current_version_id": "019fdb77-9560-7e68-ad83-c1199510cc61",
+  "current_version_id": "01a18fad-8d2d-73f9-9414-52b054501084",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AWryRiRo4s6EcMp_GOp6bA",
   "enabled": true,
   "is_private": false,
@@ -65,5 +65,5 @@
   ],
   "pending_verification": "No contact has yet been linked by this workflow, because all 5 current candidates were already linked. To exercise the write path deliberately: create or pick a Xero contact whose Account Number is a Notion Company ID whose company has an EMPTY `Xero Contact ID`, then run with `{\"dryRun\":true}` first and confirm it reports `would link`. Watch for: `linked` non-empty with outcome `linked`; the Notion Company page's `Xero Contact ID` populated; f15 populated in the Table; and on the NEXT fire the same contact reported as `already linked`.",
   "created_at": "2026-08-07T08:43:00.000Z",
-  "version_created_at": "2026-08-07T08:44:00.000Z"
+  "version_created_at": "2026-10-31T01:57:59.528Z"
 }

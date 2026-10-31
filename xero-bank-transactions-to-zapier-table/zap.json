@@ -1,7 +1,7 @@
 {
   "name": "xero-bank-transactions-to-zapier-table",
   "workflow_id": "019fa885-7d5e-73a8-b601-4ec31290bf4a",
-  "current_version_id": "019fdb43-253f-7e97-890d-c5dc01f3abf2",
+  "current_version_id": "01a18fad-5782-786b-92f0-e22c174e54ba",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaVB57afDcrtlFL0dbihDA",
   "enabled": true,
   "is_private": false,
@@ -100,5 +100,5 @@
     "next_incident": "The mechanic worth remembering has changed. It is no longer 'a pause is silent and the gap is permanent' \u2014 the window self-heals. It is now: this Zap makes ~24-48 Xero calls/day, and the tenant shares a 5,000/day ceiling with every other Xero Zap. If Xero throttling returns, check the whole tenant's poller inventory before blaming this Zap, and read Xero's `x-rate-limit-problem` / `x-daylimit-remaining` headers rather than guessing from the error text."
   },
   "created_at": "2026-07-28T11:35:00.000Z",
-  "version_created_at": "2026-08-07T08:07:18.784Z"
+  "version_created_at": "2026-10-31T01:57:45.757Z"
 }
