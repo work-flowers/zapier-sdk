@@ -1,5 +1,7 @@
 # slack-notion-thread-sync-sweep
 
+> **⏸️ Disabled 2026-10-31**, together with its companions. The full two-way comment sync wasn't worth its cost once Next Gen Zap billing starts on 2026-12-01: the two event-driven Zaps ran ~1,100 times a month each, nearly all skips, and from then on every run costs at least 1 task. The code and the `thread_map` / `message_map` Tables are kept. `thread_map` already records which Slack thread belongs to which Notion page, which is the part worth keeping; a lighter page ↔ thread reference may replace this sync later. To bring it back, `enable-workflow` all three and set `enabled` in each `zap.json`.
+
 Daily scheduled backstop behind the **Slack thread ↔ Notion discussion two-way sync** (TKT-825). Two jobs per active `thread_map` row:
 
 1. **Resolve detection.** The Notion API cannot retrieve resolved comments — a resolved discussion simply vanishes from `GET /v1/comments` (indistinguishable from deleted). If the mapped `discussion_id` is gone, the row flips to `resolved` and a closing note posts into the Slack thread. This sweep is the *only* resolve-detection mechanism (real-time resolution would need `comment.updated` webhooks — deliberately not used in v1).
