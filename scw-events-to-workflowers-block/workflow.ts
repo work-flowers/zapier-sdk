@@ -7,7 +7,9 @@
 // dennis@work.flowers calendar WITH ITS FULL TITLE, so SCW meetings block
 // work.flowers time visibly. Updates move/rename the mirror; cancellations
 // delete it. The GCal Sync Map table is both the loop guard and the
-// update/delete target map.
+// update/delete target map. A whole-series edit arrives as one series master
+// and is expanded to the occurrences inside the 30-day horizon (see
+// mirrorSeries).
 import { defineDurable, type DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 import { z } from "zod";
@@ -49,11 +51,11 @@ const SYNC_MAP_TABLE = "01M13QPJ5GRJV33096MBNSN1Q5";
 const SYNC_MARKER = "[gcal-block]";
 
 /**
- * Mirror only occurrences starting within this window. `expand_recurring:
- * true` expands an open-ended weekly series ~14 years out (730 instances in
- * one observed poll), so an unguarded create path would burn ~700 tasks on a
- * single series. Occurrences rolling into the window later are picked up by
- * gcal-block-sweep. Keep in lockstep with the sweep's default window.
+ * Mirror only occurrences starting within this window. A series edit is
+ * expanded only this far ahead (see "Series expansion" below), and a one-off
+ * event or edited occurrence further out is left for gcal-block-sweep, which
+ * mirrors occurrences as they roll into the window. Keep in lockstep with the
+ * sweep's default window.
  */
 const HORIZON_DAYS = 30;
 const HORIZON_MS = HORIZON_DAYS * 86400000;
@@ -91,6 +93,7 @@ const InputSchema = z
     transparency: z.string().optional().nullable(),
     updated: z.string().optional().nullable(),
     recurringEventId: z.string().optional().nullable(),
+    recurrence: z.array(z.string()).optional().nullable(),
     start: EventTimeSchema.optional().nullable(),
     end: EventTimeSchema.optional().nullable(),
     attendees: z.array(AttendeeSchema).optional().nullable(),
@@ -208,6 +211,445 @@ function extractRow(result: unknown): MappingRow | null {
 /** Google's error text when the mirror event was hand-deleted out from under us. */
 const MIRROR_GONE_PATTERN = /not\s*found|has been deleted|410|404/i;
 
+// --- One occurrence --------------------------------------------------------------
+
+/** Step id for one occurrence: bare for a single delivered event, prefixed per occurrence when a series is expanded. */
+function stepId(stepPrefix: string, name: string): string {
+  return stepPrefix ? `${stepPrefix}-${name}` : name;
+}
+
+/**
+ * Mirror ONE occurrence (a one-off event, an individually edited occurrence,
+ * or one occurrence of an expanded series). `stepPrefix` keeps step ids unique
+ * when a series expansion calls this once per occurrence; it lives in a helper
+ * because the publish-time analyzer rejects a computed step id in the workflow
+ * body. `horizonClockMs` overrides the horizon guard's clock with the series
+ * edit's own `updated`, since an untouched occurrence can carry an older one.
+ */
+async function mirrorOccurrence(
+  ctx: DurableContext,
+  stepPrefix: string,
+  event: Input,
+  horizonClockMs: number | null,
+): Promise<Record<string, unknown>> {
+  const eventId = firstString(event.id);
+  if (!eventId) {
+    console.log("payload has no event id — nothing to mirror");
+    return { skipped: "no-event-id" };
+  }
+
+  const summary = firstString(event.summary);
+  const description = firstString(event.description);
+  const startDateTime = firstString(event.start?.dateTime);
+  const endDateTime = firstString(event.end?.dateTime);
+  const updatedAt = firstString(event.updated);
+  const cancelled = firstString(event.status) === "cancelled";
+
+  // Loop guard (content): a bare "Busy" block on the SCW calendar is either
+  // our own wf->scw mirror or a legacy Notion Calendar block — never mirror
+  // it back. Same for anything still carrying Notion Calendar's blocker
+  // description ("Event blocked with <a ...>Notion Calendar</a>").
+  if (!cancelled && summary === "Busy") {
+    return { skipped: "busy-block-not-mirrored", eventId };
+  }
+  if (description && (description.includes(SYNC_MARKER) || description.includes("Event blocked with"))) {
+    return { skipped: "sync-artifact-not-mirrored", eventId };
+  }
+
+  // Loop guard (table): anything the sync itself created, in either
+  // direction, has its event id recorded as a Mirror Event ID. Catches the
+  // sparse cancelled tombstone of a mirror too, which carries no
+  // summary/description for the guards above. Free.
+  const mirrorGuard = await ctx.step(stepId(stepPrefix, "guard-created-by-sync"), async () =>
+    sdk.runAction({
+      appKey: "TableCLIAPI",
+      actionType: "search",
+      actionKey: "find_record",
+      inputs: {
+        table_id: SYNC_MAP_TABLE,
+        filter_count: "1",
+        use_stored_order: false,
+        field_data_key: "data__f2",
+        operator: "exact",
+        lookup_value: eventId,
+        _zap_search_multiple_results: "first",
+        _zap_search_success_on_miss: true,
+      },
+    }),
+  );
+  if (extractRow((mirrorGuard as { data?: unknown }).data)) {
+    return { skipped: "created-by-sync", eventId };
+  }
+
+  // The mapping row for this source occurrence, if the sync has seen it before.
+  const lookup = await ctx.step(stepId(stepPrefix, "find-mapping-row"), async () =>
+    sdk.runAction({
+      appKey: "TableCLIAPI",
+      actionType: "search",
+      actionKey: "find_record",
+      inputs: {
+        table_id: SYNC_MAP_TABLE,
+        filter_count: "2",
+        use_stored_order: false,
+        field_data_key: "data__f1",
+        operator: "exact",
+        lookup_value: eventId,
+        field_data_key_2: "data__f3",
+        operator_2: "exact",
+        lookup_value_2: DIRECTION,
+        _zap_search_multiple_results: "first",
+        _zap_search_success_on_miss: true,
+      },
+    }),
+  );
+  const row = extractRow((lookup as { data?: unknown }).data);
+  const activeMirrorId = row && row.status === "active" ? row.mirrorEventId : null;
+
+  // Delete the mirror when the source is gone or stops deserving a block:
+  // cancelled, turned all-day (start.date instead of dateTime), marked Free,
+  // or declined by Dennis after previously being mirrored. An invite Dennis
+  // has not answered yet (needsAction) is not mirrored either; only accepted
+  // and tentative ("maybe") invites block time. An event with no self
+  // attendee (his own event, no guests) has no RSVP and is mirrored.
+  const selfStatus = firstString(
+    (event.attendees ?? []).find((a) => a?.self === true)?.responseStatus,
+  );
+  const selfDeclined = selfStatus === "declined";
+  const selfUnanswered = selfStatus === "needsAction";
+  const transparent = firstString(event.transparency) === "transparent";
+  const notTimed = !startDateTime || !endDateTime;
+  const skipReason = cancelled
+    ? "event-cancelled"
+    : notTimed
+      ? "not-a-timed-event"
+      : transparent
+        ? "event-is-free"
+        : selfDeclined
+          ? "declined-by-self"
+          : selfUnanswered
+            ? "unanswered-by-self"
+            : null;
+
+  if (skipReason) {
+    if (!activeMirrorId) {
+      return { skipped: skipReason, eventId };
+    }
+    await ctx.step(stepId(stepPrefix, "delete-mirror"), async () => {
+      try {
+        return await sdk.runAction({
+          appKey: GCAL_APP_KEY,
+          actionType: "write",
+          actionKey: "delete_event",
+          connection: DEST_CONNECTION,
+          inputs: {
+            calendarid: DEST_CALENDAR,
+            eventid: activeMirrorId,
+            send_notifications: false,
+          },
+        });
+      } catch (error) {
+        // Already gone is the outcome we wanted; anything else retries.
+        const message = error instanceof Error ? error.message : String(error);
+        if (MIRROR_GONE_PATTERN.test(message)) return { alreadyGone: true };
+        throw error;
+      }
+    });
+    await ctx.step(stepId(stepPrefix, "mark-row-deleted"), async () =>
+      sdk.runAction({
+        appKey: "TableCLIAPI",
+        actionType: "write",
+        actionKey: "update_record",
+        inputs: {
+          table_id: SYNC_MAP_TABLE,
+          record_id: row!.recordId,
+          new__data__f4: "deleted",
+          ...(updatedAt ? { new__data__f8: updatedAt } : {}),
+        },
+      }),
+    );
+    return { unmirrored: skipReason, eventId, mirrorEventId: activeMirrorId };
+  }
+
+  // Horizon guard: never CREATE a mirror for an occurrence starting more
+  // than HORIZON_DAYS after the edit that delivered it (`updated` is the
+  // freshest clock the payload carries; a run happens within minutes of it).
+  // An occurrence that already HAS a mirror is updated regardless, so a
+  // reschedule past the horizon keeps its block accurate.
+  const startMs = epochMsFromRfc3339(startDateTime);
+  const updatedMs = horizonClockMs ?? epochMsFromRfc3339(updatedAt);
+  if (!activeMirrorId && startMs !== null && updatedMs !== null && startMs - updatedMs > HORIZON_MS) {
+    console.log(`occurrence starts ${Math.round((startMs - updatedMs) / 86400000)}d out — beyond the ${HORIZON_DAYS}d horizon; gcal-block-sweep will mirror it later`);
+    return { skipped: "beyond-horizon", eventId, start: startDateTime };
+  }
+
+  const mirrorSummary = summary ?? "(no title)";
+  const mirrorDescription = `${SYNC_MARKER} source:${eventId}\nMirrored from ${SOURCE_CALENDAR} by ${WORKFLOW_NAME}. Edits here will be overwritten.`;
+
+  // Change guard: `event_updated` fires on every touch (someone else's RSVP,
+  // a description tweak, Gemini attaching notes). Only a moved or renamed
+  // occurrence is worth the update task.
+  if (
+    activeMirrorId &&
+    sameInstant(startDateTime, row!.start) &&
+    sameInstant(endDateTime, row!.end) &&
+    mirrorSummary === row!.summary
+  ) {
+    return { skipped: "unchanged", eventId, mirrorEventId: activeMirrorId };
+  }
+
+  if (activeMirrorId) {
+    // The one task an update run spends. A hand-deleted mirror falls
+    // through to recreation below instead of spinning the retry loop.
+    const update = await ctx.step(stepId(stepPrefix, "update-mirror"), async () => {
+      try {
+        return await sdk.runAction({
+          appKey: GCAL_APP_KEY,
+          actionType: "write",
+          actionKey: "update_event",
+          connection: DEST_CONNECTION,
+          inputs: {
+            calendarid: DEST_CALENDAR,
+            eventid: activeMirrorId,
+            summary: mirrorSummary,
+            description: mirrorDescription,
+            start__dateTime: startDateTime,
+            end__dateTime: endDateTime,
+            send_notifications: false,
+          },
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (MIRROR_GONE_PATTERN.test(message)) return { mirrorGone: true };
+        throw error;
+      }
+    });
+
+    if (!(update as { mirrorGone?: boolean })?.mirrorGone) {
+      await ctx.step(stepId(stepPrefix, "refresh-mapping-row"), async () =>
+        sdk.runAction({
+          appKey: "TableCLIAPI",
+          actionType: "write",
+          actionKey: "update_record",
+          inputs: {
+            table_id: SYNC_MAP_TABLE,
+            record_id: row!.recordId,
+            new__data__f5: startDateTime,
+            new__data__f6: endDateTime,
+            new__data__f7: mirrorSummary,
+            ...(updatedAt ? { new__data__f8: updatedAt } : {}),
+          },
+        }),
+      );
+      return {
+        updated: true,
+        eventId,
+        mirrorEventId: activeMirrorId,
+        start: startDateTime,
+        end: endDateTime,
+      };
+    }
+    console.log(`mirror ${activeMirrorId} was deleted by hand — recreating`);
+  }
+
+  // Create the mirror (also the recreate path for a hand-deleted mirror and
+  // the revive path for a row previously marked deleted).
+  const created = await ctx.step(stepId(stepPrefix, "create-mirror"), async () =>
+    sdk.runAction({
+      appKey: GCAL_APP_KEY,
+      actionType: "write",
+      actionKey: "detailed_event",
+      connection: DEST_CONNECTION,
+      inputs: {
+        calendarid: DEST_CALENDAR,
+        summary: mirrorSummary,
+        description: mirrorDescription,
+        start__dateTime: startDateTime,
+        end__dateTime: endDateTime,
+        transparency: "opaque",
+        visibility: "default",
+        all_day: false,
+        reminders__useDefault: false,
+      },
+    }),
+  );
+  const mirrorEventId = firstString(
+    (created as { data?: Array<{ id?: unknown }> }).data?.[0]?.id,
+  );
+  if (!mirrorEventId) {
+    throw new Error("detailed_event returned no event id — mirror state unknown, refusing to record a bad mapping");
+  }
+
+  if (row) {
+    await ctx.step(stepId(stepPrefix, "revive-mapping-row"), async () =>
+      sdk.runAction({
+        appKey: "TableCLIAPI",
+        actionType: "write",
+        actionKey: "update_record",
+        inputs: {
+          table_id: SYNC_MAP_TABLE,
+          record_id: row.recordId,
+          new__data__f2: mirrorEventId,
+          new__data__f4: "active",
+          new__data__f5: startDateTime,
+          new__data__f6: endDateTime,
+          new__data__f7: mirrorSummary,
+          ...(updatedAt ? { new__data__f8: updatedAt } : {}),
+        },
+      }),
+    );
+  } else {
+    await ctx.step(stepId(stepPrefix, "create-mapping-row"), async () =>
+      sdk.runAction({
+        appKey: "TableCLIAPI",
+        actionType: "write",
+        actionKey: "create_record",
+        inputs: {
+          table_id: SYNC_MAP_TABLE,
+          new__data__f1: eventId,
+          new__data__f2: mirrorEventId,
+          new__data__f3: DIRECTION,
+          new__data__f4: "active",
+          new__data__f5: startDateTime,
+          new__data__f6: endDateTime,
+          new__data__f7: mirrorSummary,
+          ...(updatedAt ? { new__data__f8: updatedAt } : {}),
+        },
+      }),
+    );
+  }
+
+  return {
+    created: true,
+    eventId,
+    mirrorEventId,
+    summary: mirrorSummary,
+    start: startDateTime,
+    end: endDateTime,
+  };
+}
+
+// --- Series expansion ------------------------------------------------------------
+// The trigger runs with `expand_recurring: false` (since 2026-10-31). With it
+// on, every edit to a recurring series re-delivered EVERY expanded occurrence
+// years ahead once Zapier fixed W6ZE93-VMEWP — one edit to a daily standup was
+// thousands of runs, and on 2026-10-30 that burst exhausted the account's
+// daily compute-spend limit, so every Zap in the account was refused until
+// 00:00 UTC. Now a series edit arrives as ONE run carrying the series master
+// (a `recurrence` array, no `recurringEventId`), and this workflow fetches
+// only that series' occurrences inside the horizon. One-off events and
+// individually edited occurrences (`<seriesId>_<startUTC>`, with
+// `recurringEventId`) still arrive one by one and go straight to
+// mirrorOccurrence.
+
+/**
+ * Dennis rolls off the SCW engagement at the end of 2026, and the sync with
+ * it, so a series is never expanded past this instant. After it, a series edit
+ * is a no-op.
+ */
+const ENGAGEMENT_END_MS = epochMsFromRfc3339("2027-01-01T00:00:00+08:00")!;
+
+/** The calendar this workflow reads, and the alias that can read it (for the occurrence fetch). */
+const SOURCE_CONNECTION = "gcal_scw";
+
+const DAY_MS = 86400000;
+
+/** Inverse of daysFromCivil (Hinnant's civil-from-days), same as gcal-block-sweep. */
+function civilFromDays(days: number): { y: number; m: number; d: number } {
+  const zz = days + 719468;
+  const era = Math.floor(zz / 146097);
+  const doe = zz - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const y = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const d = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const m = mp < 10 ? mp + 3 : mp - 9;
+  return { y: y + (m <= 2 ? 1 : 0), m, d };
+}
+
+const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+
+/** Epoch milliseconds -> `YYYY-MM-DDTHH:MM:SSZ`. */
+function isoFromEpochMs(epochMs: number): string {
+  const days = Math.floor(epochMs / DAY_MS);
+  const msOfDay = epochMs - days * DAY_MS;
+  const { y, m, d } = civilFromDays(days);
+  const hour = Math.floor(msOfDay / 3600000);
+  const minute = Math.floor((msOfDay % 3600000) / 60000);
+  const second = Math.floor((msOfDay % 60000) / 1000);
+  return `${pad(y, 4)}-${pad(m)}-${pad(d)}T${pad(hour)}:${pad(minute)}:${pad(second)}Z`;
+}
+
+/** A live series master: carries a recurrence rule and is not itself an occurrence. */
+function isSeriesMaster(event: Input): boolean {
+  return (
+    Array.isArray(event.recurrence) &&
+    event.recurrence.length > 0 &&
+    !firstString(event.recurringEventId) &&
+    firstString(event.status) !== "cancelled"
+  );
+}
+
+/**
+ * Expand a series master into its occurrences inside [edit time, edit time +
+ * HORIZON_DAYS), capped at ENGAGEMENT_END_MS, and mirror each one. One Google
+ * `events.instances` call through the source connection (1 task) replaces the
+ * thousands of per-occurrence runs `expand_recurring: true` produced.
+ */
+async function mirrorSeries(ctx: DurableContext, event: Input): Promise<Record<string, unknown>> {
+  const seriesId = firstString(event.id)!;
+  const editedMs = epochMsFromRfc3339(firstString(event.updated));
+  if (editedMs === null) {
+    // No clock to bound the window by — a payload shape we do not understand.
+    throw new Error(`series master ${seriesId} has no parseable \`updated\` — cannot bound the occurrence window`);
+  }
+  const fromMs = editedMs;
+  const toMs = Math.min(editedMs + HORIZON_MS, ENGAGEMENT_END_MS);
+  if (toMs <= fromMs) {
+    return { skipped: "series-past-engagement-end", seriesId };
+  }
+
+  const fetched = await ctx.step("fetch-series-occurrences", async () => {
+    const url =
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(SOURCE_CALENDAR)}` +
+      `/events/${encodeURIComponent(seriesId)}/instances` +
+      `?timeMin=${encodeURIComponent(isoFromEpochMs(fromMs))}&timeMax=${encodeURIComponent(isoFromEpochMs(toMs))}&maxResults=250`;
+    const res = await sdk.fetch(url, { connection: SOURCE_CONNECTION });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`events.instances for ${seriesId} answered ${res.status}: ${text.slice(0, 300)}`);
+    }
+    const body = JSON.parse(text) as { items?: unknown[]; nextPageToken?: unknown };
+    return { items: body.items ?? [], truncated: typeof body.nextPageToken === "string" };
+  });
+  if (fetched.truncated) {
+    // 250 occurrences inside a 30-day window would be an every-few-hours
+    // series; the sweep catches anything past the first page.
+    console.log(`series ${seriesId}: more than 250 occurrences in the window — mirroring the first page only`);
+  }
+
+  const outcomes: Record<string, number> = {};
+  for (let i = 0; i < fetched.items.length; i++) {
+    const occurrence = InputSchema.safeParse(fetched.items[i]);
+    if (!occurrence.success) {
+      throw new Error(`events.instances item ${i} for ${seriesId} did not parse: ${occurrence.error.message}`);
+    }
+    const result = await mirrorOccurrence(ctx, `occ-${i}`, occurrence.data, editedMs);
+    const outcome =
+      typeof result.skipped === "string" ? `skipped:${result.skipped}` :
+      typeof result.unmirrored === "string" ? `unmirrored:${result.unmirrored}` :
+      result.created ? "created" : result.updated ? "updated" : "other";
+    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+  }
+  console.log(`series ${seriesId}: ${fetched.items.length} occurrences in ${isoFromEpochMs(fromMs)}..${isoFromEpochMs(toMs)} — ${JSON.stringify(outcomes)}`);
+  return {
+    series: seriesId,
+    window: { from: isoFromEpochMs(fromMs), to: isoFromEpochMs(toMs) },
+    occurrences: fetched.items.length,
+    outcomes,
+  };
+}
+
 // --- Workflow --------------------------------------------------------------------
 
 // The name MUST be a string literal here: Zapier's publish-time analyzer
@@ -218,300 +660,11 @@ const workflow = defineDurable<Input, unknown>(
   async (ctx: DurableContext, rawInput: Input) => {
     const event = InputSchema.parse(normalizeInput(rawInput));
 
-    const eventId = firstString(event.id);
-    if (!eventId) {
-      console.log("payload has no event id — nothing to mirror");
-      return { skipped: "no-event-id" };
+    // A whole-series edit: expand only the occurrences inside the horizon.
+    if (firstString(event.id) && isSeriesMaster(event)) {
+      return mirrorSeries(ctx, event);
     }
-
-    const summary = firstString(event.summary);
-    const description = firstString(event.description);
-    const startDateTime = firstString(event.start?.dateTime);
-    const endDateTime = firstString(event.end?.dateTime);
-    const updatedAt = firstString(event.updated);
-    const cancelled = firstString(event.status) === "cancelled";
-
-    // Loop guard (content): a bare "Busy" block on the SCW calendar is either
-    // our own wf->scw mirror or a legacy Notion Calendar block — never mirror
-    // it back. Same for anything still carrying Notion Calendar's blocker
-    // description ("Event blocked with <a ...>Notion Calendar</a>").
-    if (!cancelled && summary === "Busy") {
-      return { skipped: "busy-block-not-mirrored", eventId };
-    }
-    if (description && (description.includes(SYNC_MARKER) || description.includes("Event blocked with"))) {
-      return { skipped: "sync-artifact-not-mirrored", eventId };
-    }
-
-    // Loop guard (table): anything the sync itself created, in either
-    // direction, has its event id recorded as a Mirror Event ID. Catches the
-    // sparse cancelled tombstone of a mirror too, which carries no
-    // summary/description for the guards above. Free.
-    const mirrorGuard = await ctx.step("guard-created-by-sync", async () =>
-      sdk.runAction({
-        appKey: "TableCLIAPI",
-        actionType: "search",
-        actionKey: "find_record",
-        inputs: {
-          table_id: SYNC_MAP_TABLE,
-          filter_count: "1",
-          use_stored_order: false,
-          field_data_key: "data__f2",
-          operator: "exact",
-          lookup_value: eventId,
-          _zap_search_multiple_results: "first",
-          _zap_search_success_on_miss: true,
-        },
-      }),
-    );
-    if (extractRow((mirrorGuard as { data?: unknown }).data)) {
-      return { skipped: "created-by-sync", eventId };
-    }
-
-    // The mapping row for this source occurrence, if the sync has seen it before.
-    const lookup = await ctx.step("find-mapping-row", async () =>
-      sdk.runAction({
-        appKey: "TableCLIAPI",
-        actionType: "search",
-        actionKey: "find_record",
-        inputs: {
-          table_id: SYNC_MAP_TABLE,
-          filter_count: "2",
-          use_stored_order: false,
-          field_data_key: "data__f1",
-          operator: "exact",
-          lookup_value: eventId,
-          field_data_key_2: "data__f3",
-          operator_2: "exact",
-          lookup_value_2: DIRECTION,
-          _zap_search_multiple_results: "first",
-          _zap_search_success_on_miss: true,
-        },
-      }),
-    );
-    const row = extractRow((lookup as { data?: unknown }).data);
-    const activeMirrorId = row && row.status === "active" ? row.mirrorEventId : null;
-
-    // Delete the mirror when the source is gone or stops deserving a block:
-    // cancelled, turned all-day (start.date instead of dateTime), marked Free,
-    // or declined by Dennis after previously being mirrored. An invite Dennis
-    // has not answered yet (needsAction) is not mirrored either; only accepted
-    // and tentative ("maybe") invites block time. An event with no self
-    // attendee (his own event, no guests) has no RSVP and is mirrored.
-    const selfStatus = firstString(
-      (event.attendees ?? []).find((a) => a?.self === true)?.responseStatus,
-    );
-    const selfDeclined = selfStatus === "declined";
-    const selfUnanswered = selfStatus === "needsAction";
-    const transparent = firstString(event.transparency) === "transparent";
-    const notTimed = !startDateTime || !endDateTime;
-    const skipReason = cancelled
-      ? "event-cancelled"
-      : notTimed
-        ? "not-a-timed-event"
-        : transparent
-          ? "event-is-free"
-          : selfDeclined
-            ? "declined-by-self"
-            : selfUnanswered
-              ? "unanswered-by-self"
-              : null;
-
-    if (skipReason) {
-      if (!activeMirrorId) {
-        return { skipped: skipReason, eventId };
-      }
-      await ctx.step("delete-mirror", async () => {
-        try {
-          return await sdk.runAction({
-            appKey: GCAL_APP_KEY,
-            actionType: "write",
-            actionKey: "delete_event",
-            connection: DEST_CONNECTION,
-            inputs: {
-              calendarid: DEST_CALENDAR,
-              eventid: activeMirrorId,
-              send_notifications: false,
-            },
-          });
-        } catch (error) {
-          // Already gone is the outcome we wanted; anything else retries.
-          const message = error instanceof Error ? error.message : String(error);
-          if (MIRROR_GONE_PATTERN.test(message)) return { alreadyGone: true };
-          throw error;
-        }
-      });
-      await ctx.step("mark-row-deleted", async () =>
-        sdk.runAction({
-          appKey: "TableCLIAPI",
-          actionType: "write",
-          actionKey: "update_record",
-          inputs: {
-            table_id: SYNC_MAP_TABLE,
-            record_id: row!.recordId,
-            new__data__f4: "deleted",
-            ...(updatedAt ? { new__data__f8: updatedAt } : {}),
-          },
-        }),
-      );
-      return { unmirrored: skipReason, eventId, mirrorEventId: activeMirrorId };
-    }
-
-    // Horizon guard: never CREATE a mirror for an occurrence starting more
-    // than HORIZON_DAYS after the edit that delivered it (`updated` is the
-    // freshest clock the payload carries; a run happens within minutes of it).
-    // An occurrence that already HAS a mirror is updated regardless, so a
-    // reschedule past the horizon keeps its block accurate.
-    const startMs = epochMsFromRfc3339(startDateTime);
-    const updatedMs = epochMsFromRfc3339(updatedAt);
-    if (!activeMirrorId && startMs !== null && updatedMs !== null && startMs - updatedMs > HORIZON_MS) {
-      console.log(`occurrence starts ${Math.round((startMs - updatedMs) / 86400000)}d out — beyond the ${HORIZON_DAYS}d horizon; gcal-block-sweep will mirror it later`);
-      return { skipped: "beyond-horizon", eventId, start: startDateTime };
-    }
-
-    const mirrorSummary = summary ?? "(no title)";
-    const mirrorDescription = `${SYNC_MARKER} source:${eventId}\nMirrored from ${SOURCE_CALENDAR} by ${WORKFLOW_NAME}. Edits here will be overwritten.`;
-
-    // Change guard: `event_updated` fires on every touch (someone else's RSVP,
-    // a description tweak, Gemini attaching notes). Only a moved or renamed
-    // occurrence is worth the update task.
-    if (
-      activeMirrorId &&
-      sameInstant(startDateTime, row!.start) &&
-      sameInstant(endDateTime, row!.end) &&
-      mirrorSummary === row!.summary
-    ) {
-      return { skipped: "unchanged", eventId, mirrorEventId: activeMirrorId };
-    }
-
-    if (activeMirrorId) {
-      // The one task an update run spends. A hand-deleted mirror falls
-      // through to recreation below instead of spinning the retry loop.
-      const update = await ctx.step("update-mirror", async () => {
-        try {
-          return await sdk.runAction({
-            appKey: GCAL_APP_KEY,
-            actionType: "write",
-            actionKey: "update_event",
-            connection: DEST_CONNECTION,
-            inputs: {
-              calendarid: DEST_CALENDAR,
-              eventid: activeMirrorId,
-              summary: mirrorSummary,
-              description: mirrorDescription,
-              start__dateTime: startDateTime,
-              end__dateTime: endDateTime,
-              send_notifications: false,
-            },
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (MIRROR_GONE_PATTERN.test(message)) return { mirrorGone: true };
-          throw error;
-        }
-      });
-
-      if (!(update as { mirrorGone?: boolean })?.mirrorGone) {
-        await ctx.step("refresh-mapping-row", async () =>
-          sdk.runAction({
-            appKey: "TableCLIAPI",
-            actionType: "write",
-            actionKey: "update_record",
-            inputs: {
-              table_id: SYNC_MAP_TABLE,
-              record_id: row!.recordId,
-              new__data__f5: startDateTime,
-              new__data__f6: endDateTime,
-              new__data__f7: mirrorSummary,
-              ...(updatedAt ? { new__data__f8: updatedAt } : {}),
-            },
-          }),
-        );
-        return {
-          updated: true,
-          eventId,
-          mirrorEventId: activeMirrorId,
-          start: startDateTime,
-          end: endDateTime,
-        };
-      }
-      console.log(`mirror ${activeMirrorId} was deleted by hand — recreating`);
-    }
-
-    // Create the mirror (also the recreate path for a hand-deleted mirror and
-    // the revive path for a row previously marked deleted).
-    const created = await ctx.step("create-mirror", async () =>
-      sdk.runAction({
-        appKey: GCAL_APP_KEY,
-        actionType: "write",
-        actionKey: "detailed_event",
-        connection: DEST_CONNECTION,
-        inputs: {
-          calendarid: DEST_CALENDAR,
-          summary: mirrorSummary,
-          description: mirrorDescription,
-          start__dateTime: startDateTime,
-          end__dateTime: endDateTime,
-          transparency: "opaque",
-          visibility: "default",
-          all_day: false,
-          reminders__useDefault: false,
-        },
-      }),
-    );
-    const mirrorEventId = firstString(
-      (created as { data?: Array<{ id?: unknown }> }).data?.[0]?.id,
-    );
-    if (!mirrorEventId) {
-      throw new Error("detailed_event returned no event id — mirror state unknown, refusing to record a bad mapping");
-    }
-
-    if (row) {
-      await ctx.step("revive-mapping-row", async () =>
-        sdk.runAction({
-          appKey: "TableCLIAPI",
-          actionType: "write",
-          actionKey: "update_record",
-          inputs: {
-            table_id: SYNC_MAP_TABLE,
-            record_id: row.recordId,
-            new__data__f2: mirrorEventId,
-            new__data__f4: "active",
-            new__data__f5: startDateTime,
-            new__data__f6: endDateTime,
-            new__data__f7: mirrorSummary,
-            ...(updatedAt ? { new__data__f8: updatedAt } : {}),
-          },
-        }),
-      );
-    } else {
-      await ctx.step("create-mapping-row", async () =>
-        sdk.runAction({
-          appKey: "TableCLIAPI",
-          actionType: "write",
-          actionKey: "create_record",
-          inputs: {
-            table_id: SYNC_MAP_TABLE,
-            new__data__f1: eventId,
-            new__data__f2: mirrorEventId,
-            new__data__f3: DIRECTION,
-            new__data__f4: "active",
-            new__data__f5: startDateTime,
-            new__data__f6: endDateTime,
-            new__data__f7: mirrorSummary,
-            ...(updatedAt ? { new__data__f8: updatedAt } : {}),
-          },
-        }),
-      );
-    }
-
-    return {
-      created: true,
-      eventId,
-      mirrorEventId,
-      summary: mirrorSummary,
-      start: startDateTime,
-      end: endDateTime,
-    };
+    return mirrorOccurrence(ctx, "", event, null);
   },
 );
 

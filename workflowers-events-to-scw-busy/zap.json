@@ -17,16 +17,17 @@
     "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
     "params": {
       "calendarid": "dennis@work.flowers",
-      "expand_recurring": true
+      "expand_recurring": false
     },
     "authentication_note": "work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the calendar being READ. Same id gcal-event-updated-to-meeting-note carries on its trigger; that Zap and this one both poll dennis@work.flowers and coexist fine. The SCW credential is a --connections alias because the workflow writes there.",
-    "trigger_note": "Polling trigger, fires on create AND update. Cancellations DO NOT arrive through it: with expand_recurring: true Zapier silently drops cancelled tombstones (proven 2026-08-31 — 0 cancelled in 100 runs here vs 13/100 on the meeting-note Zap, whose only trigger difference is expand_recurring: false; the deleted 9am work.flowers event of 2026-08-31 left its SCW Busy block standing). Deletion propagation lives in workflowers-cancellations-to-scw-unblock (event_cancelled). The cancel branch in this workflow is kept as a belt.",
-    "params_note": "expand_recurring: true DELIBERATELY differs from gcal-event-updated-to-meeting-note (false): blocking needs one mirror per occurrence, keyed on the occurrence id. The workflow's 30-day horizon guard bounds the resulting volume (a weekly series expands ~730 instances in one poll)."
+    "trigger_note": "Polling trigger, fires on create AND update. Historical: with expand_recurring: true (until 2026-10-31) Zapier silently dropped cancelled tombstones (proven 2026-08-31 — 0 cancelled in 100 runs here vs 13/100 on the meeting-note Zap, whose only trigger difference is expand_recurring: false; the deleted 9am work.flowers event of 2026-08-31 left its SCW Busy block standing). Deletion propagation lives in workflowers-cancellations-to-scw-unblock (event_cancelled). The cancel branch in this workflow is kept as a belt. With expand_recurring: false cancellations may arrive here too (the meeting-note Zap saw them); the cancel branch handles them idempotently alongside the cancellations Zap.",
+    "params_note": "expand_recurring: false since 2026-10-31. With it true, every edit to a recurring series re-delivered every expanded occurrence years ahead once Zapier fixed W6ZE93-VMEWP (one daily-standup edit = thousands of runs), and on 2026-10-30 those bursts exhausted the account's daily compute-spend limit, so every Zap in the account was refused until 00:00 UTC. Now a series edit arrives as ONE run carrying the series master (`recurrence` set, no `recurringEventId`); the workflow fetches only that series' occurrences inside the 30-day horizon (capped at 2026-12-31, the end of the SCW engagement) with one Google events.instances call through the `gcal_wf` alias, and mirrors each. One-off events and individually edited occurrences still arrive one by one, keyed by occurrence id (verified on gcal-event-updated-to-meeting-note, which ran expand_recurring: false)."
   },
   "connections": {
-    "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
+    "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2",
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5"
   },
-  "connections_note": "gcal_scw is the SCW Google Calendar connection 'dchiuten@securecodewarrior.com' (created 2026-08-28) — the DESTINATION this workflow creates/moves/deletes bare Busy blocks on.",
+  "connections_note": "gcal_scw is the SCW Google Calendar connection 'dchiuten@securecodewarrior.com' (created 2026-08-28) — the DESTINATION this workflow creates/moves/deletes bare Busy blocks on. `gcal_wf` (dennis@work.flowers) is read-only here: it is the same credential as the trigger, bound as an alias since 2026-10-31 so mirrorSeries can call Google's events.instances for a series master.",
   "zapier_durable_version": "0.12.5",
   "dependencies": {
     "zod": "4.4.3",
