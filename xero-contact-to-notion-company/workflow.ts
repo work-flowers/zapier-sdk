@@ -279,6 +279,36 @@ async function warmTableCache(recordId: string, contactId: string): Promise<void
   });
 }
 
+/**
+ * The windowed read, as ONE step so the page walk is a single retry unit.
+ *
+ * Lives in a helper that takes `ctx` because of the publish-time analyzer: a
+ * step in the workflow body whose callback reaches `sdk.runAction` through a
+ * function call is refused as `malformed-run-action` ("Pass appKey, actionType,
+ * and actionKey on the sdk.runAction call"). It refused this Zap's republish on
+ * 2026-10-31, on a body unchanged since 2026-08-07; xero-invoice-alerts hit the
+ * same rule on 2026-10-07 and was fixed the same way. The analyzer does not
+ * follow `ctx` into a helper. The step id is unchanged.
+ */
+function fetchWindow(
+  ctx: DurableContext,
+  sinceIso: string,
+): Promise<{ rows: any[]; pages: number; truncated: boolean }> {
+  return ctx.step("fetch-contacts", async () => {
+    const rows: any[] = [];
+    let pages = 0;
+    let truncated = false;
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const batch = await fetchContactPage(sinceIso, page);
+      pages = page;
+      rows.push(...batch);
+      if (batch.length < 100) break;
+      if (page === MAX_PAGES) truncated = true;
+    }
+    return { rows, pages, truncated };
+  });
+}
+
 // --- Per-item steps ----------------------------------------------------------
 
 /**
@@ -310,19 +340,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 1. One bounded Xero read, all inside ONE step so the page walk is a single
     //    retry unit.
-    const fetched = await ctx.step("fetch-contacts", async () => {
-      const rows: any[] = [];
-      let pages = 0;
-      let truncated = false;
-      for (let page = 1; page <= MAX_PAGES; page++) {
-        const batch = await fetchContactPage(sinceIso, page);
-        pages = page;
-        rows.push(...batch);
-        if (batch.length < 100) break;
-        if (page === MAX_PAGES) truncated = true;
-      }
-      return { rows, pages, truncated };
-    });
+    const fetched = await fetchWindow(ctx, sinceIso);
 
     // 2. Only contacts carrying an Account Number are candidates — that field is
     //    the deliberate signal that a human wants this contact linked.
