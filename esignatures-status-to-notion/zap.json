@@ -98,20 +98,21 @@
       "The durable sandbox has NO DNS for arbitrary hosts — a bare `fetch()` dies with `getaddrinfo ENOTFOUND`. The download goes through `sdk.fetch` with NO connection: the URL is already presigned, and binding one would hand a Zapier-held credential to AWS."
     ],
     "failure_handling": "All four steps sit in ONE `ctx.step`, so a retry cannot re-download against an expired URL or attach a second copy. Filing never throws — the status write has already happened and must not be undone by a filing problem. Failures come back as `{ok:false, stage, detail}` and are surfaced in the run OUTPUT as `pdfError`, because a durable run's console output is not retrievable from `get-durable-run` (the run object exposes step status but no logs), so a silently-swallowed failure would be undiagnosable.",
-    "url_field_unverified": "No CLI command exposes a trigger's output shape, so the exact payload field holding the PDF URL could not be pinned from a schema. `extractSignedPdfUrl` tries an ordered candidate list and then falls back to scanning the payload for any https URL whose path ends in .pdf. The fallback is verified: a run with the URL buried at `some_unexpected_wrapper.documents[0].totally_unknown_key` still found and filed it. Tighten the candidate list once a real payload has been seen."
+    "url_field_unverified": "No CLI command exposes a trigger's output shape, so the exact payload field holding the PDF URL could not be pinned from a schema. `extractSignedPdfUrl` tries an ordered candidate list and then falls back to scanning the payload for any https URL whose path ends in .pdf. The fallback is verified: a run with the URL buried at `some_unexpected_wrapper.documents[0].totally_unknown_key` still found and filed it. Tighten the candidate list once a real payload has been seen.",
+    "url_field_confirmed": "2026-11-02: the first real contract_signed payload (Sakana AI) carries the URL at top-level `contract_pdf_url`, already the first candidate in `extractSignedPdfUrl`."
   },
   "tables": {
     "esignatures_mapping": {
       "id": "01KHZEP4FA560E9GMTGTBR1E2N",
       "name": "eSignatures Mapping",
-      "role": "READ ONLY here. Written by `esignatures-send-for-signing` (SOW, Project Addendum) and `notion-nda-to-esignatures-draft` (NDA).",
+      "role": "Read here, and written only to backfill a row the URL fallback resolved (see miss_note). Otherwise written by `esignatures-send-for-signing` (SOW, Project Addendum) and `notion-nda-to-esignatures-draft` (NDA).",
       "key_field": "Contract ID",
       "fields": {
         "Page ID": "f1, string — the Notion SOW / Project Addendum page id",
         "Contract ID": "f2, string — the eSignatures contract id, looked up here",
         "Agreement Type": "f3, labeled_string — \"SOW\", \"Project Addendum\" or \"NDA\"; selects the data source, status values, date properties and file property. \"NDA\" is not among the field's static choices (the SDK cannot edit a field's choices) but the Table accepts it."
       },
-      "miss_note": "A contract with no row here is a SKIP, not an error. The classic Zap's search was configured to fail on a miss (`_zap_search_success_on_miss: false`), which turned every contract created outside these flows into an error alert."
+      "miss_note": "Since 2026-11-02 a miss falls back to querying each data source for a record whose contract URL property contains the contract id (`eSignature contract` on SOWs, `eSignatures Contract` on Project Addendums, `Contract URL` on NDAs). One match is used and its mapping row backfilled; more than one throws; none is a SKIP, not an error. The classic Zap search failed on a miss (`_zap_search_success_on_miss: false`), which turned every contract created outside these flows into an error alert. The fallback exists because a contract made straight from the Zapier eSignatures Create Contract action (the Sakana AI Vanta amendment, 2026-11-02) skipped with no-mapping-row and needed a hand replay."
     }
   },
   "zapier_durable_version": "0.12.3",

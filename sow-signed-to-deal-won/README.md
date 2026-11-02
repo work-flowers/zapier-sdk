@@ -2,8 +2,8 @@
 
 When an SOW reaches **Signed** in Notion, mark its related Deal **Closed Won**.
 
-**Status:** enabled on Zapier. **Cutover pending** — the Notion SOWs automation
-still posts to the classic Zap; see below.
+**Status:** enabled on Zapier, and the Notion SOWs automation posts to it. Turning the classic Zap
+off is still unconfirmed; see below.
 
 Migration of the classic Zap **"SOW Signed -> Mark Deal as Won"**. The last hop
 of the deal lifecycle these Zaps drive:
@@ -43,11 +43,15 @@ Webhooks by Zapier Catch Hook (`WebHookCLIAPI@1.1.1` / `hook_v2`, no auth), fed
 by a **Notion DB automation on the SOWs data source** that fires when `Status`
 becomes `Signed`. A payload with content but no page id throws loudly.
 
-## Cutover (pending)
+## Cutover
 
-1. Repoint the Notion SOWs automation at this workflow's catch URL:
-   `https://hooks.zapier.com/hooks/catch/20495893/8DfHFErXShjCLRNn/`
-2. Turn the classic Zap **"SOW Signed -> Mark Deal as Won"** off in the Zapier UI.
+1. ✅ The Notion SOWs automation posts to this workflow's catch URL,
+   `https://hooks.zapier.com/hooks/catch/20495893/8DfHFErXShjCLRNn/`. Confirmed 2026-11-02: the Sakana
+   AI SOW reaching Signed produced a run here 10 s later with `source.type: "automation"`
+   (automation `32891b07-11ac-80a2-82c6-004def8c7cb8`), which closed DEAL-85.
+2. ⏳ Turn the classic Zap **"SOW Signed -> Mark Deal as Won"** off in the Zapier UI. Not
+   verifiable from the CLI. A Notion automation can carry several webhook actions, so check the
+   classic Zap's run history too: no run at 2026-11-02 01:40Z means nothing still posts to it.
 
 ## Connections
 
