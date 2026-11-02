@@ -34,7 +34,10 @@ flowchart TD
   P -- yes --> SKIP(["skip — empty-payload"])
   P -- no --> ID["🔑 contract id<br/><i>.contract.id OR .id — the triggers differ</i>"]
   ID --> TBL{"mapping row found?"}
-  TBL -- no --> SKIP2(["skip — no-mapping-row<br/><i>a contract created outside these flows</i>"])
+  TBL -- no --> URLQ{"🔎 contract URL property<br/>contains the id?<br/><i>SOWs / Addendums / NDAs</i>"}
+  URLQ -- "none" --> SKIP2(["skip — no-mapping-row<br/><i>not one of ours</i>"])
+  URLQ -- "2+" --> ERR(["❌ throw — ambiguous"])
+  URLQ -- "1" --> BF["🗂 backfill mapping row"] --> TY
   TBL -- yes --> TY{"Agreement Type?"}
   TY -- "unrecognised" --> SKIP3(["skip — unknown-agreement-type"])
   TY -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
@@ -99,23 +102,36 @@ filing problem. Failures come back as `{ok:false, stage, detail}` and are surfac
 from `get-durable-run` (the run object exposes step status but no logs), so a silently swallowed
 failure would be undiagnosable in production.
 
-### One thing still unverified
+### Where the PDF URL lives
 
-No CLI command exposes a trigger's *output* shape, so the exact payload field holding the PDF URL
-could not be pinned from a schema. `extractSignedPdfUrl` tries an ordered candidate list, then falls
-back to scanning the payload for any `https` URL whose path ends in `.pdf`.
+No CLI command exposes a trigger's *output* shape, so `extractSignedPdfUrl` tries an ordered
+candidate list, then falls back to scanning the payload for any `https` URL whose path ends in
+`.pdf`. The first real `contract_signed` payload (Sakana AI, 2026-11-02) confirmed the field is
+top-level `contract_pdf_url`, already the first candidate, and the PDF filed with
+`pdfFound: true`, `pdfError: null`. The scan fallback stays as a guard against a schema change.
 
-The fallback is tested: a run with the URL buried at
-`some_unexpected_wrapper.documents[0].totally_unknown_key` still found and filed it. **After the
-first real `contract_signed`, read `pdfFound` / `pdfError` on the run output and tighten the
-candidate list to the real field name.**
+## A Table miss falls back to the contract URL, then skips
 
-## A Table miss is a skip, not an error
+Only the send flows write mapping rows, so a contract created any other way (in the eSignatures UI,
+or with the Zapier eSignatures *Create Contract* action) used to skip with `no-mapping-row` even when
+it belonged to a real record. That happened to the Sakana AI Vanta amendment on 2026-11-02, which had
+to be replayed by hand inside the PDF URL's 72-hour window.
 
-The classic Zap's lookup was configured to fail on a miss
-(`_zap_search_success_on_miss: false`), which turned every contract created outside these flows —
-a referral agreement, a one-off, anything sent by hand — into an error alert. Here a miss logs and
-returns `{skipped: "no-mapping-row"}`.
+Since then a miss queries each data source for a record whose contract URL property contains the
+contract id: `eSignature contract` on SOWs, `eSignatures Contract` on Project Addendums,
+`Contract URL` on NDAs (the `urlProp` column of `TYPES`). eSignatures puts the id in the path of both
+link forms (`/contracts/<id>` and `/draft_contracts/<id>/edit`), and ids are UUIDs, so `url.contains`
+cannot match another contract.
+
+- **One match:** use it, and backfill the mapping row so later events resolve from the Table. The
+  backfill is find-then-create inside its step, so a retry reuses a row that already landed.
+- **More than one:** throw. Two records claiming one contract is a data problem, and guessing would
+  move the wrong record.
+- **None:** log and return `{skipped: "no-mapping-row"}`. The classic Zap's lookup failed on a miss
+  (`_zap_search_success_on_miss: false`), which turned every unrelated contract into an error alert.
+
+**For a contract created outside the send flows to resolve, paste its eSignatures link into the
+record's contract URL property before it is signed.**
 
 ## Verification
 
@@ -142,6 +158,16 @@ Re-verified 2026-09-28 after adding NDAs and restructuring the entry files (depl
 | Types | `npm run build` and strict tsc | Clean |
 
 The scratch NDA page was trashed and its mapping row deleted afterwards.
+
+Verified 2026-11-02 for the URL fallback, with `run-durable` on the deployed deps:
+
+| Case | Result |
+| --- | --- |
+| `contract_signed`, Sakana AI SOW, mapping row deleted first, PDF URL removed from the payload | `resolvedVia: "notion-url"`, SOW found from `eSignature contract`, row backfilled; Status already `Signed`, so unchanged; `pdfError: extract-url` as expected, so the filed PDF was untouched |
+| Unknown contract id | `{"skipped":"no-mapping-row"}` |
+| Empty ping | `{"skipped":"empty-payload"}` |
+| `url.contains` filter on all three data sources' URL properties | Accepted; returns the record on SOWs and NDAs |
+| Types | strict tsc with `--noUnusedLocals` | Clean |
 
 ## Cutover
 
@@ -190,7 +216,7 @@ replay also needs the PDF URL from the event, and it expires 72 hours after sign
   calls actions on the *private* `App236843CLIAPI`; that app has no usable trigger.
 - Both triggers take **zero input fields**, so there is nothing to configure and nothing that can be
   mis-shaped into a silent claim failure.
-- The mapping Table is **read-only** here. `esignatures-send-for-signing` owns it, and
-  `notion-nda-to-esignatures-draft` adds `NDA` rows. `NDA` is not one of the `Agreement Type`
+- The mapping Table is read here and written only to backfill a row the URL fallback resolved.
+  `esignatures-send-for-signing` owns it, and `notion-nda-to-esignatures-draft` adds `NDA` rows. `NDA` is not one of the `Agreement Type`
   field's static choices (the SDK can't edit a field's choices), but the Table accepts it. Add the
   choice in the Table UI if you want a coloured chip.

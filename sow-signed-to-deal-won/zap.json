@@ -32,9 +32,9 @@
   "version_created_at": "2026-08-14T09:27:36.900Z",
   "replaces_classic_zap": "SOW Signed -> Mark Deal as Won",
   "cutover": {
-    "notion_sows_automation_repointed": "PENDING — repoint the Notion SOWs DB automation (fires when Status becomes Signed) at this workflow's webhook_url.",
+    "notion_sows_automation_repointed": "DONE — confirmed 2026-11-02: the Notion SOWs automation (32891b07-11ac-80a2-82c6-004def8c7cb8) posted the Sakana AI SOW to this workflow's webhook_url and DEAL-85 closed.",
     "classic_zap_disabled": "PENDING — turn the classic Zap off in the Zapier UI once repointed. Not machine-verifiable.",
-    "status": "durable live and verified; Notion-side repointing outstanding"
+    "status": "durable live and fed by the Notion automation; classic Zap shutdown unconfirmed"
   },
   "description": "Notion SOWs automation (SOW signed) -> re-read the SOW and set its related Deal's Status to Closed Won. Skips cleanly on empty pings, archived SOWs, non-SOW pages and SOWs with no Deal relation."
 }

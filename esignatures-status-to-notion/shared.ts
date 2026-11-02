@@ -41,6 +41,12 @@ type AgreementType = "SOW" | "Project Addendum" | "NDA";
 
 interface TypeConfig {
   datasource: string;
+  /**
+   * URL property holding the eSignatures contract link. Names differ. Searched
+   * for the contract id when the mapping Table has no row (see
+   * findPagesByContractUrl).
+   */
+  urlProp: string;
   /** Status when the contract goes out for signature. Names differ. */
   sentStatus: string;
   /** Status when every signer has signed. */
@@ -56,18 +62,21 @@ interface TypeConfig {
 const TYPES: Record<AgreementType, TypeConfig> = {
   SOW: {
     datasource: "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b", // "SOWs"
+    urlProp: "eSignature contract", // singular, lowercase c
     sentStatus: "Sent for signature", // lowercase s
     signedStatus: "Signed",
     fileProp: "Signed PDF",
   },
   "Project Addendum": {
     datasource: "46234707-641a-4aa4-96f6-295554e6543f", // "Project Addendums"
+    urlProp: "eSignatures Contract", // plural, capital C
     sentStatus: "Sent for signing",
     signedStatus: "Executed",
     fileProp: "Executed Agreement",
   },
   NDA: {
     datasource: "354e3731-d2e4-497d-8df0-8ac9738df959", // "NDAs"
+    urlProp: "Contract URL",
     sentStatus: "Sent",
     signedStatus: "Signed",
     fileProp: "Signed PDF",
@@ -254,6 +263,51 @@ function readAgreementType(row: any): AgreementType | null {
   return AGREEMENT_TYPES.has(raw) ? (raw as AgreementType) : null;
 }
 
+// --- Fallback lookup -------------------------------------------------------
+
+interface UrlMatch {
+  agreementType: AgreementType;
+  pageId: string;
+}
+
+/**
+ * Records whose contract URL property contains this contract id, across every
+ * agreement type's data source.
+ *
+ * The fallback for a Table miss. A contract created outside the send-for-signing
+ * flows (in the eSignatures UI, or by the Zapier "Create Contract" action) has
+ * no mapping row, but if its link was pasted into the record, the id is in that
+ * URL: eSignatures puts it in the path of both the `/contracts/<id>` and the
+ * `/draft_contracts/<id>/edit` forms. Contract ids are UUIDs, so a substring
+ * match cannot hit a different contract.
+ *
+ * Throws on a failed query: a broken lookup must not read as "not ours".
+ */
+async function findPagesByContractUrl(contractId: string): Promise<UrlMatch[]> {
+  const matches: UrlMatch[] = [];
+  for (const [agreementType, cfg] of Object.entries(TYPES) as [AgreementType, TypeConfig][]) {
+    const res = await sdk.fetch(`${NOTION_API}/data_sources/${cfg.datasource}/query`, {
+      connection: NOTION_CONNECTION,
+      method: "POST",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        page_size: 10,
+        filter: { property: cfg.urlProp, url: { contains: contractId } },
+      }),
+    });
+    const body: any = await res.json();
+    if (!res.ok) {
+      throw new Error(
+        `Notion query of ${agreementType} data source failed (${res.status}): ${JSON.stringify(body).slice(0, 300)}`,
+      );
+    }
+    for (const page of body?.results ?? []) {
+      matches.push({ agreementType, pageId: dashUuid(String(page.id)) });
+    }
+  }
+  return matches;
+}
+
 // --- Signed-PDF attachment -------------------------------------------------
 
 /**
@@ -413,9 +467,10 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
   const contractId = extractContractId(payload);
 
   // 1. Which Notion record does this contract belong to? A contract created
-  //    outside the send-for-signing flows has no row here — that is a SKIP, not
-  //    an error. The classic Zap's search was configured to fail on a miss,
-  //    which turned every unrelated contract into an alert.
+  //    outside the send-for-signing flows has no row here, so a miss falls back
+  //    to the records' contract URLs (1b). Missing from both is a SKIP, not an
+  //    error. The classic Zap's search was configured to fail on a miss, which
+  //    turned every unrelated contract into an alert.
   const row = await ctx.step("table-find-by-contract-id", async () => {
     const found = await sdk.listTableRecords({
       table: ESIGN_TABLE,
@@ -428,22 +483,82 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     return rows[0] ?? null;
   });
 
-  if (!row) {
-    console.log(`no mapping row for contract ${contractId} — not one of ours, skipping`);
-    return { skipped: "no-mapping-row", contractId };
-  }
+  let pageId: string;
+  let agreementType: AgreementType;
+  let tableRowId: string;
+  let resolvedVia: "table" | "notion-url";
 
-  const pageId = dashUuid(firstString((row.data ?? {})[T_PAGE_ID]));
-  if (!pageId) {
-    console.log(`mapping row ${row.id} has no Page ID — nothing to update`);
-    return { skipped: "row-has-no-page-id", contractId, tableRowId: row.id };
-  }
+  if (row) {
+    pageId = dashUuid(firstString((row.data ?? {})[T_PAGE_ID]));
+    if (!pageId) {
+      console.log(`mapping row ${row.id} has no Page ID — nothing to update`);
+      return { skipped: "row-has-no-page-id", contractId, tableRowId: row.id };
+    }
 
-  const agreementType = readAgreementType(row);
-  if (!agreementType) {
-    const raw = JSON.stringify((row.data ?? {})[T_AGREEMENT_TYPE]);
-    console.log(`mapping row ${row.id} has an unrecognised Agreement Type: ${raw}`);
-    return { skipped: "unknown-agreement-type", contractId, agreementTypeRaw: raw };
+    const fromRow = readAgreementType(row);
+    if (!fromRow) {
+      const raw = JSON.stringify((row.data ?? {})[T_AGREEMENT_TYPE]);
+      console.log(`mapping row ${row.id} has an unrecognised Agreement Type: ${raw}`);
+      return { skipped: "unknown-agreement-type", contractId, agreementTypeRaw: raw };
+    }
+    agreementType = fromRow;
+    tableRowId = String(row.id);
+    resolvedVia = "table";
+  } else {
+    // 1b. No row: the contract was created outside the send-for-signing flows.
+    //     Look for a record whose contract URL property carries its id. Still
+    //     nothing means it is genuinely not ours, which stays a skip.
+    const matches: UrlMatch[] = await ctx.step("notion-find-by-contract-url", async () =>
+      findPagesByContractUrl(contractId),
+    );
+    if (!matches.length) {
+      console.log(`no mapping row or contract URL for ${contractId} — not one of ours, skipping`);
+      return { skipped: "no-mapping-row", contractId };
+    }
+    if (matches.length > 1) {
+      // Two records claiming one contract is a data problem; guessing would
+      // move the wrong record's status. Fail loudly instead.
+      throw new Error(
+        `Contract ${contractId} has no mapping row and its URL is on ${matches.length} records: ` +
+          matches.map((m) => `${m.agreementType} ${m.pageId}`).join(", "),
+      );
+    }
+    const match = matches[0]!;
+    pageId = match.pageId;
+    agreementType = match.agreementType;
+
+    // Backfill the mapping row so later events for this contract (and any
+    // replay) resolve from the Table. Find-then-create inside the step, so a
+    // retry after a create that landed reuses that row instead of adding one.
+    tableRowId = await ctx.step("table-backfill-mapping-row", async () => {
+      const found = await sdk.listTableRecords({
+        table: ESIGN_TABLE,
+        keyMode: "names",
+        filters: [{ fieldKey: T_CONTRACT_ID, operator: "exact", value: contractId }],
+        pageSize: 10,
+      });
+      const existing = firstString(firstResult(found)?.id);
+      if (existing) return existing;
+      const created = await sdk.createTableRecords({
+        table: ESIGN_TABLE,
+        keyMode: "names",
+        records: [
+          {
+            data: {
+              [T_PAGE_ID]: pageId,
+              [T_CONTRACT_ID]: contractId,
+              // labeled_string cells take { value, label }.
+              [T_AGREEMENT_TYPE]: { value: agreementType, label: agreementType },
+            },
+          },
+        ],
+      });
+      const newId = firstString(firstResult(created)?.id);
+      if (!newId) throw new Error("Zapier Table create returned no record id");
+      return newId;
+    });
+    resolvedVia = "notion-url";
+    console.log(`contract ${contractId} resolved from ${agreementType} contract URL; mapping row ${tableRowId} backfilled`);
   }
   const cfg = TYPES[agreementType];
   const status = phase === "sent" ? cfg.sentStatus : cfg.signedStatus;
@@ -507,7 +622,8 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     agreementType,
     pageId,
     status,
-    tableRowId: row.id,
+    tableRowId,
+    resolvedVia,
     ...(dateProp ? { dateProperty: dateProp, date: today } : {}),
     ...(phase === "signed"
       ? {
