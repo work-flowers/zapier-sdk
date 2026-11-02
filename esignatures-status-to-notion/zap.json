@@ -5,7 +5,7 @@
       "name": "esignatures-contract-sent-to-notion",
       "entry_file": "workflow.sent.ts",
       "workflow_id": "019fcc6b-9c2e-7f83-a559-8863fcb45e09",
-      "current_version_id": "01a10a33-21e6-720e-904f-37d14f0e83aa",
+      "current_version_id": "01a19a14-b4e3-724e-9d6b-117c34868d99",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AWNgQaJLXCiXn4-K76_fGg",
       "enabled": true,
       "is_private": false,
@@ -20,7 +20,7 @@
         "params_note": "This trigger takes ZERO input fields (`list-trigger-input-fields` returns []), so there is nothing to configure and nothing that can be mis-shaped."
       },
       "created_at": "2026-08-04T10:57:12.239Z",
-      "version_created_at": "2026-10-05T03:54:45.987Z",
+      "version_created_at": "2026-11-02T02:26:51.012Z",
       "replaces_classic_zap": "Update SOW / Project Addendum Status When Sent for Signature",
       "description": "eSignatures contract_sent_to_signer -> mark the mapped SOW or Project Addendum as out for signature."
     },
@@ -28,7 +28,7 @@
       "name": "esignatures-contract-signed-to-notion",
       "entry_file": "workflow.signed.ts",
       "workflow_id": "019fcc6b-a9d0-705d-a6d1-a22c974946a4",
-      "current_version_id": "01a10a33-4eeb-77d2-b951-bdb843ce453f",
+      "current_version_id": "01a19a14-e8b2-73e4-944b-c00720408733",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZzfxEFq8ZlLjGlLCDEX_Q",
       "enabled": true,
       "is_private": false,
@@ -42,7 +42,7 @@
         "params_note": "Zero input fields, as above."
       },
       "created_at": "2026-08-04T10:57:15.730Z",
-      "version_created_at": "2026-10-05T03:54:57.396Z",
+      "version_created_at": "2026-11-02T02:27:04.293Z",
       "replaces_classic_zap": "Signed SOWs / Project Addenda",
       "description": "eSignatures contract_signed -> mark the mapped SOW Signed / Project Addendum Executed, and file the executed PDF on the record."
     }
