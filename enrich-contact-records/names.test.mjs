@@ -1,16 +1,11 @@
-// Offline assertions over the real name handling in workflow.ts — no Zapier
-// calls, no credentials. Run with `npm test` from this directory.
-//
-// Covers the 2026-10-01 failure: "Alice SY Peng (彭思瑀)" reached BetterContact's
-// Zapier integration, which puts the name in an HTTP header, and the platform's
-// client refused it ("SY Peng (彭思瑀) is not a legal HTTP header value").
+// Offline assertions over the real logic in workflow.ts — no Zapier calls, no
+// credentials. Run with `npm test` from this directory.
 //
 // workflow.ts can't be imported directly (createZapierSdk() and defineDurable()
 // run at module load), so this harness stubs those two imports, appends a test
 // export, strips the types with the local tsc, and imports the emitted JS. The
 // sdk stub is swappable per test, so the whole workflow body can be driven
-// against a fake BetterContact that rejects header-unsafe names exactly as the
-// real integration does.
+// against a fake HarvestAPI, a fake Apollo and a fake Notion.
 import { readFileSync, writeFileSync, unlinkSync, rmSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
@@ -29,7 +24,7 @@ src = src
     "const createZapierSdk = () => (globalThis as any).__sdkStub;",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { matchName, asciiUrl, isHeaderSafe, extractContactData, isActionTimeout };\n";
+src += "\nexport const __test = { matchName, asciiUrl, extractContactData, isActionTimeout, isoToEpochMinutes, isOwnWriteEchoCandidate };\n";
 
 const tmpTs = join(dir, ".names-under-test.ts");
 const outDir = join(dir, ".names-under-test-out");
@@ -51,7 +46,7 @@ try {
   unlinkSync(tmpTs);
   rmSync(outDir, { recursive: true, force: true });
 }
-const { matchName, asciiUrl, isHeaderSafe, extractContactData, isActionTimeout } = mod.__test;
+const { matchName, asciiUrl, extractContactData, isActionTimeout, isoToEpochMinutes, isOwnWriteEchoCandidate } = mod.__test;
 const workflow = mod.default;
 
 let failures = 0;
@@ -68,12 +63,6 @@ function check(name, actual, expected) {
   }
 }
 
-// --- isHeaderSafe mirrors the platform client's rule -------------------------
-check("ASCII is header-safe", isHeaderSafe("SY Peng"), true);
-check("Latin-1 accents are header-safe", isHeaderSafe("José Müller"), true);
-check("CJK is not", isHeaderSafe("SY Peng (彭思瑀)"), false);
-check("Ł is not", isHeaderSafe("Łukasz"), false);
-
 // --- matchName ---------------------------------------------------------------
 const m = (f, l, t) => matchName(f, l, t);
 check("the 2026-10-01 title split", m("Alice", "SY Peng (彭思瑀)", true), { firstName: "Alice", lastName: "Peng" });
@@ -85,11 +74,8 @@ check("a lone all-caps surname is kept", m("Alice", "LEE", true), { firstName: "
 check("short real surname is not an initial", m("Wei", "Ng", true), { firstName: "Wei", lastName: "Ng" });
 check("properties are trusted — initials kept", m("Alice", "SY Peng", false), { firstName: "Alice", lastName: "SY Peng" });
 check("properties still lose the aside", m("Alice", "Peng (彭思瑀)", false), { firstName: "Alice", lastName: "Peng" });
-check("Latin-1 accents left as they are", m("José", "Müller", false), { firstName: "José", lastName: "Müller" });
-check("beyond-Latin-1 accents folded", m("Łukasz", "Żukowski", false), { firstName: "Lukasz", lastName: "Zukowski" });
-check("Vietnamese folded", m("Thị", "Nguyễn", false), { firstName: "Thi", lastName: "Nguyen" });
-check("CJK-only name cannot be sent", m("思瑀", "彭", false), { firstName: "", lastName: "" });
-check("Cyrillic name cannot be sent", m("Иван", "Петров", true), { firstName: "", lastName: "" });
+check("accents travel as they are", m("Łukasz", "Nguyễn", false), { firstName: "Łukasz", lastName: "Nguyễn" });
+check("a non-Latin name is sent as it stands", m("思瑀", "彭", false), { firstName: "思瑀", lastName: "彭" });
 check("aside was the only surname", m("Alice", "(彭思瑀)", true), { firstName: "Alice", lastName: "" });
 
 // --- asciiUrl ----------------------------------------------------------------
@@ -98,10 +84,14 @@ check("non-ASCII slug percent-encoded", asciiUrl("https://www.linkedin.com/in/�
 
 // --- extractContactData on the real failing payload's shape ------------------
 const PAGE = "3ec91b07-11ac-8135-bcfa-e8241cfa47a8";
-const payload = (over = {}) => ({
+const payload = (over = {}, data = {}, source = undefined) => ({
+  ...(source ? { source } : {}),
   data: {
     id: PAGE,
     object: "page",
+    last_edited_by: { object: "user", id: "121d872b-594c-810b-ba5a-000206eeef1e" },
+    last_edited_time: "2026-11-02T02:23:00.000Z",
+    ...data,
     properties: {
       Name: { type: "title", title: [{ plain_text: "Alice SY Peng (彭思瑀) " }] },
       "First Name": { type: "rich_text", rich_text: [] },
@@ -109,6 +99,7 @@ const payload = (over = {}) => ({
       Domain: { type: "rollup", rollup: { type: "array", array: [{ type: "url", url: "moxa.com" }] } },
       "Primary Email": { type: "email", email: null },
       Linkedin: { type: "url", url: null },
+      "Last Enriched": { type: "date", date: null },
       ...over,
     },
   },
@@ -128,35 +119,34 @@ check("a real name starting with New is still a name", [real.firstName, real.las
 const addr = extractContactData(payload({ Name: { type: "title", title: [{ plain_text: "maxine.lotherington@gmail.com" }] } }));
 check("an address title is still no name", [addr.firstName, addr.lastName], ["", ""]);
 
-// --- The workflow body against a fake BetterContact ---------------------------
-// The fake rejects any header-unsafe string input with the platform's own
-// message, the way the real integration fails before sending.
-const PLATFORM_HEADER_ERROR = (v) => `Action execution failed: ${v} is not a legal HTTP header value`;
-function fakeSdk(log, { harvest, harvestErrors = [], bcRow, upload } = {}) {
+// --- Fakes -------------------------------------------------------------------
+// Row shapes trimmed from live responses (HarvestAPI find_profile 2026-10-07,
+// Apollo people/match 2026-11-03).
+const BOT = "142d872b-594c-81a3-971a-00274ec71b63";
+function fakeSdk(log, { harvest, harvestByUrl, harvestErrors = [], apollo, apolloStatus = 200, upload, botId = BOT } = {}) {
   const pendingHarvestErrors = [...harvestErrors];
   sdkStub.runAction = async ({ actionKey, inputs }) => {
     log.push({ actionKey, inputs });
     if (actionKey === "find_profile") {
       if (pendingHarvestErrors.length) throw new Error(pendingHarvestErrors.shift());
-      if (harvest === undefined) throw new Error("unexpected action find_profile");
-      return { data: harvest ? [harvest] : [] };
+      const row = harvestByUrl ? harvestByUrl[inputs.url] ?? null : harvest;
+      if (row === undefined) throw new Error("unexpected action find_profile");
+      return { data: row ? [row] : [] };
     }
     if (actionKey === "update_database_item") return { data: [{ id: inputs.page }] };
-    if (actionKey === "enrich_contact") {
-      for (const v of Object.values(inputs)) {
-        if (typeof v === "string" && !isHeaderSafe(v)) throw new Error(PLATFORM_HEADER_ERROR(v));
-      }
-      return { data: [{ id: "req-1", success: true }] };
-    }
-    if (actionKey === "get_contact") return { data: [{ status: "terminated", data: bcRow ? [bcRow] : [] }] };
     throw new Error(`unexpected action ${actionKey}`);
   };
   // Notion: file_uploads (create + poll) answer with `upload` (default: a
-  // real 8 KB JPEG); everything else answers 200 {}.
+  // real 8 KB JPEG), users/me with the bot; Apollo with `apollo` as `person`.
   const up = { id: "up-1", status: "uploaded", content_type: "image/jpeg", content_length: 8000, ...upload };
   sdkStub.fetch = async (url, init) => {
     log.push({ fetch: url, method: init?.method, body: init?.body });
-    const json = /\/file_uploads/.test(url) ? up : {};
+    if (/api\.apollo\.io/.test(url)) {
+      if (apollo === undefined) throw new Error("unexpected Apollo call");
+      const body = JSON.stringify({ person: apollo });
+      return { ok: apolloStatus < 300, status: apolloStatus, text: async () => (apolloStatus < 300 ? body : '{"error":"insufficient credits"}') };
+    }
+    const json = /\/file_uploads/.test(url) ? up : /\/users\/me$/.test(url) ? { id: botId, type: "bot" } : {};
     return { ok: true, status: 200, text: async () => "", json: async () => json, headers: new Map() };
   };
   sdkStub.listTableRecords = async () => ({ data: [] });
@@ -165,11 +155,7 @@ function fakeSdk(log, { harvest, harvestErrors = [], bcRow, upload } = {}) {
     return { data: [] };
   };
 }
-const ctx = {
-  step: async (_name, fn) => fn(),
-  wait: async () => {},
-  createCallback: async () => [Promise.resolve({ status: "timeout" }), "https://callback.invalid/x"],
-};
+const ctx = { step: async (_name, fn) => fn(), wait: async () => {} };
 async function run(input, fakes) {
   const log = [];
   fakeSdk(log, fakes);
@@ -177,27 +163,6 @@ async function run(input, fakes) {
   return { out, log };
 }
 
-{
-  const { out, log } = await run(payload());
-  const submit = log.find((e) => e.actionKey === "enrich_contact");
-  check("Alice SY Peng (彭思瑀) reaches BetterContact", Boolean(submit), true);
-  check("…as Alice Peng", submit && [submit.inputs.first_name, submit.inputs.last_name], ["Alice", "Peng"]);
-  check("…and no header error in the outcome", /legal HTTP header/.test(out.reason), false);
-}
-{
-  const { out, log } = await run(payload({ Name: { type: "title", title: [{ plain_text: "彭思瑀 王" }] } }));
-  check("a non-Latin-only name is not sent", log.some((e) => e.actionKey === "enrich_contact"), false);
-  check("…and the skip names the fix", /romanised First Name and Last Name/.test(out.reason), true);
-}
-{
-  const { log } = await run(payload({ Linkedin: { type: "url", url: "https://www.linkedin.com/in/彭思瑀" } }));
-  const submit = log.find((e) => e.actionKey === "enrich_contact");
-  check("a non-ASCII LinkedIn URL is sent encoded", submit?.inputs.linkedin_url, "https://www.linkedin.com/in/%E5%BD%AD%E6%80%9D%E7%91%80");
-}
-
-// --- HarvestAPI first, BetterContact as the fallback --------------------------
-// Row shapes trimmed from live responses (HarvestAPI find_profile 2026-10-07,
-// BetterContact terminated body 2026-09-18).
 const LI = "https://www.linkedin.com/in/alice-peng";
 const harvestRow = (over = {}) => ({
   publicIdentifier: "alice-peng",
@@ -212,25 +177,38 @@ const harvestRow = (over = {}) => ({
   emails: [{ email: "alice.peng@moxa.com", deliverable: true, status: "valid" }],
   ...over,
 });
-const bcRow = {
-  contact_email_address: "a.peng@moxa.com",
-  contact_email_address_status: "deliverable",
-  company_domain: "moxa.com",
-};
-const withLi = (over = {}) => payload({ Linkedin: { type: "url", url: LI }, ...over });
+const apolloPerson = (over = {}) => ({
+  first_name: "Alice",
+  last_name: "Peng",
+  linkedin_url: "http://www.linkedin.com/in/alice-peng",
+  title: "Operations Lead",
+  headline: "Ops at Moxa",
+  city: "Taipei",
+  country: "Taiwan",
+  email: "a.peng@moxa.com",
+  email_status: "verified",
+  photo_url: null,
+  organization: { primary_domain: "moxa.com" },
+  ...over,
+});
+const withLi = (over = {}, data = {}, source) => payload({ Linkedin: { type: "url", url: LI }, ...over }, data, source);
 const updateOf = (log) => log.find((e) => e.actionKey === "update_database_item")?.inputs ?? {};
 const commentOf = (log) => JSON.parse(log.find((e) => /\/comments$/.test(e.fetch ?? ""))?.body ?? "{}").rich_text?.[0]?.text?.content ?? "";
+const apolloBodyOf = (log) => JSON.parse(log.find((e) => /api\.apollo\.io/.test(e.fetch ?? ""))?.body ?? "null");
+const calledApollo = (log) => log.some((e) => /api\.apollo\.io/.test(e.fetch ?? ""));
+const harvestUrls = (log) => log.filter((e) => e.actionKey === "find_profile").map((e) => e.inputs.url);
 const iconPatchOf = (log) => {
   const e = log.find((x) => x.method === "PATCH" && /\/pages\//.test(x.fetch ?? ""));
   return e ? JSON.parse(e.body) : null;
 };
 const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shrink_800_800/0/1?e=1793232000&v=beta&t=x";
 
+// --- HarvestAPI first ------------------------------------------------------------
 {
-  const { out, log } = await run(withLi(), { harvest: harvestRow(), bcRow });
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), apollo: apolloPerson() });
   check("LinkedIn URL → HarvestAPI is asked first", log[0]?.actionKey, "find_profile");
   check("…with the URL and email search on", [log[0]?.inputs.url, log[0]?.inputs.findEmail], [LI, "true"]);
-  check("a verified HarvestAPI email skips BetterContact", log.some((e) => e.actionKey === "enrich_contact"), false);
+  check("a verified HarvestAPI email skips Apollo", calledApollo(log), false);
   check("…and is written as Primary", updateOf(log)["properties|||Primary Email|||email"], "alice.peng@moxa.com");
   check("…sourced to HarvestAPI", [out.source, out.emailSource], ["harvestapi", undefined]);
   check("…with title, city, country and bio", [
@@ -240,48 +218,126 @@ const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shr
     updateOf(log)["properties|||Bio|||rich_text"],
   ], ["Head of Ops", "Taipei", "Taiwan", "Builds things."]);
   check("the CRM's own name is kept over LinkedIn's display name", updateOf(log)["properties|||Last Name|||rich_text"], "SY Peng (彭思瑀)");
+  check("the same profile URL is not rewritten (no automation echo)", updateOf(log)["properties|||Linkedin|||url"], "");
   check("…and the email is indexed in the Table", log.find((e) => e.table)?.table[0].data.Email, "alice.peng@moxa.com");
   check("the comment names HarvestAPI", /enriched via HarvestAPI and updated/.test(commentOf(log)), true);
 }
 {
-  const { out, log } = await run(withLi(), { harvest: harvestRow({ email: null, emails: [] }), bcRow });
-  check("HarvestAPI profile without an email → BetterContact runs", log.some((e) => e.actionKey === "enrich_contact"), true);
-  check("…its address is written", updateOf(log)["properties|||Primary Email|||email"], "a.peng@moxa.com");
-  check("…HarvestAPI's profile fields are kept", updateOf(log)["properties|||Job Title|||rich_text"], "Head of Ops");
-  check("…and both sources are reported", [out.source, out.emailSource], ["harvestapi", "bettercontact"]);
-  check("…in the comment too", /via HarvestAPI \(email via BetterContact\)/.test(commentOf(log)), true);
+  const { log } = await run(payload({ Linkedin: { type: "url", url: "linkedin.com/in/alice-peng/" } }), { harvest: harvestRow() });
+  check("a differently-spelled URL for the same slug is left alone", updateOf(log)["properties|||Linkedin|||url"], "");
 }
 {
-  const { out, log } = await run(withLi(), {
-    harvest: harvestRow({ emails: [{ email: "alice.peng@moxa.com", deliverable: false, status: "invalid" }] }),
-    bcRow: null,
+  const { log } = await run(withLi(), { harvest: harvestRow({ linkedinUrl: "https://www.linkedin.com/in/alice-peng-renamed" }) });
+  check("a renamed slug from HarvestAPI is written", updateOf(log)["properties|||Linkedin|||url"], "https://www.linkedin.com/in/alice-peng-renamed");
+}
+
+// --- Apollo as the fallback --------------------------------------------------------
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow({ email: null, emails: [] }), apollo: apolloPerson() });
+  check("HarvestAPI profile without an email → Apollo runs", calledApollo(log), true);
+  check("…sent the contact's identifiers", apolloBodyOf(log), {
+    reveal_personal_emails: false, reveal_phone_number: false,
+    first_name: "Alice", last_name: "Peng", domain: "moxa.com", linkedin_url: LI,
   });
+  check("…its address is written", updateOf(log)["properties|||Primary Email|||email"], "a.peng@moxa.com");
+  check("…HarvestAPI's profile fields are kept", updateOf(log)["properties|||Job Title|||rich_text"], "Head of Ops");
+  check("…and both sources are reported", [out.source, out.emailSource], ["harvestapi", "apollo"]);
+  check("…in the comment too", /via HarvestAPI \(email via Apollo\)/.test(commentOf(log)), true);
+}
+{
+  // Apollo's address merged into a HarvestAPI profile is judged on Apollo's
+  // record: here a stranger at another company, so it is not written even
+  // though HarvestAPI's profile (the contact's own URL) is the right person.
+  const { out, log } = await run(withLi(), {
+    harvest: harvestRow({ email: null, emails: [] }),
+    apollo: apolloPerson({ linkedin_url: "http://www.linkedin.com/in/other-alice", email: "alice@elsewhere.io", organization: { primary_domain: "elsewhere.io" } }),
+  });
+  check("an uncorroborated Apollo address is not merged into the profile", updateOf(log)["properties|||Primary Email|||email"], undefined);
+  check("…Path U names it", [out.emailPath, out.unverifiedEmail], ["unverified-email", "alice@elsewhere.io"]);
+}
+{
+  const { out, log } = await run(withLi(), { harvest: harvestRow({ emails: [{ email: "alice.peng@moxa.com", deliverable: false, status: "invalid" }] }), apollo: null });
   check("an unverified HarvestAPI email is not written", updateOf(log)["properties|||Primary Email|||email"], undefined);
   check("…the profile still is", [out.enriched, out.source], [true, "harvestapi"]);
   check("…and the comment names the address", /HarvestAPI: found alice\.peng@moxa\.com but could not verify it/.test(commentOf(log)), true);
 }
 {
-  const { out, log } = await run(withLi(), { harvest: null, bcRow });
-  check("no HarvestAPI profile → BetterContact does the work", out.source, "bettercontact");
+  const { out, log } = await run(withLi(), { harvest: null, apollo: apolloPerson({ linkedin_url: "http://www.linkedin.com/in/someone-else" }) });
+  check("no HarvestAPI profile → Apollo does the work", out.source, "apollo");
   check("…and the comment says why", /HarvestAPI: no profile found/.test(commentOf(log)), true);
+  check("an Apollo URL never replaces the contact's own", updateOf(log)["properties|||Linkedin|||url"], "");
+  check("…and is not handed back to HarvestAPI", harvestUrls(log), [LI]);
 }
 {
-  const { out, log } = await run(payload(), { harvest: harvestRow(), bcRow });
-  check("no LinkedIn URL → HarvestAPI is not called", log.some((e) => e.actionKey === "find_profile"), false);
-  check("…BetterContact is", out.source, "bettercontact");
+  const { out, log } = await run(payload(), { apollo: apolloPerson({ email_status: "unverified" }) });
+  check("an unverified Apollo address is not written", updateOf(log)["properties|||Primary Email|||email"], undefined);
+  check("…the comment names it and its status", /Apollo: found a\.peng@moxa\.com but its status is unverified/.test(commentOf(log)), true);
+  check("…the rest of the match still is", out.source, "apollo");
 }
 {
-  const { out } = await run(withLi({ Domain: { type: "rollup", rollup: { type: "array", array: [] } } }), { harvest: null });
-  check("neither source usable → skipped with both reasons", out.reasons?.length, 2);
+  const { out, log } = await run(payload(), { apollo: apolloPerson({ email: "email_not_unlocked@moxa.com" }) });
+  check("Apollo's locked-email placeholder is no address", [updateOf(log)["properties|||Primary Email|||email"], /email_not_unlocked/.test(commentOf(log))], [undefined, false]);
+  check("…the match is still used", out.source, "apollo");
 }
 {
-  const { log } = await run(
-    withLi({ Name: { type: "title", title: [{ plain_text: "alice@moxa.com" }] } }),
-    { harvest: harvestRow({ lastName: "Peng" }) },
-  );
-  check("a contact with no name takes LinkedIn's", updateOf(log)["properties|||Name|||title"], "Alice Peng");
+  const { out } = await run(payload(), { apollo: apolloPerson(), apolloStatus: 422 });
+  check("an Apollo HTTP error is a reason, not a failed run", [out.enriched, /^apollo error: http 422/.test(out.reasons?.[0] ?? "")], [false, true]);
+}
+{
+  const { out, log } = await run(payload({
+    Name: { type: "title", title: [{ plain_text: "alice@gmail.com" }] },
+    Domain: { type: "rollup", rollup: { type: "array", array: [] } },
+  }), {});
+  check("nothing to match on → Apollo not called", calledApollo(log), false);
+  check("…skipped with a reason", /apollo skipped/.test(out.reason), true);
 }
 
+// --- The handoff: Apollo finds the LinkedIn URL, HarvestAPI reads it ------------------
+const APOLLO_LI = "http://www.linkedin.com/in/alice-peng";
+{
+  const { out, log } = await run(payload(), {
+    apollo: apolloPerson({ email: null }),
+    harvestByUrl: { [APOLLO_LI]: harvestRow({ photo: PHOTO }) },
+  });
+  check("no URL → Apollo first, then HarvestAPI with Apollo's URL", [calledApollo(log), harvestUrls(log)], [true, [APOLLO_LI]]);
+  check("…HarvestAPI's profile and verified address are written", [
+    out.source, updateOf(log)["properties|||Primary Email|||email"], updateOf(log)["properties|||Job Title|||rich_text"],
+  ], ["harvestapi", "alice.peng@moxa.com", "Head of Ops"]);
+  check("…vouched for by Apollo's corroborated match", out.unverifiedEmail, undefined);
+  check("…the LinkedIn URL is written (HarvestAPI's spelling)", updateOf(log)["properties|||Linkedin|||url"], LI);
+  check("…and the photo becomes the icon", out.iconUpdated, true);
+  check("…the comment names the handoff", /via HarvestAPI \(LinkedIn profile found by Apollo\) and updated: primary email, LinkedIn URL/.test(commentOf(log)), true);
+}
+{
+  const { out, log } = await run(payload(), {
+    apollo: apolloPerson(),
+    harvestByUrl: { [APOLLO_LI]: harvestRow({ email: null, emails: [] }) },
+  });
+  check("handoff profile without an email takes Apollo's", [out.source, out.emailSource, updateOf(log)["properties|||Primary Email|||email"]], ["harvestapi", "apollo", "a.peng@moxa.com"]);
+}
+{
+  const { out, log } = await run(payload(), { apollo: apolloPerson(), harvestByUrl: {} });
+  check("handoff finds nothing → Apollo's data stands", [out.source, updateOf(log)["properties|||Primary Email|||email"]], ["apollo", "a.peng@moxa.com"]);
+  check("…including the URL it found", updateOf(log)["properties|||Linkedin|||url"], APOLLO_LI);
+}
+{
+  // The Grace Tang shape: a personal Gmail, no Company, no LinkedIn — Apollo
+  // matches someone of the same name elsewhere. Nothing ties it to the contact.
+  const { out, log } = await run(payload({
+    Name: { type: "title", title: [{ plain_text: "Grace Tang" }] },
+    "Primary Email": { type: "email", email: "grace.t@gmail.com" },
+    Domain: { type: "rollup", rollup: { type: "array", array: [] } },
+  }), {
+    apollo: apolloPerson({ first_name: "Grace", last_name: "Tang", email: "grace@leaps.sg", linkedin_url: "http://www.linkedin.com/in/gracetang", photo_url: PHOTO, organization: { primary_domain: "leaps.sg" } }),
+  });
+  check("uncorroborated Apollo match → no handoff", harvestUrls(log), []);
+  check("…its URL is not written", updateOf(log)["properties|||Linkedin|||url"], "");
+  check("…its photo is not used", [out.iconUpdated, log.some((e) => /file_uploads/.test(e.fetch ?? ""))], [false, false]);
+  check("…its address goes to Path U", [out.emailPath, out.unverifiedEmail], ["unverified-email", "grace@leaps.sg"]);
+  check("…and the comment says so", /Email grace@leaps\.sg NOT written/.test(commentOf(log)), true);
+}
+
+// --- Selects ---------------------------------------------------------------------
 {
   // 2026-10-07 live failure: Notion rejects a select option with a comma.
   const { log } = await run(withLi(), {
@@ -296,8 +352,15 @@ const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shr
     updateOf(log2)["properties|||Country|||select"],
   ], ["Washington D.C.", "Bonaire Sint Eustatius and Saba"]);
 }
+{
+  const { log } = await run(
+    withLi({ Name: { type: "title", title: [{ plain_text: "alice@moxa.com" }] } }),
+    { harvest: harvestRow({ lastName: "Peng" }) },
+  );
+  check("a contact with no name takes LinkedIn's", updateOf(log)["properties|||Name|||title"], "Alice Peng");
+}
 
-// --- Path C: HarvestAPI photo → page icon --------------------------------------
+// --- Path C: photo → page icon -------------------------------------------------------
 {
   const { out, log } = await run(withLi(), { harvest: harvestRow({ photo: PHOTO }) });
   const create = log.find((e) => /\/file_uploads$/.test(e.fetch ?? ""));
@@ -329,28 +392,69 @@ const PHOTO = "https://media.licdn.com/dms/image/v2/abc/profile-displayphoto-shr
   check("…and is named in the comment", /Profile photo not stored: Notion could not import the photo/.test(commentOf(log)), true);
 }
 {
-  const { log } = await run(payload(), { bcRow });
-  check("a BetterContact-only run never touches the icon", log.some((e) => /file_uploads/.test(e.fetch ?? "")), false);
+  const { out } = await run(payload(), { apollo: apolloPerson({ photo_url: PHOTO }), harvestByUrl: {} });
+  check("a corroborated Apollo match's photo is used", out.iconUpdated, true);
 }
 
-// --- HarvestAPI's 30s action timeout: one retry, then BetterContact ----------
+// --- HarvestAPI's 30s action timeout: one retry, then Apollo --------------------------
 // The message is verbatim from the 2026-10-14 run (Meighan O'Toole).
 const TIMEOUT = "Action execution failed: RequestId: 71d22aa1-2031-4793-b26f-036ffbaa59e9 Error: Task timed out after 30.00 seconds";
 check("the platform timeout is recognised", isActionTimeout(new Error(TIMEOUT)), true);
 check("another HarvestAPI error is not", isActionTimeout(new Error("Action execution failed: 502 Bad Gateway")), false);
 {
-  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT], bcRow });
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT], apollo: apolloPerson() });
   check("a timeout is retried once", log.filter((e) => e.actionKey === "find_profile").length, 2);
-  check("…and the retry's profile is used, BetterContact skipped", [out.source, log.some((e) => e.actionKey === "enrich_contact")], ["harvestapi", false]);
+  check("…and the retry's profile is used, Apollo skipped", [out.source, calledApollo(log)], ["harvestapi", false]);
 }
 {
-  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT, TIMEOUT], bcRow });
+  const { out, log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: [TIMEOUT, TIMEOUT], apollo: apolloPerson() });
   check("a second timeout is not retried again", log.filter((e) => e.actionKey === "find_profile").length, 2);
-  check("…and falls back to BetterContact", [out.source, /harvestapi error: .*timed out/.test(out.reasons.join(" "))], ["bettercontact", true]);
+  check("…and falls back to Apollo", [out.source, /harvestapi error: .*timed out/.test(out.reasons.join(" "))], ["apollo", true]);
 }
 {
-  const { log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: ["Action execution failed: 502 Bad Gateway"], bcRow });
+  const { log } = await run(withLi(), { harvest: harvestRow(), harvestErrors: ["Action execution failed: 502 Bad Gateway"], apollo: apolloPerson() });
   check("a non-timeout error is not retried", log.filter((e) => e.actionKey === "find_profile").length, 1);
+}
+
+// --- Loop guard: the echo of this workflow's own LinkedIn write ------------------------
+check("Notion timestamp to minutes (Z)", isoToEpochMinutes("1970-01-02T00:01:00.000Z"), 1441);
+check("…with an offset", isoToEpochMinutes("2026-06-25T13:41:00.000+08:00"), isoToEpochMinutes("2026-06-25T05:41:00.000Z"));
+check("…a date with no time is no timestamp", isoToEpochMinutes("2026-06-25"), null);
+
+// The 2026-11-02 phoebekee echo, verbatim: our bot edited at 02:24, Last
+// Enriched 02:24 (set by the run a minute earlier).
+const echo = (over = {}, source) => withLi(
+  { "Last Enriched": { type: "date", date: { start: "2026-11-02T02:24:00.000+00:00" } }, ...over },
+  { last_edited_by: { object: "user", id: BOT }, last_edited_time: "2026-11-02T02:24:00.000Z" },
+  source,
+);
+check("the echo shape is a candidate", isOwnWriteEchoCandidate(extractContactData(echo())), true);
+{
+  const { out, log } = await run(echo(), { harvest: harvestRow(), apollo: apolloPerson() });
+  check("our own write's echo is skipped", out, { skipped: "own-write-echo", pageId: PAGE });
+  check("…before any enrichment call or comment", log.map((e) => e.actionKey ?? e.fetch), ["https://api.notion.com/v1/users/me"]);
+}
+{
+  const { out } = await run(echo(), { harvest: harvestRow(), botId: "some-other-bot" });
+  check("another integration's edit is not our echo", out.enriched, true);
+}
+{
+  const { out } = await run(echo({}, { type: "automation", user_id: "121d872b-594c-810b-ba5a-000206eeef1e" }), { harvest: harvestRow() });
+  check("a button press is never skipped", out.enriched, true);
+}
+{
+  const late = withLi(
+    { "Last Enriched": { type: "date", date: { start: "2026-11-02T02:24:00.000+00:00" } } },
+    { last_edited_by: { object: "user", id: BOT }, last_edited_time: "2026-11-02T02:40:00.000Z" },
+  );
+  check("a bot edit long after enrichment is not an echo", isOwnWriteEchoCandidate(extractContactData(late)), false);
+  const person = withLi(
+    { "Last Enriched": { type: "date", date: { start: "2026-11-02T02:24:00.000+00:00" } } },
+    { last_edited_by: { object: "user", id: "121d872b-594c-810b-ba5a-000206eeef1e" }, last_edited_time: "2026-11-02T02:25:00.000Z" },
+  );
+  const { out } = await run(person, { harvest: harvestRow() });
+  check("a person correcting the URL right after enrichment still runs", out.enriched, true);
+  check("never enriched → not a candidate", isOwnWriteEchoCandidate(extractContactData(payload())), false);
 }
 
 console.log(`\n${count - failures}/${count} passed`);
