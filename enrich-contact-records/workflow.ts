@@ -19,30 +19,24 @@ const HARVESTAPI_CONNECTION = "harvestapi";
 /** Notion caps a rich_text segment at 2000 characters; a LinkedIn "about"
  *  can run longer. */
 const BIO_MAX_CHARS = 2000;
-// Fallback enrichment: BetterContact. `enrich_contact` submits an ASYNC waterfall job
-// and answers with a request id at once; the result lands later, either POSTed
-// to the `webhook` URL sent with the job (this durable's own callback URL — see
-// the workflow body) or read back with `get_contact` by request id. Only
-// `status: "terminated"` carries results (`not_started` / `processing` are
-// still running; `on_hold` means the account is out of credits and the job
-// resumes by itself once topped up). Verified live 2026-09-18: the webhook
-// reached the durable's callback ~90s after submit and the run resumed with the
-// payload; the body is identical to `GET /async/{request_id}`.
-const BETTERCONTACT_APP_KEY = "App217413CLIAPI";
-const BETTERCONTACT_CONNECTION = "bettercontact";
-/** How long the run parks for BetterContact's webhook before falling back to
- *  polling. Delivery is normally well under two minutes; ten minutes covers a
- *  slow waterfall without leaving a run parked all day. */
-const CALLBACK_TIMEOUT_SECONDS = 600;
-/** Polling fallback, used only when the webhook never arrives (delivery lost,
- *  or the job is `on_hold`). Waits are free; each poll is a billed action, so
- *  the loop is short. */
-const POLL_ATTEMPTS = 5;
-const POLL_WAIT_SECONDS = 60;
-/** Email verification statuses that may be written to the contact. A plain
- *  `catch_all` (unverified) or `undeliverable` address is reported in the
- *  outcome comment but never written. */
-const WRITABLE_EMAIL_STATUSES = new Set(["deliverable", "catch_all_safe"]);
+// Fallback enrichment: Apollo.io `people/match` (since 2026-11-03, replacing
+// BetterContact). Called with `sdk.fetch` through an *API by Zapier*
+// connection holding Apollo's master API key, so it is one synchronous call —
+// no job, no callback. It matches on whatever it is given (email, LinkedIn
+// URL, name + domain) and is FUZZY: it will match on a name alone, which is how
+// the Grace Tang collision happened (see "Identity corroboration"). Verified
+// 2026-11-03: `person` carries `email` + `email_status`, `linkedin_url`,
+// `title`, `headline`, `city`, `country`, `photo_url` and `organization`.
+const APOLLO_CONNECTION = "apollo";
+const APOLLO_MATCH_URL = "https://api.apollo.io/api/v1/people/match";
+/** Apollo `email_status` values that may be written. Anything else
+ *  (`unverified`, `extrapolated`, `likely to engage`, …) is named in the
+ *  outcome comment and written nowhere. */
+const APOLLO_WRITABLE_EMAIL_STATUSES = new Set(["verified"]);
+/** A trigger whose last edit was this workflow's own write, landing within
+ *  this many minutes of the `Last Enriched` stamp it set, is that write's echo
+ *  — see `isOwnWriteEcho`. */
+const ECHO_WINDOW_MINUTES = 5;
 
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
@@ -166,52 +160,17 @@ function dedupeAddresses(addresses: string[]): string[] {
   );
 }
 
-// --- Names and URLs as sent to BetterContact -------------------------------
+// --- Names and URLs as sent to the enrichment sources ----------------------
 //
-// BetterContact's public Zapier integration (App217413, v1.0.3 — not ours to
-// change) copies the contact's name into an HTTP header. The platform's HTTP
-// client rejects any header value holding a character above U+00FF, client
-// side, before the request leaves: "SY Peng (彭思瑀) is not a legal HTTP header
-// value" failed the run for "Alice SY Peng (彭思瑀)" twice on 2026-10-01.
-// Latin-1 accents (José, Müller) pass; Łukasz, Иван and 彭思瑀 do not.
-//
-// Percent-encoding the name would get it past the client, but BetterContact
-// would then match on the literal "%E5%BD%AD…", which matches nobody. So the
-// name is RENDERED instead: the parenthesised alternate-script name is dropped
-// (the Latin name beside it is the one a work address is built from), accents
-// outside Latin-1 are folded, and a name that still cannot be carried is not
-// sent at all — the run skips BetterContact with a reason naming the fix
-// (a romanised First/Last Name), rather than failing with a header error.
+// The name Apollo is asked to match on is a RENDERING of the contact's own:
+// the parenthesised alternate-script aside is dropped ("Alice SY Peng (彭思瑀)"
+// — the Latin name beside it is the one a work address is built from), and so
+// are initials in a name split from the page title. Apollo takes the name in a
+// JSON body, so any script travels; the header-safety folding BetterContact's
+// integration needed (2026-10-01) went with it on 2026-11-03.
 //
 // The rendering is for the REQUEST only. The contact's own name is what gets
 // written back to Notion; see `updateContactRecord`.
-
-/** True when every character fits an HTTP header value as the platform's
- *  client checks it: tab, printable ASCII, or Latin-1 (U+0080–U+00FF). */
-function isHeaderSafe(s: string): boolean {
-  return /^[\t\x20-\x7e\x80-\xff]*$/.test(s);
-}
-
-/** Letters with no canonical decomposition, so NFD alone cannot fold them. */
-const FOLD_EXTRA: Record<string, string> = {
-  "Ł": "L", "ł": "l", "Đ": "D", "đ": "d", "Ħ": "H", "ħ": "h", "ı": "i",
-  "Œ": "OE", "œ": "oe", "Ŋ": "N", "ŋ": "n", "Ŧ": "T", "ŧ": "t",
-};
-
-/** Characters above U+00FF folded to Latin where a fold exists (Łukasz →
- *  Lukasz, Nguyễn → Nguyen); Latin-1 characters are left exactly as they are,
- *  since those already travel. Anything with no fold (CJK, Cyrillic) is kept,
- *  for `isHeaderSafe` to catch. */
-function foldBeyondLatin1(s: string): string {
-  return Array.from(s)
-    .map((ch) => {
-      if (ch.charCodeAt(0) <= 0xff) return ch;
-      if (FOLD_EXTRA[ch]) return FOLD_EXTRA[ch];
-      const base = ch.normalize("NFD").replace(/[̀-ͯ]/g, "");
-      return base.normalize("NFC");
-    })
-    .join("");
-}
 
 /** Parenthesised asides dropped — "(彭思瑀)", "（彭思瑀）", "(Bob)" — and the
  *  whitespace they leave collapsed. */
@@ -227,7 +186,7 @@ function stripParenthetical(s: string): string {
 const INITIALS = /^(?:[A-Z]{1,3}|(?:[A-Z]\.)+[A-Z]?)\.?$/;
 
 /**
- * The first + last name BetterContact is asked to match on.
+ * The first + last name Apollo is asked to match on.
  *
  * - Parenthesised asides are dropped from both parts: an alternate-script name
  *   ("Alice SY Peng (彭思瑀)") is not how the work address is spelled.
@@ -236,8 +195,6 @@ const INITIALS = /^(?:[A-Z]{1,3}|(?:[A-Z]\.)+[A-Z]?)\.?$/;
  *   Alice Peng, the name an alice.peng@ address is built from, not "SY Peng".
  *   Lowercase particles stay ("Jan van der Berg" keeps "van der Berg"). Names
  *   typed into First/Last Name are trusted as given.
- * - Accents beyond Latin-1 are folded. If a part still holds a character the
- *   integration cannot carry, both come back empty and the request is skipped.
  */
 function matchName(
   firstName: string,
@@ -254,18 +211,12 @@ function matchName(
     while (rest.length > 1 && INITIALS.test(rest[0] ?? "")) rest.shift();
     last = rest.join(" ");
   }
-  first = foldBeyondLatin1(first);
-  last = foldBeyondLatin1(last);
-  if (!isHeaderSafe(first) || !isHeaderSafe(last)) {
-    return { firstName: "", lastName: "" };
-  }
   return { firstName: first, lastName: last };
 }
 
-/** A URL with every non-ASCII run percent-encoded. Unlike a name, a URL means
- *  the same thing encoded (linkedin.com/in/彭思瑀 is linkedin.com/in/%E5%BD%AD…),
- *  so it is encoded rather than dropped, in case the integration puts it in a
- *  header too. */
+/** A URL with every non-ASCII run percent-encoded (linkedin.com/in/彭思瑀 is
+ *  linkedin.com/in/%E5%BD%AD…), so an integration that puts it in a header
+ *  can carry it. */
 function asciiUrl(url: string): string {
   return url.replace(/[^\x00-\x7f]+/g, (run) => encodeURIComponent(run));
 }
@@ -277,8 +228,7 @@ interface ContactData {
   /** The contact's own name, as the CRM holds it. Written back unchanged. */
   firstName: string;
   lastName: string;
-  /** The name as sent to BetterContact — see `matchName`. Empty when the
-   *  name cannot be rendered in characters the integration can carry. */
+  /** The name as sent to Apollo — see `matchName`. */
   matchFirstName: string;
   matchLastName: string;
   primaryEmail: string;
@@ -286,6 +236,14 @@ interface ContactData {
   linkedinUrl: string;
   secondaryEmails: string[];
   primaryPhone: string;
+  /** For `isOwnWriteEcho`: who made the page's last edit and when, the
+   *  `Last Enriched` stamp, and whether a person fired this run explicitly
+   *  (a button press carries `source.user_id`; the property automation
+   *  does not). */
+  lastEditedBy: string;
+  lastEditedTime: string;
+  lastEnriched: string;
+  pressedByUser: boolean;
 }
 
 function extractContactData(raw: unknown): ContactData {
@@ -315,12 +273,10 @@ function extractContactData(raw: unknown): ContactData {
     .map((r: any) => normalizeDomain(r?.url))
     .filter((d: string) => d !== "" && !isFreemail(`x@${d}`));
 
-  // BetterContact matches on first + last name + employer domain — a work
-  // email is not an input at all and a LinkedIn URL only sharpens a match (the
-  // retired NinjaPear fallback behaved the same way, verified 2026-07-28). That
-  // makes the domain the load-bearing identifier, so when the Company relation
-  // is missing or unusable, fall back to the Primary Email's own host: for any
-  // non-consumer address that IS the employer's domain.
+  // The domain is both an Apollo match input (with first + last name) and the
+  // strongest corroboration signal for what comes back. When the Company
+  // relation is missing or unusable, fall back to the Primary Email's own
+  // host: for any non-consumer address that IS the employer's domain.
   const domain =
     rollupDomains[0] ??
     (isFreemail(primaryEmail)
@@ -360,27 +316,103 @@ function extractContactData(raw: unknown): ContactData {
       .map((s: any) => s?.name)
       .filter(Boolean),
     primaryPhone: props["Primary Phone"]?.phone_number ?? "",
+    lastEditedBy: firstString(data?.last_edited_by?.id) ?? "",
+    lastEditedTime: firstString(data?.last_edited_time) ?? "",
+    lastEnriched: firstString(props["Last Enriched"]?.date?.start) ?? "",
+    pressedByUser: Boolean(firstString(o.source?.user_id)),
   };
+}
+
+// --- Loop guard: this workflow's own LinkedIn write --------------------------
+//
+// The Contacts automation fires this workflow when the `Linkedin` property is
+// edited, and this workflow writes `Linkedin` — so its own write can fire it
+// again. That was already happening before Apollo: a person pasting
+// `linkedin.com/in/x` got HarvestAPI's `https://www.linkedin.com/in/x` written
+// back, the automation fired, and a second full run (a second HarvestAPI
+// lookup, a second comment) followed seconds later — 12 contacts between
+// 2026-10-24 and 2026-11-02. Every echo run's payload has `last_edited_by` =
+// the Notion connection's own bot and `last_edited_time` within a minute of the
+// `Last Enriched` stamp the first run set.
+//
+// So a run is the echo of our own write — and skipped — when all hold:
+//   * no person pressed a button for it (`source.user_id` absent);
+//   * the last edit landed 0–ECHO_WINDOW_MINUTES after `Last Enriched`;
+//   * the last editor is this connection's bot (`GET /v1/users/me`, read only
+//     when the first two hold, so an ordinary run makes no extra call).
+// A person editing the URL afterwards is the last editor, so their correction
+// still runs; so does a button press. The run that wrote the URL already did
+// everything the echo would (HarvestAPI included, in-run), so nothing is lost.
+// Writing `Linkedin` only when the slug actually changes (`linkedinToWrite`)
+// keeps most runs from firing the automation at all.
+
+/** Minutes since the epoch for a Notion timestamp (`2026-11-02T02:24:00.000Z`,
+ *  `…+08:00`), or null. Integer arithmetic: `Date` throws in the workflow body
+ *  (see the determinism guard). */
+function isoToEpochMinutes(iso: string): number | null {
+  const m = iso.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/,
+  );
+  if (!m) return null;
+  let mins = daysFromCivil(+m[1], +m[2], +m[3]) * 1440 + +m[4] * 60 + +m[5];
+  const tz = m[6];
+  if (tz && tz !== "Z") {
+    const sign = tz[0] === "-" ? -1 : 1;
+    mins -= sign * (+tz.slice(1, 3) * 60 + +tz.slice(4, 6));
+  }
+  return mins;
+}
+
+/** Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm).
+ *  Copied from drive-invoice-to-xero. */
+function daysFromCivil(y: number, m: number, d: number): number {
+  const yy = y - (m <= 2 ? 1 : 0);
+  const era = Math.floor(yy / 400);
+  const yoe = yy - era * 400;
+  const mp = (m + 9) % 12;
+  const doy = Math.floor((153 * mp + 2) / 5) + d - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+/** The payload-only half of the echo test: not a button press, and the last
+ *  edit landed within the window after `Last Enriched`. The caller then checks
+ *  the editor is our own bot. One minute of slack below zero, since Notion
+ *  rounds both stamps to the minute. */
+function isOwnWriteEchoCandidate(contact: ContactData): boolean {
+  if (contact.pressedByUser || !contact.lastEditedBy) return false;
+  const edited = isoToEpochMinutes(contact.lastEditedTime);
+  const enriched = isoToEpochMinutes(contact.lastEnriched);
+  if (edited === null || enriched === null) return false;
+  const gap = edited - enriched;
+  return gap >= -1 && gap <= ECHO_WINDOW_MINUTES;
 }
 
 // --- Enrichment result extraction ------------------------------------------
 
-/** HarvestAPI first when the contact has a LinkedIn URL, BetterContact as the
- *  fallback. Corroboration keeps its per-source shape. */
-type EnrichmentSource = "harvestapi" | "bettercontact";
+/** HarvestAPI first when the contact has a LinkedIn URL, Apollo as the
+ *  fallback (and HarvestAPI again when Apollo finds the URL). Corroboration
+ *  keeps its per-source shape. */
+type EnrichmentSource = "harvestapi" | "apollo";
 
 const SOURCE_LABELS: Record<EnrichmentSource, string> = {
   harvestapi: "HarvestAPI",
-  bettercontact: "BetterContact",
+  apollo: "Apollo",
 };
 
 interface EnrichedData {
   /** The source the profile fields came from. */
   source: EnrichmentSource;
   /** The source `newEmail` came from — differs from `source` when HarvestAPI
-   *  found the profile but no deliverable address and BetterContact supplied
-   *  one. Corroboration is judged against this source. Null with no email. */
+   *  found the profile but no deliverable address and Apollo supplied one.
+   *  Null with no email. */
   emailSource: EnrichmentSource | null;
+  /** When set, decides whether `newEmail` may be written, in place of
+   *  `corroborateEnrichedIdentity`. Set where the address's evidence lives on
+   *  a record other than the profile's: Apollo's address merged into a
+   *  HarvestAPI profile (Apollo's own record must vouch for it), or a
+   *  HarvestAPI lookup keyed on a URL Apollo found (Apollo's match must). */
+  identity?: IdentityCorroboration;
   linkedinUrl: string;
   country: string;
   city: string;
@@ -390,8 +422,8 @@ interface EnrichedData {
   firstName: string;
   lastName: string;
   /** A real profile photo URL (placeholders filtered by `realPhotoUrl`), or
-   *  "". Only HarvestAPI returns one. Stored in Notion and set as the page
-   *  icon (Path C). */
+   *  "". HarvestAPI's, else a corroborated Apollo match's. Stored in Notion and
+   *  set as the page icon and cover (Path C). */
   profilePicUrl: string;
   /** EVERY address the matched record carries, `newEmail` included. Used only
    *  to corroborate identity (see `corroborateEnrichedIdentity`) — never
@@ -452,8 +484,8 @@ function realPhotoUrl(v: unknown): string {
 // Notion and sets as the page icon.
 
 /** The first address HarvestAPI verified, or "". Only `deliverable: true` with
- *  `status: "valid"` counts, the counterpart of BetterContact's
- *  WRITABLE_EMAIL_STATUSES; anything else is reported, never written. */
+ *  `status: "valid"` counts, the counterpart of
+ *  APOLLO_WRITABLE_EMAIL_STATUSES; anything else is reported, never written. */
 function harvestEmail(row: any): string {
   const emails: any[] = Array.isArray(row?.emails) ? row.emails : [];
   const ok = emails.find(
@@ -516,7 +548,7 @@ function countryName(raw: string | null): string {
  *  answers in 6–25s but has overrun twice (2026-10-08, 2026-10-14); a retry a
  *  minute later answered in ~6s, so HarvestAPI evidently caches the lookup.
  *  Matched narrowly so every other HarvestAPI error still falls straight
- *  through to BetterContact. */
+ *  through to Apollo. */
 function isActionTimeout(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err);
   return /\bTask timed out after \d+(\.\d+)? seconds\b/.test(msg);
@@ -552,139 +584,103 @@ function extractEnrichedFromHarvest(row: any): EnrichedData {
   };
 }
 
-/** HarvestAPI's profile with BetterContact's address filled in, for a profile
- *  that came back without a deliverable email. Profile fields stay
- *  HarvestAPI's (read straight off LinkedIn) where it has them. */
-function mergeBetterContactEmail(
+/** HarvestAPI's profile with Apollo's address filled in, for a profile that
+ *  came back without a deliverable email. Profile fields stay HarvestAPI's
+ *  (read straight off LinkedIn) where it has them. The address is judged on
+ *  Apollo's own record (`apolloIdentity`), never on HarvestAPI's: Apollo is
+ *  fuzzy, so its match could be a different person even when the profile
+ *  beside it is the right one. */
+function mergeApolloEmail(
   harvest: EnrichedData,
-  bc: EnrichedData,
+  apollo: EnrichedData,
+  apolloIdentity: IdentityCorroboration,
 ): EnrichedData {
   return {
     ...harvest,
-    emailSource: bc.newEmail ? "bettercontact" : null,
-    newEmail: bc.newEmail,
-    country: harvest.country || bc.country,
-    city: harvest.city || bc.city,
-    jobTitle: harvest.jobTitle || bc.jobTitle,
-    linkedinUrl: harvest.linkedinUrl || bc.linkedinUrl,
-    allEmails: dedupeAddresses([...harvest.allEmails, ...bc.allEmails]),
-    // The employer domain corroborates BetterContact's address, so it is the
-    // record that address came from that speaks for it.
-    employerDomain: bc.employerDomain || harvest.employerDomain,
+    emailSource: apollo.newEmail ? "apollo" : null,
+    newEmail: apollo.newEmail,
+    identity: apollo.newEmail ? apolloIdentity : undefined,
+    country: harvest.country || apollo.country,
+    city: harvest.city || apollo.city,
+    jobTitle: harvest.jobTitle || apollo.jobTitle,
+    allEmails: dedupeAddresses([...harvest.allEmails, ...apollo.allEmails]),
   };
 }
 
-// --- BetterContact result extraction ---------------------------------------
+// --- Apollo result extraction ------------------------------------------------
 //
-// One row of the terminated response's `data[]` — BetterContact's field names
-// (`contact_*`, `company_*`), shape captured from a live run on 2026-09-18.
-// An email-only waterfall fills the identity fields (email + status, LinkedIn
-// URL, company domain, country) and leaves most profile fields (`contact_job_title`,
-// `contact_city`) null unless a provider happened to return them — so a
-// BetterContact enrichment is usually an address, not a full profile, and the
-// page's Bio is left as it is. BetterContact never returns a photo
-// (`contact_avatar` is a legacy always-null key); the page icon comes from
-// HarvestAPI only (Path C).
+// `people/match` answers `{ person, request_id }`; `person` is null on no
+// match. Shape captured live 2026-11-03: `first_name`, `last_name`,
+// `linkedin_url`, `title`, `headline`, `city`, `country`, `photo_url`,
+// `email` + `email_status` (`verified` on the probe), `employment_history[]`
+// (each with an optional `description`) and `organization.primary_domain`.
 
-/** The row's address, or "" when there is none or its verification status is
- *  not one we write (see WRITABLE_EMAIL_STATUSES). */
-function betterContactEmail(row: any): string {
-  const email = firstString(row?.contact_email_address);
+/** Apollo's address, or "" when there is none, it is the
+ *  `email_not_unlocked@…` placeholder a credit-locked record carries, or its
+ *  status is not one we write (APOLLO_WRITABLE_EMAIL_STATUSES). */
+function apolloEmail(person: any): string {
+  const email = apolloRawEmail(person?.email);
   if (!email) return "";
-  const status = (firstString(row?.contact_email_address_status) ?? "").toLowerCase();
-  return WRITABLE_EMAIL_STATUSES.has(status) ? email : "";
+  const status = (firstString(person?.email_status) ?? "").toLowerCase();
+  return APOLLO_WRITABLE_EMAIL_STATUSES.has(status) ? email : "";
 }
 
-/** True when the row carries at least one signal worth writing. */
-function betterContactRowUsable(row: any): boolean {
-  if (!row || typeof row !== "object") return false;
+function apolloRawEmail(email: unknown): string {
+  const e = firstString(email);
+  if (!e || /email_not_unlocked/i.test(e)) return "";
+  return e;
+}
+
+/** True when the match carries at least one signal worth writing. */
+function apolloPersonUsable(person: any): boolean {
+  if (!person || typeof person !== "object") return false;
   return Boolean(
-    betterContactEmail(row) ||
-      row.contact_job_title ||
-      row.contact_linkedin_profile_url ||
-      row.contact_location_country,
+    apolloRawEmail(person.email) ||
+      person.linkedin_url ||
+      person.title ||
+      person.city ||
+      person.country,
   );
 }
 
-function extractEnrichedFromBetterContact(row: any): EnrichedData {
-  const rawEmail = firstString(row?.contact_email_address) ?? "";
-  const newEmail = betterContactEmail(row);
+function extractEnrichedFromApollo(person: any): EnrichedData {
+  const newEmail = apolloEmail(person);
+  // Role descriptions read as a bio; the headline stands in when there are none.
+  const descriptions = (Array.isArray(person?.employment_history) ? person.employment_history : [])
+    .map((e: any) => e?.description)
+    .filter((d: unknown): d is string => typeof d === "string" && d.trim() !== "");
+  const bio = descriptions.length
+    ? descriptions.join("\n\n")
+    : (firstString(person?.headline) ?? "");
   return {
-    source: "bettercontact",
-    emailSource: newEmail ? "bettercontact" : null,
-    linkedinUrl: firstString(row?.contact_linkedin_profile_url) ?? "",
-    country: firstString(row?.contact_location_country, row?.contact_country) ?? "",
-    city: firstString(row?.contact_city, row?.contact_location_city) ?? "",
+    source: "apollo",
+    emailSource: newEmail ? "apollo" : null,
+    linkedinUrl: firstString(person?.linkedin_url) ?? "",
+    country: countryName(firstString(person?.country)),
+    city: firstString(person?.city) ?? "",
     newEmail,
-    // BetterContact returns no biography; "" is a no-change write.
-    bio: "",
-    jobTitle: firstString(row?.contact_job_title) ?? "",
-    firstName: firstString(row?.contact_first_name) ?? "",
-    lastName: firstString(row?.contact_last_name) ?? "",
-    // The raw address, whatever its status: corroboration only compares it
-    // against addresses the contact already holds, it never writes it.
-    allEmails: dedupeAddresses(rawEmail ? [rawEmail] : []),
-    employerDomain: normalizeDomain(firstString(row?.company_domain)),
-    // BetterContact never returns a photo (`contact_avatar` is always null).
-    profilePicUrl: "",
+    bio: bio.slice(0, BIO_MAX_CHARS),
+    jobTitle: firstString(person?.title) ?? "",
+    firstName: firstString(person?.first_name) ?? "",
+    lastName: firstString(person?.last_name) ?? "",
+    // Every address on the record, whatever its status: corroboration only
+    // compares them against addresses the contact already holds.
+    allEmails: dedupeAddresses(
+      [
+        apolloRawEmail(person?.email),
+        ...(Array.isArray(person?.personal_emails)
+          ? person.personal_emails.map((e: unknown) => apolloRawEmail(e))
+          : []),
+      ].filter(Boolean),
+    ),
+    employerDomain: normalizeDomain(
+      firstString(
+        person?.organization?.primary_domain,
+        person?.organization?.website_url,
+      ),
+    ),
+    profilePicUrl: realPhotoUrl(person?.photo_url),
   };
-}
-
-// --- BetterContact async job handling ---------------------------------------
-
-/** What a BetterContact status body says, whether it arrived by webhook or by
- *  polling. `status` is BetterContact's (`terminated` | `processing` |
- *  `not_started` | `on_hold`), or "error" / "unknown" for a call that failed or
- *  answered with no status. `row` is `data[0]` when present. */
-interface BetterContactOutcome {
-  status: string;
-  row: any;
-  error?: string;
-}
-
-function readBetterContactResult(payload: unknown): BetterContactOutcome {
-  const body = (payload ?? {}) as any;
-  const status = String(body?.status ?? "unknown").toLowerCase();
-  const row = Array.isArray(body?.data) ? (body.data[0] ?? null) : null;
-  return { status, row };
-}
-
-/** Polling fallback for a job whose webhook never arrived: wait, read the job
- *  back with `get_contact`, stop on a terminal status. Takes `ctx` so the
- *  loop-indexed step ids live outside the workflow body, which the publish-time
- *  analyzer requires to use string-literal ids. A `get_contact` that throws
- *  while the job is still running (Zapier searches may error on a 202 body) is
- *  treated as "not yet" and polled again. */
-async function pollBetterContactResult(
-  ctx: DurableCtx,
-  stepPrefix: string,
-  requestId: string,
-): Promise<BetterContactOutcome> {
-  let last: BetterContactOutcome = { status: "unknown", row: null };
-  for (let i = 0; i < POLL_ATTEMPTS; i++) {
-    await ctx.wait(`${stepPrefix}-poll-wait-${i}`, POLL_WAIT_SECONDS);
-    last = await ctx.step(`${stepPrefix}-poll-${i}`, async () => {
-      try {
-        const res = await sdk.runAction({
-          appKey: BETTERCONTACT_APP_KEY,
-          actionType: "search",
-          actionKey: "get_contact",
-          connection: BETTERCONTACT_CONNECTION,
-          inputs: { id: requestId },
-        });
-        return readBetterContactResult(firstResult(res));
-      } catch (err) {
-        return {
-          status: "error",
-          row: null,
-          error: String((err as Error)?.message ?? err),
-        } as BetterContactOutcome;
-      }
-    });
-    console.log(`BetterContact poll ${i + 1}/${POLL_ATTEMPTS} for ${requestId}: ${last.status}`);
-    if (last.status === "terminated" || last.status === "on_hold") return last;
-  }
-  return last;
 }
 
 // --- Freemail detection -----------------------------------------------------
@@ -766,30 +762,26 @@ function normalizeDomain(value: string | null | undefined): string {
 //   * the returned LinkedIn URL and the contact's reduce to the same slug;
 //   * the enriched address's host, or the record's employer domain, equals the
 //     company domain the CRM already holds;
-//   * the source only resolves on an identifier the CRM already holds, so the
-//     record it returns IS this contact. Two sources qualify:
-//       - HarvestAPI looks the profile up by the contact's own LinkedIn URL —
-//         an exact key, not a match. The LinkedIn rule above normally fires
-//         first; this is the backstop for a profile whose slug LinkedIn has
-//         since renamed (the old URL redirects to the new one).
-//       - BetterContact is gated on first + last name + the contact's own
-//         company domain, so any record it returns is a person at the employer
-//         already recorded. Its result echoes `company_domain`, so in practice
-//         the domain rule fires first.
+//   * HarvestAPI looked the profile up by the contact's OWN LinkedIn URL — an
+//     exact key, not a match, so the record it returns IS this contact. The
+//     LinkedIn rule above normally fires first; this is the backstop for a
+//     profile whose slug LinkedIn has since renamed (the old URL redirects).
 //
-// The exemption is judged against the source the EMAIL came from
-// (`emailSource`), not the source of the profile: when HarvestAPI finds the
-// profile and BetterContact the address, it is BetterContact's lookup that has
-// to vouch for the address. The per-source shape is kept (Apollo's fuzzy
-// name-only match was the original offender, and needed evidence in the
-// returned record) so a future fuzzy source does not inherit the gated-lookup
-// exemption by accident.
+// Apollo, the original offender, gets no exemption: its match must show
+// evidence in the returned record. And the HarvestAPI exemption needs the
+// contact to hold a URL — a HarvestAPI lookup keyed on a URL APOLLO found is
+// only as good as Apollo's match, so it carries Apollo's corroboration
+// explicitly instead (`EnrichedData.identity`), as does an Apollo address
+// merged into a HarvestAPI profile. The address is always judged on the
+// record it came from.
 //
 // An uncorroborated address is not written anywhere — not Primary, not
 // Secondary, not the Table — and is named in the outcome comment for a human to
-// judge. Everything else the source returned (title, city, country) is still
-// written: those are visible on the page and carry no identity downstream, and
-// in the Grace case they were in fact correct.
+// judge. Title, city, country and bio are still written: those are visible on
+// the page and carry no identity downstream, and in the Grace case they were
+// in fact correct. An uncorroborated Apollo match's LinkedIn URL and photo are
+// NOT kept (see `enrichViaApollo`): a URL on the contact is itself identity,
+// since it keys every later HarvestAPI lookup and satisfies the LinkedIn rule.
 
 interface IdentityCorroboration {
   verified: boolean;
@@ -829,15 +821,9 @@ function corroborateEnrichedIdentity(
     }
   }
 
-  if (enriched.emailSource === "harvestapi") {
+  if (enriched.emailSource === "harvestapi" && contact.linkedinUrl.trim()) {
     // Looked up by the contact's own LinkedIn URL: the profile is theirs.
     return { verified: true, how: "resolved from the contact's own LinkedIn URL" };
-  }
-
-  if (enriched.emailSource === "bettercontact") {
-    // The request is gated on the contact's own first + last name + company
-    // domain, so the record is a person at the employer the CRM already holds.
-    return { verified: true, how: "resolved from the contact's own company domain and name" };
   }
 
   return {
@@ -1035,28 +1021,33 @@ async function updateContactRecord(
   iconError?: string;
   unverifiedEmail?: string;
   identity?: string;
+  linkedinWritten: boolean;
 }> {
-  // When the request name was a lossy rendering of the contact's own (an
-  // alternate-script aside dropped, accents folded), BetterContact echoes the
-  // rendering back; writing that would erase "(彭思瑀)" from the CRM. Keep the
-  // contact's own name then, and take BetterContact's only when ours was sent
-  // as it stands.
-  //
-  // A HarvestAPI profile name is LinkedIn's display name, which people decorate
-  // ("Jane Doe, MBA", "Jane Doe 🚀"), so it never replaces a name the contact
-  // already has — it only fills one in (a contact titled with a bare email).
-  const keepOwnName =
-    contact.matchFirstName !== contact.firstName ||
-    contact.matchLastName !== contact.lastName ||
-    (enriched.source === "harvestapi" &&
-      Boolean(contact.firstName || contact.lastName));
-  const firstName = keepOwnName
-    ? contact.firstName
-    : enriched.firstName || contact.firstName;
-  const lastName = keepOwnName
-    ? contact.lastName
-    : enriched.lastName || contact.lastName;
+  // An enriched name never replaces a part the contact already has — it only
+  // fills a blank one (a contact titled with a bare email). A HarvestAPI name
+  // is LinkedIn's display name, which people decorate ("Jane Doe, MBA", "Jane
+  // Doe 🚀"); an Apollo name may belong to a fuzzy match; and either would
+  // erase an alternate-script aside ("(彭思瑀)") the CRM holds.
+  const firstName = contact.firstName || enriched.firstName;
+  const lastName = contact.lastName || enriched.lastName;
   const fullName = `${firstName} ${lastName}`.trim();
+
+  // --- LinkedIn URL: write only a real change ---
+  // Writing `Linkedin` fires the Contacts automation that triggers this
+  // workflow (see "Loop guard"), so the property is left alone when the found
+  // profile is the one already there, however the URL is spelled. A contact
+  // with no profile URL gets the found one (an uncorroborated Apollo match
+  // arrives with none — see `enrichViaApollo`); one whose URL HarvestAPI
+  // resolved to a different slug (a renamed profile) gets the current one. An
+  // Apollo URL never replaces one the contact holds.
+  const ownSlug = normalizeLinkedin(contact.linkedinUrl);
+  const foundSlug = normalizeLinkedin(enriched.linkedinUrl);
+  const linkedinToWrite =
+    !foundSlug || foundSlug === ownSlug
+      ? ""
+      : !ownSlug || enriched.source === "harvestapi"
+        ? enriched.linkedinUrl
+        : "";
 
   // --- Gate the enriched address on identity corroboration ---
   // See "Identity corroboration" above. An address that cannot be tied to this
@@ -1064,7 +1055,7 @@ async function updateContactRecord(
   // function then behaves exactly as it does for a source that returned no
   // email at all, so nothing reaches Primary, Secondary or the Table.
   const identity = enriched.newEmail
-    ? corroborateEnrichedIdentity(contact, enriched)
+    ? (enriched.identity ?? corroborateEnrichedIdentity(contact, enriched))
     : { verified: true, how: "no email returned" };
   const unverifiedEmail =
     enriched.newEmail && !identity.verified ? enriched.newEmail : "";
@@ -1093,7 +1084,7 @@ async function updateContactRecord(
     datasource: CONTACTS_DS,
     page: contact.pageId,
     "properties|||Name|||title": fullName,
-    "properties|||Linkedin|||url": enriched.linkedinUrl,
+    "properties|||Linkedin|||url": linkedinToWrite,
     "properties|||Job Title|||rich_text": enriched.jobTitle,
     "properties|||Primary Phone|||phone_number": "",
     "properties|||First Name|||rich_text": firstName,
@@ -1185,7 +1176,7 @@ async function updateContactRecord(
   });
 
   if (updateResult.archived) {
-    return { emailPath: "page-archived", iconUpdated: false };
+    return { emailPath: "page-archived", iconUpdated: false, linkedinWritten: false };
   }
 
   // --- Index the enriched email in the email -> page id Table ---
@@ -1309,6 +1300,7 @@ async function updateContactRecord(
     iconError,
     unverifiedEmail: unverifiedEmail || undefined,
     identity: unverifiedEmail ? identity.how : undefined,
+    linkedinWritten: Boolean(linkedinToWrite),
   };
 }
 
@@ -1324,8 +1316,13 @@ interface WorkflowResult {
   /** Which enrichment source produced the profile, when enriched. */
   source?: EnrichmentSource;
   /** Which source produced the written email, when one was written and it
-   *  differs from `source` (HarvestAPI profile + BetterContact address). */
+   *  differs from `source` (HarvestAPI profile + Apollo address). */
   emailSource?: EnrichmentSource;
+  /** True when the HarvestAPI lookup was keyed on a LinkedIn URL that Apollo
+   *  found, the contact having had none. */
+  linkedinViaApollo?: boolean;
+  /** Whether the `Linkedin` property was written this run. */
+  linkedinWritten?: boolean;
   reason?: string;
   /** Failure notes, one entry per source that failed (in order). Kept as a
    *  list so the outcome comment can show each on its own — joining them first
@@ -1359,12 +1356,12 @@ function isTransientStatus(status: number): boolean {
 }
 
 /** A single source's failure reason parsed into a source label
- *  ("HarvestAPI", "BetterContact", or null) and a short human-readable phrase. Unwraps the
+ *  ("HarvestAPI", "Apollo", or null) and a short human-readable phrase. Unwraps the
  *  JSON error body and strips any HTML that upstream errors arrive in. */
 function parseFailure(why: string): { source: string | null; brief: string } {
   let s = why.replace(/\s+/g, " ").trim();
   let source: string | null = null;
-  const src = s.match(/^(harvestapi|bettercontact)\s+/i);
+  const src = s.match(/^(harvestapi|apollo)\s+/i);
   if (src) {
     source = SOURCE_LABELS[src[1].toLowerCase() as EnrichmentSource];
     s = s.slice(src[0].length);
@@ -1400,9 +1397,11 @@ async function addOutcomeComment(
     const changes: string[] = [];
     if (result.emailPath === "same-or-no-prior") changes.push("primary email");
     if (result.emailPath === "new-email") changes.push("secondary email");
+    if (result.linkedinWritten) changes.push("LinkedIn URL");
     changes.push("contact details");
     if (result.iconUpdated) changes.push("profile icon and cover");
     let via = result.source ? SOURCE_LABELS[result.source] : "enrichment";
+    if (result.linkedinViaApollo) via += " (LinkedIn profile found by Apollo)";
     if (result.emailSource && result.emailSource !== result.source) {
       via += ` (email via ${SOURCE_LABELS[result.emailSource]})`;
     }
@@ -1497,165 +1496,185 @@ async function addOutcomeComment(
   });
 }
 
-// --- BetterContact (fallback source) -----------------------------------------
+// --- HarvestAPI lookup ---------------------------------------------------------
 //
-// Enrich via BetterContact. The request is an ASYNC job:
-// `enrich_contact` answers with a request id straight away and the
-// waterfall runs on BetterContact's side. Rather than poll, the run
-// hands BetterContact its own callback URL (`ctx.createCallback`) as the
-// job's `webhook` and parks; BetterContact POSTs the finished result to
-// it and the run resumes with the payload. Polling `get_contact` is the
-// fallback for a webhook that never arrives. Every BetterContact call
-// catches its own errors and returns a value, so a failing vendor does
-// NOT spin the durable's step-retry loop — it becomes a reason in the
-// outcome comment.
-//
-// Lives outside the workflow body so the body reads as the source order; its
-// step ids, callback name and helper prefix are string literals, as they were
-// in the body. Pushes a reason for every outcome that is not a usable row.
+// `find_profile` by a LinkedIn URL — the contact's own, or (the handoff) one
+// Apollo found for a contact that had none. Errors are caught inside the step
+// and become a reason, so a failing vendor falls through instead of spinning
+// the step-retry loop. Takes `ctx` and the step id so the body can call it
+// twice with two literal ids. Pushes a reason for every outcome that is not a
+// profile with a verified address.
 
-async function enrichViaBetterContact(
+async function findHarvestProfile(
+  ctx: DurableCtx,
+  stepId: string,
+  url: string,
+  pageId: string,
+  reasons: string[],
+): Promise<EnrichedData | null> {
+  const found = await ctx.step(stepId, async () => {
+    try {
+      const findProfile = () =>
+        sdk.runAction({
+          appKey: HARVESTAPI_APP_KEY,
+          actionType: "search",
+          actionKey: "find_profile",
+          connection: HARVESTAPI_CONNECTION,
+          inputs: {
+            url: asciiUrl(url),
+            findEmail: "true",
+            skipSmtp: "false",
+          },
+        });
+      let res: unknown;
+      try {
+        res = await findProfile();
+      } catch (err) {
+        // One retry, on the platform's 30s action timeout only: the lookup
+        // is a read, and HarvestAPI answers a repeat of a slow lookup fast.
+        if (!isActionTimeout(err)) throw err;
+        console.log(`HarvestAPI timed out for ${pageId}; retrying once`);
+        res = await findProfile();
+      }
+      const row = firstResult(res);
+      if (!harvestRowUsable(row)) {
+        return { enriched: null as EnrichedData | null, unwritable: "", error: null as string | null };
+      }
+      const enriched = extractEnrichedFromHarvest(row);
+      // An address HarvestAPI returned but did not verify, for the comment.
+      const unwritable = enriched.newEmail
+        ? ""
+        : (firstString(row?.email, row?.emails?.[0]?.email) ?? "");
+      return { enriched, unwritable, error: null as string | null };
+    } catch (err) {
+      return {
+        enriched: null as EnrichedData | null,
+        unwritable: "",
+        error: String((err as Error)?.message ?? err),
+      };
+    }
+  });
+
+  if (found.error) {
+    reasons.push(`harvestapi error: ${found.error}`);
+    console.log(`HarvestAPI failed for ${pageId}: ${found.error}`);
+    return null;
+  }
+  if (!found.enriched) {
+    reasons.push("harvestapi returned no result");
+    console.log(`HarvestAPI found no profile for ${pageId} at ${url}`);
+    return null;
+  }
+  if (!found.enriched.newEmail) {
+    reasons.push(
+      found.unwritable
+        ? `harvestapi found ${found.unwritable} but could not verify it; not written`
+        : "harvestapi found the profile but no email",
+    );
+  }
+  console.log(
+    `HarvestAPI found ${pageId}'s profile` +
+      (found.enriched.newEmail ? " with a verified email" : " without a verified email"),
+  );
+  return found.enriched;
+}
+
+// --- Apollo (fallback source) --------------------------------------------------
+//
+// One synchronous `people/match`, through `sdk.fetch` on the API by Zapier
+// connection (Apollo's key rides on the connection, never in source). It is
+// sent every identifier the contact holds — email, LinkedIn URL, name +
+// domain — and matches on any of them, so its result must be corroborated
+// against the CRM before anything identity-bearing is kept: the match is
+// judged once here (`identity`), and an uncorroborated match loses its
+// LinkedIn URL and photo on the spot, so neither the handoff below nor the
+// write-back can use them. Errors are caught inside the step and become a
+// reason; a non-2xx (out of credits, rate limit) falls through without retry.
+
+async function enrichViaApollo(
   ctx: DurableCtx,
   contact: ContactData,
   reasons: string[],
-): Promise<EnrichedData | null> {
-  let enriched: EnrichedData | null = null;
-
-  // BetterContact matches on first + last name plus the employer domain; a
-  // LinkedIn URL sharpens the match but is not accepted on its own, and an
-  // existing email is not an input at all (it finds addresses, it does not
-  // take them). Nothing to send without name + domain, so skip with an honest
-  // reason — more actionable than a false "no result".
-  // The name tested is the one actually sent (see `matchName`), so a name
-  // the integration cannot carry is a skip with a fix, not a header error.
-  const viable = Boolean(
-    contact.matchFirstName && contact.matchLastName && contact.domain,
-  );
-
-  if (!viable) {
-    const why = !contact.domain
-      ? isFreemail(contact.primaryEmail)
-        ? "skipped — no company domain (a personal email names no employer)"
-        : "skipped — no company domain, from the Company relation or the Primary Email"
-      : contact.firstName && contact.lastName && !contact.matchFirstName
-        ? "skipped — the name has characters BetterContact's Zapier integration cannot send (non-Latin script); add a romanised First Name and Last Name"
-        : "skipped — needs both a first and a last name to pair with the company domain";
-    reasons.push(`bettercontact ${why}`);
-    console.log(`BetterContact ${why} for ${contact.pageId}`);
-  } else {
-    // The callback is created BEFORE the submit step so its URL can ride
-    // along in the request. It is awaited only once the submit succeeded: a
-    // callback that is registered but never awaited does not park the run
-    // (dormancy engages only on an awaited wait), so a failed submit still
-    // returns promptly. The URL is unguessable and single-use, which is the
-    // whole of its security — BetterContact's webhook carries no signature.
-    const [resultPromise, callbackUrl] = await ctx.createCallback({
-      name: "bettercontact-result",
-      timeoutSeconds: CALLBACK_TIMEOUT_SECONDS,
-    });
-
-    const submit = await ctx.step("bettercontact-submit", async () => {
-      try {
-        const res = await sdk.runAction({
-          appKey: BETTERCONTACT_APP_KEY,
-          actionType: "write",
-          actionKey: "enrich_contact",
-          connection: BETTERCONTACT_CONNECTION,
-          inputs: {
-            // Never the raw CRM name: the integration puts it in an HTTP
-            // header. See "Names and URLs as sent to BetterContact".
-            first_name: contact.matchFirstName,
-            last_name: contact.matchLastName,
-            company_domain: contact.domain,
-            linkedin_url: asciiUrl(contact.linkedinUrl),
-            // Echoed back in the result's custom_fields, so a payload read
-            // outside the run (BetterContact's API usage page) names the page.
-            uuid: contact.pageId,
-            webhook: callbackUrl,
-            // The action's booleans are the strings "True" / "False". Emails
-            // only: this workflow does not consume phone data.
-            enrich_email_address: "True",
-            enrich_phone_number: "False",
-          },
-        });
-        // Response row: { id, success, message } — verified 2026-09-18.
-        const row = firstResult(res) ?? {};
-        const requestId = firstString(row.id, row.request_id);
-        if (!requestId) {
-          return {
-            requestId: null as string | null,
-            error: `no request id in response: ${JSON.stringify(row).slice(0, 200)}`,
-          };
-        }
-        return { requestId, error: null as string | null };
-      } catch (err) {
-        return {
-          requestId: null as string | null,
-          error: String((err as Error)?.message ?? err),
-        };
-      }
-    });
-
-    if (!submit.requestId) {
-      reasons.push(`bettercontact error: ${submit.error}`);
-      console.log(
-        `BetterContact submit failed for ${contact.pageId}: ${submit.error}`,
-      );
-    } else {
-      console.log(
-        `BetterContact request ${submit.requestId} submitted for ${contact.pageId}; waiting for the webhook`,
-      );
-
-      // Park until BetterContact POSTs the result, or the deadline passes.
-      // The server decides the outcome once: a late POST after expiry cannot
-      // flip it, so the polling fallback can never double-handle a result.
-      const delivered = await resultPromise;
-      let outcome: BetterContactOutcome;
-      if (delivered.status === "delivered") {
-        outcome = readBetterContactResult(delivered.value);
-        console.log(
-          `BetterContact webhook delivered for ${submit.requestId} (status ${outcome.status})`,
-        );
-      } else {
-        console.log(
-          `BetterContact webhook for ${submit.requestId} not delivered within ${CALLBACK_TIMEOUT_SECONDS}s; polling`,
-        );
-        outcome = await pollBetterContactResult(
-          ctx,
-          "bettercontact",
-          submit.requestId,
-        );
-      }
-
-      if (outcome.status === "terminated" && betterContactRowUsable(outcome.row)) {
-        enriched = extractEnrichedFromBetterContact(outcome.row);
-        console.log(`BetterContact enriched ${contact.pageId}`);
-      } else if (outcome.status === "terminated") {
-        // Finished with nothing we write. Name an address that came back
-        // with an unverified status so a person can decide about it.
-        const found = firstString(outcome.row?.contact_email_address);
-        const status = firstString(outcome.row?.contact_email_address_status);
-        reasons.push(
-          found
-            ? `bettercontact found ${found} but its status is ${status ?? "unknown"}; not written`
-            : "bettercontact returned no result",
-        );
-      } else if (outcome.status === "on_hold") {
-        reasons.push(
-          `bettercontact on hold — the account is out of credits (request ${submit.requestId} resumes on its own once topped up)`,
-        );
-      } else {
-        reasons.push(
-          `bettercontact error: ${
-            outcome.error ??
-            `request ${submit.requestId} still ${outcome.status} after the webhook timeout and ${POLL_ATTEMPTS} polls`
-          }`,
-        );
-      }
-    }
+): Promise<{ data: EnrichedData; identity: IdentityCorroboration } | null> {
+  const name = Boolean(contact.matchFirstName && contact.matchLastName);
+  if (!contact.primaryEmail && !contact.linkedinUrl && !(name && contact.domain)) {
+    const why = !name
+      ? "skipped — no email, LinkedIn URL or first + last name to match on"
+      : "skipped — no email or LinkedIn URL, and no company domain to pair with the name";
+    reasons.push(`apollo ${why}`);
+    console.log(`Apollo ${why} for ${contact.pageId}`);
+    return null;
   }
 
-  return enriched;
+  const match = await ctx.step("apollo-match", async () => {
+    try {
+      const body: Record<string, unknown> = {
+        // Keep credit spend minimal: no phone data, no personal emails.
+        reveal_personal_emails: false,
+        reveal_phone_number: false,
+      };
+      if (contact.matchFirstName) body.first_name = contact.matchFirstName;
+      if (contact.matchLastName) body.last_name = contact.matchLastName;
+      if (contact.domain) body.domain = contact.domain;
+      if (contact.primaryEmail) body.email = contact.primaryEmail;
+      if (contact.linkedinUrl) body.linkedin_url = asciiUrl(contact.linkedinUrl);
+      const res = await sdk.fetch(APOLLO_MATCH_URL, {
+        connection: APOLLO_CONNECTION,
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-cache" },
+        body: JSON.stringify(body),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        return { person: null as any, error: `http ${res.status}: ${text.slice(0, 300)}` };
+      }
+      let person: any = null;
+      try {
+        person = JSON.parse(text)?.person ?? null;
+      } catch {
+        return { person: null as any, error: `non-JSON response: ${text.slice(0, 200)}` };
+      }
+      return { person, error: null as string | null };
+    } catch (err) {
+      return { person: null as any, error: String((err as Error)?.message ?? err) };
+    }
+  });
+
+  if (match.error) {
+    reasons.push(`apollo error: ${match.error}`);
+    console.log(`Apollo failed for ${contact.pageId}: ${match.error}`);
+    return null;
+  }
+  if (!apolloPersonUsable(match.person)) {
+    reasons.push("apollo returned no result");
+    console.log(`Apollo found no match for ${contact.pageId}`);
+    return null;
+  }
+
+  const data = extractEnrichedFromApollo(match.person);
+  const identity = corroborateEnrichedIdentity(contact, data);
+  data.identity = identity;
+  if (!identity.verified) {
+    // A fuzzy match nothing ties to this contact: keep nothing that carries
+    // identity. The address goes to Path U and is named in the comment.
+    if (data.linkedinUrl) {
+      reasons.push(`apollo match not corroborated (${identity.how}); its LinkedIn URL ${data.linkedinUrl} was not used`);
+    }
+    data.linkedinUrl = "";
+    data.profilePicUrl = "";
+  }
+  if (!data.newEmail) {
+    const raw = apolloRawEmail(match.person?.email);
+    reasons.push(
+      raw
+        ? `apollo found ${raw} but its status is ${firstString(match.person?.email_status) ?? "unknown"}; not written`
+        : "apollo found the person but no email",
+    );
+  }
+  console.log(
+    `Apollo matched ${contact.pageId} (${identity.verified ? "corroborated" : "NOT corroborated"}: ${identity.how})`,
+  );
+  return { data, identity };
 }
 
 // --- Workflow --------------------------------------------------------------
@@ -1675,98 +1694,88 @@ const workflow = defineDurable(
 
     const contact = extractContactData(norm);
 
+    // The echo of this workflow's own write (see "Loop guard"). The bot id is
+    // read only when the payload already looks like an echo; a failed read
+    // returns "" and the run proceeds — a redundant run beats a missed one.
+    if (isOwnWriteEchoCandidate(contact)) {
+      const botId = await ctx.step("notion-bot-user", async () => {
+        try {
+          const res = await sdk.fetch(`${NOTION_API}/users/me`, {
+            connection: NOTION_CONNECTION,
+            method: "GET",
+            headers: { "Notion-Version": NOTION_VERSION },
+          });
+          if (!res.ok) return "";
+          return firstString((await res.json())?.id) ?? "";
+        } catch {
+          return "";
+        }
+      });
+      if (botId && botId === contact.lastEditedBy) {
+        console.log(
+          `Skipping ${contact.pageId}: triggered by this workflow's own write (last edit ${contact.lastEditedTime}, Last Enriched ${contact.lastEnriched}).`,
+        );
+        return { skipped: "own-write-echo", pageId: contact.pageId };
+      }
+    }
+
     console.log(
       `Enriching contact ${contact.pageId}: ${contact.firstName} ${contact.lastName}`.trim(),
     );
 
-    // 1. HarvestAPI, when the contact has a LinkedIn URL. It is a direct
-    //    lookup by that URL — no name or domain needed — and answers in one
-    //    synchronous call with the profile and, when it can find one, an
-    //    SMTP-checked address. Its errors are caught inside the step and become
-    //    a reason, exactly like BetterContact's, so a failing vendor falls
-    //    through to the fallback instead of spinning the step-retry loop.
-    // 2. BetterContact, when HarvestAPI did not produce a deliverable address:
-    //    no LinkedIn URL, no profile found, an error, or a profile with no
-    //    address. In the last case HarvestAPI's profile is kept and only the
-    //    address is taken from BetterContact.
+    // 1. HarvestAPI, when the contact has a LinkedIn URL: a direct lookup by
+    //    that URL, returning the profile and, when it can, an SMTP-checked
+    //    address.
+    // 2. Apollo, when HarvestAPI did not produce a verified address: no
+    //    LinkedIn URL, no profile, an error, or a profile with no address. In
+    //    the last case HarvestAPI's profile is kept and only Apollo's address
+    //    is taken.
+    // 3. The handoff: when the contact had NO LinkedIn URL and Apollo's
+    //    corroborated match carries one, HarvestAPI is asked with it — it reads
+    //    LinkedIn better than Apollo does. If it finds nothing, Apollo's data
+    //    stands.
     const reasons: string[] = [];
     let harvest: EnrichedData | null = null;
+    let linkedinViaApollo = false;
 
     if (!contact.linkedinUrl) {
-      console.log(`No LinkedIn URL on ${contact.pageId}; HarvestAPI not tried`);
+      console.log(`No LinkedIn URL on ${contact.pageId}; HarvestAPI not tried first`);
     } else {
-      const found = await ctx.step("harvestapi-find-profile", async () => {
-        try {
-          const findProfile = () =>
-            sdk.runAction({
-              appKey: HARVESTAPI_APP_KEY,
-              actionType: "search",
-              actionKey: "find_profile",
-              connection: HARVESTAPI_CONNECTION,
-              inputs: {
-                url: asciiUrl(contact.linkedinUrl),
-                findEmail: "true",
-                skipSmtp: "false",
-              },
-            });
-          let res: unknown;
-          try {
-            res = await findProfile();
-          } catch (err) {
-            // One retry, on the platform's 30s action timeout only: the lookup
-            // is a read, and HarvestAPI answers a repeat of a slow lookup fast.
-            if (!isActionTimeout(err)) throw err;
-            console.log(`HarvestAPI timed out for ${contact.pageId}; retrying once`);
-            res = await findProfile();
-          }
-          const row = firstResult(res);
-          if (!harvestRowUsable(row)) {
-            return { enriched: null as EnrichedData | null, unwritable: "", error: null as string | null };
-          }
-          const enriched = extractEnrichedFromHarvest(row);
-          // An address HarvestAPI returned but did not verify, for the comment.
-          const unwritable = enriched.newEmail
-            ? ""
-            : (firstString(row?.email, row?.emails?.[0]?.email) ?? "");
-          return { enriched, unwritable, error: null as string | null };
-        } catch (err) {
-          return {
-            enriched: null as EnrichedData | null,
-            unwritable: "",
-            error: String((err as Error)?.message ?? err),
-          };
-        }
-      });
-
-      if (found.error) {
-        reasons.push(`harvestapi error: ${found.error}`);
-        console.log(`HarvestAPI failed for ${contact.pageId}: ${found.error}`);
-      } else if (!found.enriched) {
-        reasons.push("harvestapi returned no result");
-        console.log(`HarvestAPI found no profile for ${contact.pageId}`);
-      } else {
-        harvest = found.enriched;
-        if (!harvest.newEmail) {
-          reasons.push(
-            found.unwritable
-              ? `harvestapi found ${found.unwritable} but could not verify it; not written`
-              : "harvestapi found the profile but no email",
-          );
-        }
-        console.log(
-          `HarvestAPI found ${contact.pageId}'s profile` +
-            (harvest.newEmail ? " with a verified email" : " without a verified email"),
-        );
-      }
+      harvest = await findHarvestProfile(
+        ctx, "harvestapi-find-profile", contact.linkedinUrl, contact.pageId, reasons,
+      );
     }
 
     let enrichedData: EnrichedData | null = harvest;
     if (!harvest?.newEmail) {
-      const bc = await enrichViaBetterContact(ctx, contact, reasons);
-      if (bc && harvest) {
-        enrichedData = bc.newEmail ? mergeBetterContactEmail(harvest, bc) : harvest;
-      } else if (bc) {
-        enrichedData = bc;
+      const apollo = await enrichViaApollo(ctx, contact, reasons);
+      if (apollo && harvest) {
+        enrichedData = apollo.data.newEmail
+          ? mergeApolloEmail(harvest, apollo.data, apollo.identity)
+          : harvest;
+      } else if (apollo && !contact.linkedinUrl && apollo.data.linkedinUrl) {
+        // `linkedinUrl` survives only on a corroborated match.
+        const handoff = await findHarvestProfile(
+          ctx, "harvestapi-find-profile-from-apollo", apollo.data.linkedinUrl, contact.pageId, reasons,
+        );
+        if (!handoff) {
+          enrichedData = apollo.data;
+        } else {
+          linkedinViaApollo = true;
+          enrichedData = handoff.newEmail
+            ? {
+                ...handoff,
+                identity: {
+                  verified: true,
+                  how: `resolved from the LinkedIn URL of an Apollo match that ${apollo.identity.how}`,
+                },
+              }
+            : apollo.data.newEmail
+              ? mergeApolloEmail(handoff, apollo.data, apollo.identity)
+              : handoff;
+        }
+      } else if (apollo) {
+        enrichedData = apollo.data;
       }
     }
 
@@ -1780,7 +1789,7 @@ const workflow = defineDurable(
         reasons,
       };
     } else {
-      // 3. Update the contact record (inline sub-zap logic).
+      // 4. Update the contact record (inline sub-zap logic).
       const updateResult = await updateContactRecord(ctx, contact, enrichedData);
       result = {
         pageId: contact.pageId,
@@ -1790,14 +1799,15 @@ const workflow = defineDurable(
           enrichedData.emailSource && enrichedData.emailSource !== enrichedData.source
             ? enrichedData.emailSource
             : undefined,
+        linkedinViaApollo: linkedinViaApollo || undefined,
         // Notes from sources tried before (or alongside) the one that did the
-        // work — e.g. HarvestAPI found no address, or BetterContact was skipped.
+        // work — e.g. HarvestAPI found no address, or Apollo found no email.
         reasons: reasons.length ? reasons : undefined,
         ...updateResult,
       };
     }
 
-    // 4. Add a brief comment to the triggering page stating the outcome.
+    // 5. Add a brief comment to the triggering page stating the outcome.
     const comment = await addOutcomeComment(ctx, contact, result);
 
     return { ...result, commentPosted: comment.posted, commentError: comment.error };
