@@ -271,14 +271,10 @@ export function pickContinuationGuests(
   return { items, missing };
 }
 
-async function readGuests(eventId: string): Promise<Array<Record<string, any>>> {
-  const res: any = await sdk.runAction({
-    appKey: LUMA_APP_KEY,
-    actionType: "read",
-    actionKey: "new_or_updated_guest",
-    connection: LUMA_CONNECTION,
-    inputs: { event_ids: [eventId], lookback_days: BACKFILL_LOOKBACK_DAYS },
-  });
+/** The guest list out of a `new_or_updated_guest` read. The sdk.runAction call
+ *  itself stays inline in each step: the publish-time analyzer refuses a
+ *  runAction it reaches through a helper (`malformed-run-action`, 2026-11-04). */
+function guestList(res: any): Array<Record<string, any>> {
   return Array.isArray(res?.data) ? res.data : [];
 }
 
@@ -425,10 +421,18 @@ const workflow = defineDurable("luma-manager-email-to-table", async (ctx, rawInp
   if (cont) {
     // Keep the one-at-a-time spacing across the hand-off.
     await ctx.wait("continuation-spacing", GUEST_SPACING_SECONDS);
-    const contTargets = await ctx.step("resolve-target-workflows", async () => resolveTargets());
-    const picked = await ctx.step("read-guests", async () =>
-      pickContinuationGuests(await readGuests(cont.eventId), cont.guestIds),
-    );
+    // Step names are unique across BOTH branches (analyzer: duplicate-step-name).
+    const contTargets = await ctx.step("resolve-targets-for-continuation", async () => resolveTargets());
+    const picked = await ctx.step("read-queued-guests", async () => {
+      const res: any = await sdk.runAction({
+        appKey: LUMA_APP_KEY,
+        actionType: "read",
+        actionKey: "new_or_updated_guest",
+        connection: LUMA_CONNECTION,
+        inputs: { event_ids: [cont.eventId], lookback_days: BACKFILL_LOOKBACK_DAYS },
+      });
+      return pickContinuationGuests(guestList(res), cont.guestIds);
+    });
     if (picked.missing.length > 0) {
       console.log(`${picked.missing.length} queued guests no longer on ${cont.eventId}: ${picked.missing.join(", ")}`);
     }
@@ -542,7 +546,14 @@ const workflow = defineDurable("luma-manager-email-to-table", async (ctx, rawInp
 
   // 5. Every guest past `invited`.
   const guests = await ctx.step("read-guests", async () => {
-    const all = await readGuests(email.eventId);
+    const res: any = await sdk.runAction({
+      appKey: LUMA_APP_KEY,
+      actionType: "read",
+      actionKey: "new_or_updated_guest",
+      connection: LUMA_CONNECTION,
+      inputs: { event_ids: [email.eventId], lookback_days: BACKFILL_LOOKBACK_DAYS },
+    });
+    const all = guestList(res);
     return { total: all.length, items: all.filter(isBackfillGuest).map(slimGuest) };
   });
 
