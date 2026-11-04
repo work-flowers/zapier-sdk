@@ -1,6 +1,6 @@
 # Xero Contact → Notion Company
 
-Durable workflow (trigger **`read`** — "Every Day" at 6:30 AM — `ScheduleCLIAPI@1.7.0`) that completes the
+Durable workflow (trigger **`updated_contact`** — Xero "New or Updated Contact", polled every 15 minutes — `XeroCLIAPI@2.22.1`) that completes the
 company/contact link in the **Xero → Notion** direction: a Xero contact carrying a Notion Company ID
 in its **Account Number** gets its `ContactID` written onto the matching Notion Company page.
 
@@ -19,20 +19,18 @@ never runs. That is why this cannot simply be folded into it.
 
 ## What it does
 
-1. **Trigger** — *Every Day* at 6:30 AM (account time, Asia/Singapore), weekends included. Costs Xero
-   nothing. It was hourly until 2026-10-31; see [Cost](#cost).
-2. **Read Xero once** — `GET /Contacts?where=UpdatedDateUTC>=<today−7d>&summaryOnly=true`, bounded to
-   3 pages. Observed volume is ~12 contacts per 13 days, so one page is the norm by a wide margin.
-3. **Keep only contacts with an Account Number** — that field is the deliberate human signal that a
+1. **Trigger** — Xero *New or Updated Contact*, polled every **15 minutes** via the undocumented
+   `_zap_polling_interval_minutes` param (see [Why a 15-minute poller](#why-a-15-minute-poller)). Each
+   new or edited contact is one run, carrying that contact.
+2. **Keep only contacts with an Account Number** — that field is the deliberate human signal that a
    contact wants linking.
-4. **Look up the company** in [`[Table] Company IDs`](#the-table-lookup-is-not-just-a-gate) by
+3. **Look up the company** in [`[Table] Company IDs`](#the-table-lookup-is-not-just-a-gate) by
    `Notion Company ID` (free read).
-5. **Write the `ContactID` onto the Notion Company page**, then warm the Table's copy.
+4. **Write the `ContactID` onto the Notion Company page**, then warm the Table's copy.
 
 ```mermaid
 flowchart TD
-    T["⏰ Schedule: Every Day 6:30 AM<br/><i>0 Xero calls</i>"] --> Q["🏦 Xero · GET /Contacts<br/><b>where UpdatedDateUTC >= today−7d</b><br/><i>summaryOnly · 1 call · max 3 pages</i>"]
-    Q --> F{"Account Number<br/>present?"}
+    T["🏦 Xero · New or Updated Contact<br/><b>polled every 15 min</b><br/><i>one contact per run · ~96 Xero calls/day</i>"] --> F{"Account Number<br/>present?"}
     F -- no --> IG["⏹ ignored<br/><i>most contacts</i>"]
     F -- yes --> L["🔎 [Table] Company IDs<br/>find by Notion Company ID<br/><i>free</i>"]
     L --> M{"row found?"}
@@ -91,28 +89,53 @@ and reports it as a conflict with a `WARNING` naming both ids. Either two Xero c
 company, or an Account Number is wrong — both need a human, and silently repointing the link would
 hide it. The classic Zap's `f15 isnull` filter declined this case too, but silently.
 
-## Why a schedule and not a polling trigger
+## Why a 15-minute poller
 
-Migrating `updated_contact` as a *polling* durable would have made this **worse**: a durable trigger
-has no polling-interval field (the `--trigger` payload accepts only `selected_api` / `action` /
-`authentication_id` / `params`, verified across all 43 live triggers in the account), so it would have
-run at the account default — ~1,440 Xero calls/day against the 96/day the classic Zap cost at its
-15-minute override.
+Xero rate-limits **per tenant at 5,000 calls/day**. Five Xero pollers exhausted that on 2026-08-06,
+downing every Xero Zap for ~10 hours. A durable poller polls about **once a minute** unless told
+otherwise, and until 2026-11 there was no way to tell it otherwise, so from 2026-08 to 2026-11 this
+workflow ran on a schedule (hourly, then daily) and swept a 7-day window of contacts itself.
 
-Five Xero pollers on this tenant exhausted Xero's **5,000-calls/day-per-tenant** limit on 2026-08-06,
-downing every Xero Zap for ~10 hours. A schedule trigger costs Xero nothing and puts the rate under
-our control.
+On 2026-11-04 Zapier support suggested adding **`_zap_polling_interval_minutes`** to the trigger
+params, as a *"temporary workaround"*. It is undocumented. Verified the same day on a throwaway Drive
+poller set to 15: files dropped at 02:09, 02:13 and 02:18 UTC all fired together at 02:21, and one
+dropped at 02:24 fired at 02:38. The default poller would have fired each within a minute or two.
 
 | | Xero calls/day |
 | --- | --- |
 | Two classic Zaps at 1-minute polling | ~2,880 |
+| Naive polling durable (no interval param) | ~1,440 |
 | Two classic Zaps at 15-minute polling | ~192 |
-| Naive polling durable | ~1,440 |
-| **This workflow** | **~24** |
+| **This workflow (15-minute poller)** | **~96** |
+| The daily schedule it replaced | ~1 |
+
+The schedule was cheaper on Xero calls; the poller links within 15 minutes instead of within a day.
+`scripts/publish-changed-zaps.mjs` refuses to publish any Xero polling trigger that lacks the param,
+so it cannot silently fall back to 1-minute polling. **If Zapier withdraws the param**, revert to the
+schedule version (git history before this change): its sweep code is still in this file, as the
+manual `{"sweep":true}` mode.
+
+### What still needs proving after cutover
+
+The case this Zap exists for is a contact **created by hand and given its Account Number later**,
+which is an *update* to a contact the poller has already delivered once. It only reaches us if Zapier
+re-fires `updated_contact` for a ContactID it has already seen. Zapier fixed that for durable app
+triggers on 2026-10-28 (bug W6ZE93-VMEWP), but nobody has tested it on Xero. **After cutover, set an
+Account Number on an existing contact and confirm a run fires.** If none does, revert to the schedule.
 
 ## Verified behaviour
 
-Dry run against live Xero and the real Table, 2026-08-07, before publishing:
+Hosted `run-durable` dry runs of the poller version, 2026-11-04, against live Xero and the real Table
+(read-only):
+
+| Input | Result |
+| --- | --- |
+| Polled contact `COM-130` (Sakana AI K.K.) + `dryRun` | `skipped: already linked` |
+| Polled contact with no Account Number | `ignored: no Account Number` |
+| `{"sweep":true,"dryRun":true}` | 6 contacts read, 2 candidates (`COM-23`, `COM-130`), both `already linked`, 0 conflicts |
+| `{}` | **throws**: neither a contact nor a sweep instruction |
+
+The original dry run of the schedule version, 2026-08-07:
 
 | | Result |
 | --- | --- |
@@ -131,31 +154,28 @@ property name and payload shape), and `notion-companies-to-zapier-table` indepen
 ## Testing without writing
 
 ```bash
-zapier-sdk --experimental trigger-workflow 019fdb77-594e-7426-a1f2-9c0b153d986c --input '{"dryRun":true}'
+zapier-sdk --experimental trigger-workflow 019fdb77-594e-7426-a1f2-9c0b153d986c --input '{"sweep":true,"dryRun":true}'
 ```
 
-Computes the whole pass against live data and reports what it *would* write, writing nothing. An
-empty input `{}` is a real run. **Run the dry version before every publish** — and check the run
-actually reached the decision logic rather than stopping at the fetch. A sibling Zap shipped a
-column-wiping bug precisely because its pre-publish test died before reaching its extraction code.
+Runs the 7-day sweep against live data and reports what it *would* write, writing nothing. Drop
+`dryRun` to apply it, e.g. after an outage. A single contact can be tested by passing Xero's contact
+object plus `"dryRun":true`. An empty `{}` **throws**: the poller never sends one, so it is treated
+as an unrecognised payload, never as a request to sweep.
 
 ## Cost
 
-From 2026-12-01 every successful durable run costs at least 1 task, and each fire here makes one
-Xero read (`runAction`, 1 task), plus one Notion `sdk.fetch` per link written. Daily that is about
-**30 tasks a month**. Hourly it was about 720, to process ~12 contacts every 13 days, which is why
-the schedule moved to daily on 2026-10-31. Linking is not time-sensitive, so a day's delay is fine.
-
-A Xero polling trigger isn't the cheaper route it looks like: polls cost no tasks, but a durable
-trigger still has no interval field (checked against SDK 0.119.0 on 2026-10-31). A poller would run
-at about one call a minute, using ~1,440 of the tenant's 5,000 Xero calls a day.
+Polls that find nothing cost no Zapier task. Each new or edited contact is one run (≥1 task from
+2026-12-01), plus one Notion `sdk.fetch` per link written. At the ~12 contacts per 13 days observed,
+that is roughly **30 tasks a month**, the same as the daily schedule it replaced. Every edit to *any*
+contact fires a run, so a burst of contact edits in Xero costs a task each, even though most exit at
+the Account Number check.
 
 ## Maintainer notes
 
 - **Per-contact steps go through `indexedStep(ctx, id, run)`** (since 2026-10-31). Zapier's publish-time analyzer began refusing template-literal step ids in a workflow body on 2026-09-03, after this Zap's last publish, and it doesn't follow `ctx` into a helper. The ids are unchanged.
-- **`everyDay` takes `hod` (e.g. `"6:30 AM"`), not `moh`.** `moh` belongs to `everyHour`, where it
-  must be the string `"00"`, not the integer `0`, if this Zap ever goes back to hourly. Verify
-  `triggers[0].status == "active"` after every publish regardless.
+- **`_zap_polling_interval_minutes` must be a number** (`15`, not `"15"`); the publisher refuses
+  anything else. Verify `triggers[0].status == "active"` and that the param survived after every
+  publish.
 - **`summaryOnly=true` still returns `AccountNumber`.** Xero omits the key entirely when it is empty,
   so its absence on a given contact is not evidence the parameter dropped it.
 - **Never write `new Date` / `Date.now()` in the workflow body outside a `ctx.step`** — the runtime's
@@ -163,7 +183,7 @@ at about one call a minute, using ~1,440 of the tenant's 5,000 Xero calls a day.
   inside `ctx.step("today")`; all date maths is integer arithmetic.
 - **Notion connection is `notion_wf` = `02b73654-15c8-85c3-b16a-07304d2beb17`** (work.flowers).
   Never the Knoxx connection — it cannot see work.flowers databases.
-- **Per-item step names are index-based off a batch sorted by `ContactID`**, and the batch is memoized
+- **Sweep step names are index-based off a batch sorted by `ContactID`** (a poll run uses the `single` tag), and the batch is memoized
   by the `fetch-contacts` step, so a retry can never re-map an index onto a different contact.
 - **The two classic Zaps this replaced must be turned off** — otherwise they keep writing `f15`
   directly (reintroducing the temporary-link bug) and keep costing ~192 Xero calls/day. They are

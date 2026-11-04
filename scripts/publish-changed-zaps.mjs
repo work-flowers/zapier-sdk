@@ -262,7 +262,42 @@ function validateTrigger(dir, trigger) {
         `(expected e.g. "NotionCLIAPI@2.39.1") — an unversioned value fails the claim silently.`,
     );
   }
+  const intervalProblem = xeroPollingIntervalProblem(trigger);
+  if (intervalProblem) fail(`${dir}: ${intervalProblem}`);
   return trigger;
+}
+
+// ---- Xero pollers must declare their polling interval ----------------------
+//
+// A durable polling trigger polls about once a minute unless its params carry
+// `_zap_polling_interval_minutes` — an undocumented key Zapier support offered
+// on 2026-11-04 as a "temporary workaround", verified the same day on a Drive
+// poller (15 → polls ~15–17 min apart, files batched per poll). Xero rate-limits
+// PER TENANT at 5,000 calls/day; five 1-minute Xero pollers exhausted that on
+// 2026-08-06 and took every Xero Zap down for ~10 hours. A Xero poller without
+// the key is therefore refused rather than shipped. Push (REST hook) triggers
+// make no polls and are exempt.
+export const XERO_HOOK_TRIGGERS = new Set(["updated_invoice_v2"]);
+export const MIN_XERO_POLLING_INTERVAL_MINUTES = 5;
+
+export function xeroPollingIntervalProblem(trigger) {
+  if (!trigger || !String(trigger.selected_api || "").startsWith("XeroCLIAPI@")) return null;
+  if (XERO_HOOK_TRIGGERS.has(trigger.action)) return null;
+  const v = trigger.params?._zap_polling_interval_minutes;
+  if (v === undefined || v === null || v === "") {
+    return (
+      `Xero polling trigger "${trigger.action}" has no params._zap_polling_interval_minutes. ` +
+      `Without it the poller runs ~1/min (~1,440 Xero calls/day against the tenant's 5,000). ` +
+      `Declare it (e.g. 15) in zap.json.`
+    );
+  }
+  if (!Number.isInteger(v) || v < MIN_XERO_POLLING_INTERVAL_MINUTES) {
+    return (
+      `Xero polling trigger "${trigger.action}" has params._zap_polling_interval_minutes = ${JSON.stringify(v)}; ` +
+      `it must be an integer ≥ ${MIN_XERO_POLLING_INTERVAL_MINUTES} (a number, not a string).`
+    );
+  }
+  return null;
 }
 
 // A catch hook is the one trigger kind Zapier ISSUES a URL for, and that URL is
