@@ -5,10 +5,28 @@ import { z } from "zod";
 
 const sdk = createZapierSdk();
 
+// --- How it is deployed (since 2026-11) ---------------------------------------
+//
+// FOUR deployments of this one source (zap.json `deployments[]`):
+//
+//   poll-bill-draft          Xero `bill` status=draft              } each polled every
+//   poll-bill-authorised     Xero `bill` status=authorised         } 15 min via the
+//   poll-sales-invoice-draft Xero `sales_invoice_v2` status=draft  } trigger param
+//                                                                    _zap_polling_interval_minutes
+//   daily-sweep              Schedule, weekdays 9 AM — the 7-day window read below,
+//                            now a BACKSTOP for alerts, and still the only path
+//                            that marks expense claims Paid.
+//
+// A poll run carries ONE invoice and goes through the same per-invoice loop and
+// the same alert-state Table as the sweep, so an invoice alerted by its poller
+// is "already alerted" when the sweep re-reads it, and vice versa. Alerts now
+// land within ~15 minutes instead of up to a working day. Xero cost: ~96 calls
+// a day per poller, ~288 in all, against the tenant's 5,000.
+//
 // --- Why this Zap exists ---------------------------------------------------
 //
-// It replaces THREE Xero polling triggers with one schedule (weekdays 9 AM;
-// hourly until 2026-10-31):
+// It replaced THREE Xero polling durables with one schedule (2026-08-06), when
+// a durable poller could not be slowed below ~1/min:
 //
 //   xero-draft-bill-to-slack-alert            bill / status=draft       -> Slack
 //   xero-bill-approved-to-subcontractor-email bill / status=authorised  -> Gmail
@@ -650,6 +668,11 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     // would do. The schedule trigger never sets it.
     const dryRun = payload?.dryRun === true || payload?.dry_run === true || payload?.dryRun === "true";
 
+    // A poller deployment hands over ONE invoice (Xero's own shape: InvoiceID,
+    // Type, Status, UpdatedDateUTC, ...). The schedule hands over its own
+    // timestamp object, and a manual run `{}` or `{"dryRun":true}` — both sweep.
+    const polled = firstString(payload?.InvoiceID) ? payload : null;
+
     // The ONLY clock read, inside a step so it is fixed for every retry.
     const clock = await ctx.step("now", async () => {
       const ms = Date.now();
@@ -664,10 +687,15 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     //    An EMPTY read and a FAILED read must not be confused: a failed read
     //    throws out of the step (and retries), because treating it as "empty"
     //    would silently suppress every alert.
-    const probe = await ctx.step("probe-alert-state", async () =>
-      sdk.listTableRecords({ table: ALERT_STATE_TABLE, keyMode: "names", pageSize: 1 }),
-    );
-    const priming = (probe?.data ?? []).length === 0;
+    //
+    //    A poll run never primes: the Table has been populated since 2026-08.
+    let priming = false;
+    if (!polled) {
+      const probe = await ctx.step("probe-alert-state", async () =>
+        sdk.listTableRecords({ table: ALERT_STATE_TABLE, keyMode: "names", pageSize: 1 }),
+      );
+      priming = (probe?.data ?? []).length === 0;
+    }
     if (priming) {
       console.log(
         `PRIMING RUN: the alert-state table (${ALERT_STATE_TABLE}) is empty, so this pass will ` +
@@ -678,7 +706,27 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 2. Read Xero once. Bounded pages, all in ONE step so the page walk is a
     //    single retry unit.
-    const fetched = await fetchWindow(ctx, sinceIso);
+    //    A poll run already holds its one invoice and reads nothing here.
+    const fetched = polled
+      ? { rows: [polled], pages: 0, truncated: false }
+      : await fetchWindow(ctx, sinceIso);
+
+    // A poll run for an invoice not updated inside the sweep window is not news.
+    // Guards the first poll after a poller is (re-)enabled: if Zapier does not
+    // prime its dedupe, it would hand over every existing draft or approved bill
+    // at once, and those older than the window were never recorded in the state
+    // Table — so without this they would all alert (and subcontractors would get
+    // stale approval emails).
+    if (polled) {
+      const updated = toIsoDate(polled.UpdatedDateUTC);
+      if (updated && updated < sinceIso) {
+        console.log(
+          `poll: ${firstString(polled.InvoiceNumber) ?? polled.InvoiceID} last updated ${updated}, before ` +
+            `${sinceIso} — stale (first poll after enabling?), not alerting`,
+        );
+        return { mode: "poll", invoiceId: polled.InvoiceID, outcome: "skipped", reason: "stale", updated };
+      }
+    }
 
     // Deterministic order so per-item step names are stable across retries.
     // The batch itself is memoized by the step above, so an index can never
@@ -956,7 +1004,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 4. Expense claims whose bill is now paid. Runs after the alerts, and
     //    reads only what this pass already fetched — no extra Xero call.
-    const pendingClaims = await ctx.step("read-pending-claim-bills", async () => {
+    //    Sweep only: a poll run carries a draft or approved invoice, never a paid one.
+    let pendingClaims: PendingClaimBill[] = [];
+    if (!polled) pendingClaims = await ctx.step("read-pending-claim-bills", async () => {
       const hit = await sdk.listTableRecords({
         table: CLAIM_BILLS_TABLE,
         keyMode: "names",
@@ -1013,6 +1063,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     }
 
     return {
+      mode: polled ? "poll" : "sweep",
       windowFrom: sinceIso,
       today: clock.today,
       dryRun,

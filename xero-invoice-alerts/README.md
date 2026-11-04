@@ -1,8 +1,28 @@
 # Xero Invoice Alerts
 
-Durable workflow (trigger **`read`** — "Every Day" at 9:00 AM, weekdays — `ScheduleCLIAPI@1.7.0`) that reads Xero
-invoices updated in the last 7 days and sends the three alerts that used to be three separate Zaps,
-deduped through its own state Table.
+Durable workflow, **four deployments of one source**, that sends the three Xero alerts that used to be three
+separate Zaps, deduped through its own state Table, and marks paid expense claims.
+
+> ### ⚡ Since 2026-11: three 15-minute Xero pollers, with the schedule as backstop
+>
+> | Deployment | Trigger | Sends |
+> | --- | --- | --- |
+> | `poll-bill-draft` | Xero `bill`, status=draft, every 15 min | #finance Slack alert |
+> | `poll-bill-authorised` | Xero `bill`, status=authorised, every 15 min | subcontractor approval email (account 490 only) |
+> | `poll-sales-invoice-draft` | Xero `sales_invoice_v2`, status=draft, every 15 min | #finance Slack alert |
+> | `daily-sweep` | Schedule, weekdays 9:00 AM | backstop for all three, plus [expense claims](#expense-claims-marking-paid) |
+>
+> The interval comes from the undocumented trigger param `_zap_polling_interval_minutes: 15` (Zapier support's
+> "temporary workaround", verified 2026-11-04); without it a durable poller runs ~1/min. ~96 Xero calls a day
+> per poller, ~288 in all, against the tenant's 5,000. A poll run carries one invoice through the **same**
+> per-invoice loop and alert-state Table as the sweep, so whichever path sees an invoice first alerts and
+> the other finds it already alerted. Alerts now land within ~15 minutes instead of up to a working day.
+>
+> **First-poll guard:** a polled invoice last updated before the sweep's 7-day window is skipped as stale,
+> so (re-)enabling a poller can't flood #finance or email subcontractors about old bills.
+>
+> If Zapier withdraws the param, delete the three poller deployments; the sweep alone is the pre-2026-11
+> behaviour. The sections below describe the sweep, which is unchanged.
 
 > ### 🔁 One schedule replaced three Xero pollers
 >
@@ -35,7 +55,10 @@ deduped through its own state Table.
 
 ```mermaid
 flowchart TD
-    T["⏰ Schedule: weekdays 9:00 AM<br/><i>0 Xero calls</i>"] --> P["🔎 probe alert-state table<br/><i>free</i>"]
+    PL["⚡ 3 Xero pollers · every 15 min<br/>bill draft · bill authorised · sales invoice draft<br/><i>one invoice per run</i>"] --> AGE{"updated within<br/>7 days?"}
+    AGE -- no --> STALE["⏹ stale — skip<br/><i>first-poll guard</i>"]
+    AGE -- yes --> C
+    T["⏰ Schedule: weekdays 9:00 AM<br/><i>backstop · 0 Xero calls to fire</i>"] --> P["🔎 probe alert-state table<br/><i>free</i>"]
     P --> PR{"table empty?"}
     PR -- "yes" --> PRIME["🌱 PRIMING RUN<br/>record state · send NOTHING<br/><i>mirrors a poller's first poll</i>"]
     PR -- "no" --> Q
