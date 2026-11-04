@@ -35,13 +35,14 @@ const sdk = createZapierSdk();
 //     matches on NAME, so a later re-run would have silently overwritten the
 //     hand-made vendor contact's people.
 //
-//  2. IT IS SCHEDULE-DRIVEN, NOT POLLING. A durable trigger has no
-//     polling-interval field, so migrating `updated_contact` as a polling
-//     durable would have cost ~1,440 Xero calls/day — WORSE than the 96/day the
-//     classic Zap cost at its 15-minute override. Five Xero pollers on this
-//     tenant exhausted Xero's 5,000-calls/day-per-tenant limit on 2026-08-06.
-//     A schedule trigger costs Xero nothing and puts the rate under our control:
-//     ~24 calls/day.
+//  2. IT POLLS EVERY 15 MINUTES — since 2026-11. From 2026-08 to 2026-11 it ran
+//     on a schedule and swept a 7-day window, because a durable poller had no
+//     interval knob and polled ~1/min (~1,440 Xero calls/day; five Xero pollers
+//     exhausted the tenant's 5,000/day on 2026-08-06). The trigger param
+//     `_zap_polling_interval_minutes: 15` (undocumented; Zapier support's
+//     "temporary workaround", verified 2026-11-04) restores the classic Zap's
+//     15-minute cadence, ~96 calls/day. The poller now hands over ONE contact
+//     per run; the old sweep survives as a manual `{"sweep":true}` recovery mode.
 
 // --- Bindings --------------------------------------------------------------
 const XERO_APP_KEY = "XeroCLIAPI";
@@ -78,10 +79,10 @@ const TABLE_XERO_CONTACT_ID = "Xero Contact ID"; // f15
 /** The Notion Companies property this workflow writes. */
 const COMPANY_XERO_ID_PROP = "Xero Contact ID";
 
-// --- Window and limits -----------------------------------------------------
+// --- Window and limits (the manual sweep only) ------------------------------
 
-/** Days of `UpdatedDateUTC` re-read each fire, and the self-heal depth: the Zap
- *  can be down this long without missing a link. */
+/** Days of `UpdatedDateUTC` a `{"sweep":true}` run re-reads: how long the
+ *  poller can have been down and still be fully recovered by one sweep. */
 const OVERLAP_DAYS = 7;
 
 /** Xero returns 100 contacts per page; each page is one API call, so the walk is
@@ -89,8 +90,8 @@ const OVERLAP_DAYS = 7;
  *  is ~12 contacts per 13 days, so one page is the norm by a wide margin. */
 const MAX_PAGES = 3;
 
-/** Blast-radius cap on Notion writes per fire. Nothing is lost when it trips —
- *  the next fire re-reads the same window. */
+/** Blast-radius cap on Notion writes per sweep. Nothing is lost when it trips —
+ *  re-run the sweep. */
 const MAX_LINKS_PER_RUN = 25;
 
 const InputSchema = z.unknown();
@@ -323,16 +324,149 @@ function indexedStep<T>(ctx: DurableContext, id: string, run: () => Promise<T>):
   return ctx.step(id, run);
 }
 
+type LinkOutcome =
+  | { kind: "linked" | "dry-run"; pageId: string }
+  | { kind: "skipped"; reason: string }
+  | { kind: "conflict"; alreadyPointsAt: string }
+  | { kind: "capped" };
+
+/**
+ * Link ONE contact: Table lookup, gates, then Notion write + Table warm.
+ *
+ * Shared by both modes. `tag` keeps step ids unique per contact within a run;
+ * the sweep passes the zero-padded loop index (the same ids it always used, so
+ * in-flight runs replay cleanly), the poller passes "single".
+ */
+async function linkContact(
+  ctx: DurableContext,
+  c: XeroContact,
+  tag: string,
+  dryRun: boolean,
+  capReached: boolean,
+): Promise<LinkOutcome> {
+  const row = await indexedStep(ctx, `find-company-${tag}`, async () => findCompanyRow(c.accountNumber));
+
+  // An Account Number that matches no known company. Almost always a typo, or a
+  // Xero contact whose Account Number means something else entirely — either
+  // way, not ours to act on.
+  if (!row) return { kind: "skipped", reason: "no matching Notion company" };
+
+  const data = (row.data ?? {}) as Record<string, unknown>;
+  const storedContactId = cellValue(data[TABLE_XERO_CONTACT_ID]);
+  const pageId = dashUuid(cellValue(data[TABLE_NOTION_PAGE_ID]));
+
+  if (storedContactId === c.contactId) return { kind: "skipped", reason: "already linked" };
+
+  // The Notion company already points at a DIFFERENT Xero contact. Never
+  // overwrite that: it means either two Xero contacts claim the same company,
+  // or the Account Number is wrong. Both need a human, and silently repointing
+  // the link would hide it. The classic Zap's `f15 isnull` filter declined this
+  // case too, but silently.
+  if (storedContactId) {
+    console.log(
+      `WARNING: ${c.accountNumber} (${c.name}) — the Notion company already carries Xero contact ` +
+        `${storedContactId}, but Xero contact ${c.contactId} also claims it via its Account Number. ` +
+        `Changing NOTHING. Either two Xero contacts name the same company, or one Account Number is ` +
+        `wrong; both need a human.`,
+    );
+    return { kind: "conflict", alreadyPointsAt: storedContactId };
+  }
+
+  if (!pageId) {
+    console.log(
+      `WARNING: ${c.accountNumber} matched a Company IDs row with no ${TABLE_NOTION_PAGE_ID}, so there ` +
+        `is nothing to write to. Check that notion-companies-to-zapier-table is populating that column.`,
+    );
+    return { kind: "skipped", reason: `row has no ${TABLE_NOTION_PAGE_ID}` };
+  }
+
+  if (capReached) return { kind: "capped" };
+
+  if (dryRun) {
+    console.log(
+      `dry run: would link ${c.accountNumber} (${c.name}) -> Notion page ${pageId}, ` +
+        `${COMPANY_XERO_ID_PROP} = ${c.contactId}`,
+    );
+    return { kind: "dry-run", pageId };
+  }
+
+  // Notion FIRST — it is the source of truth, and the other durable's dedupe
+  // guard reads it.
+  await indexedStep(ctx, `write-notion-${tag}`, async () => {
+    await writeXeroIdToNotion(pageId, c.contactId);
+    return { pageId, contactId: c.contactId };
+  });
+
+  // Then warm the Table so the gate closes without waiting on the mirror. Free,
+  // and it cannot diverge — it is the value just written to Notion.
+  await indexedStep(ctx, `warm-table-${tag}`, async () => {
+    await warmTableCache(String(row.id), c.contactId);
+    return { recordId: String(row.id) };
+  });
+
+  console.log(`linked ${c.accountNumber} (${c.name}) -> Notion page ${pageId} = ${c.contactId}`);
+  return { kind: "linked", pageId };
+}
+
+/** The contact a `updated_contact` poll delivered, or null when the payload is
+ *  not one. The trigger hands over Xero's contact object as-is (ContactID,
+ *  AccountNumber, Name, UpdatedDateUTC, ...); a `data` wrapper is tolerated. */
+function polledContact(payload: any): { contactId: string; name: string; accountNumber: string | null; updated: string | null } | null {
+  const c = payload?.ContactID ? payload : payload?.data?.ContactID ? payload.data : null;
+  const contactId = firstString(c?.ContactID);
+  if (!contactId) return null;
+  return {
+    contactId,
+    name: firstString(c?.Name) ?? "",
+    accountNumber: firstString(c?.AccountNumber),
+    updated: firstString(c?.UpdatedDateUTC),
+  };
+}
+
 const workflow = defineDurable<Record<string, unknown>, unknown>(
   "xero-contact-to-notion-company",
   async (ctx, rawInput) => {
     const payload = (InputSchema.parse(normalizeInput(rawInput)) ?? {}) as any;
 
-    /** Compute the whole pass and report what it WOULD write, writing nothing.
-     *  `trigger-workflow <id> --input '{"dryRun":true}'`. Mandatory before any
-     *  publish here: the sibling Zap that wiped a column had been "validated" by
-     *  a run that died before reaching its extraction code. */
+    /** Compute the pass and report what it WOULD write, writing nothing. */
     const dryRun = payload?.dryRun === true || payload?.dry_run === true || payload?.dryRun === "true";
+
+    // ---- Mode 1: the poller delivered one contact (the normal path) ---------
+    const polled = polledContact(payload);
+    if (polled) {
+      // Most contacts carry no Account Number — that field is the deliberate
+      // signal that a human wants this contact linked. Every edit to any
+      // contact fires the poller, so this is the common exit.
+      if (!polled.accountNumber) {
+        console.log(`ignored ${polled.contactId} (${polled.name}): no Account Number`);
+        return { mode: "poll", contactId: polled.contactId, outcome: "ignored", reason: "no Account Number" };
+      }
+      const c: XeroContact = { contactId: polled.contactId, name: polled.name, accountNumber: polled.accountNumber };
+      const outcome = await linkContact(ctx, c, "single", dryRun, false);
+      console.log(
+        `xero-contact-to-notion-company (poll): ${c.accountNumber} (${c.name}, updated ${polled.updated}) -> ${outcome.kind}`,
+      );
+      return { mode: "poll", dryRun, contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, ...outcome };
+    }
+
+    // ---- Mode 2: the windowed sweep, run BY HAND for recovery ---------------
+    //
+    // `trigger-workflow <id> --input '{"sweep":true}'` (add `"dryRun":true` to
+    // write nothing). Re-reads every contact updated in the last OVERLAP_DAYS
+    // and links any the poller missed — after an outage, or if Zapier's dedupe
+    // ever swallows an update again (bug W6ZE93-VMEWP). This was the whole
+    // workflow while it ran on a daily schedule (2026-08 .. 2026-11).
+    //
+    // It must be ASKED for. An empty or unrecognised payload throws rather than
+    // defaulting to a sweep: the poller never sends one, so it is a real event
+    // whose shape we failed to understand (repo rule: never silently drop).
+    const sweep = payload?.sweep === true || payload?.sweep === "true" || dryRun;
+    if (!sweep) {
+      throw new Error(
+        `xero-contact-to-notion-company: payload is neither a Xero contact (no ContactID) nor a ` +
+          `{"sweep":true} instruction — refusing to guess. Got keys: ${JSON.stringify(Object.keys(payload ?? {}))}`,
+      );
+    }
 
     // The ONLY clock read, inside a step so it is fixed for every retry.
     const today = await ctx.step("today", async () => isoDateFromEpochMs(Date.now()));
@@ -342,8 +476,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     //    retry unit.
     const fetched = await fetchWindow(ctx, sinceIso);
 
-    // 2. Only contacts carrying an Account Number are candidates — that field is
-    //    the deliberate signal that a human wants this contact linked.
+    // 2. Only contacts carrying an Account Number are candidates.
     const seen = new Set<string>();
     const candidates: XeroContact[] = [];
     for (const c of fetched.rows) {
@@ -360,12 +493,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     if (fetched.truncated) {
       console.log(
-        `WARNING: hit the ${MAX_PAGES}-page cap, so this run did not cover its whole window. ` +
-          `Nothing is lost — the next fire re-reads it — but if this repeats, raise MAX_PAGES.`,
+        `WARNING: hit the ${MAX_PAGES}-page cap, so this sweep did not cover its whole window. ` +
+          `Re-run it, or raise MAX_PAGES.`,
       );
     }
     console.log(
-      `xero-contact-to-notion-company: window UpdatedDateUTC>=${sinceIso} (today ${today}), ` +
+      `xero-contact-to-notion-company (sweep): window UpdatedDateUTC>=${sinceIso} (today ${today}), ` +
         `${fetched.rows.length} contact(s) read, ${candidates.length} carrying an Account Number` +
         `${dryRun ? " — DRY RUN, nothing will be written" : ""}`,
     );
@@ -379,95 +512,33 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     for (let i = 0; i < candidates.length; i++) {
       const c = candidates[i];
       const tag = String(i).padStart(3, "0");
-
-      const row = await indexedStep(ctx, `find-company-${tag}`, async () => findCompanyRow(c.accountNumber));
-
-      if (!row) {
-        // An Account Number that matches no known company. Almost always a
-        // typo, or a Xero contact whose Account Number means something else
-        // entirely — either way, not ours to act on.
-        skipped.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, reason: "no matching Notion company" });
-        continue;
+      const base = { contactId: c.contactId, name: c.name, accountNumber: c.accountNumber };
+      const outcome = await linkContact(ctx, c, tag, dryRun, written >= MAX_LINKS_PER_RUN);
+      switch (outcome.kind) {
+        case "linked":
+        case "dry-run":
+          if (outcome.kind === "linked") written++;
+          linked.push({ ...base, pageId: outcome.pageId, outcome: outcome.kind });
+          break;
+        case "conflict":
+          conflicts.push({ ...base, alreadyPointsAt: outcome.alreadyPointsAt });
+          break;
+        case "capped":
+          skipped.push({ ...base, reason: "per-run link cap reached" });
+          break;
+        case "skipped":
+          skipped.push({ ...base, reason: outcome.reason });
+          break;
       }
-
-      const data = (row.data ?? {}) as Record<string, unknown>;
-      const storedContactId = cellValue(data[TABLE_XERO_CONTACT_ID]);
-      const pageId = dashUuid(cellValue(data[TABLE_NOTION_PAGE_ID]));
-
-      if (storedContactId === c.contactId) {
-        skipped.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, reason: "already linked" });
-        continue;
-      }
-
-      // The Notion company already points at a DIFFERENT Xero contact. Never
-      // overwrite that: it means either two Xero contacts claim the same
-      // company, or the Account Number is wrong. Both need a human, and
-      // silently repointing the link would hide it. The classic Zap's
-      // `f15 isnull` filter declined this case too, but silently.
-      if (storedContactId) {
-        conflicts.push({
-          contactId: c.contactId,
-          name: c.name,
-          accountNumber: c.accountNumber,
-          alreadyPointsAt: storedContactId,
-        });
-        console.log(
-          `WARNING: ${c.accountNumber} (${c.name}) — the Notion company already carries Xero contact ` +
-            `${storedContactId}, but Xero contact ${c.contactId} also claims it via its Account Number. ` +
-            `Changing NOTHING. Either two Xero contacts name the same company, or one Account Number is ` +
-            `wrong; both need a human.`,
-        );
-        continue;
-      }
-
-      if (!pageId) {
-        skipped.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, reason: `row has no ${TABLE_NOTION_PAGE_ID}` });
-        console.log(
-          `WARNING: ${c.accountNumber} matched a Company IDs row with no ${TABLE_NOTION_PAGE_ID}, so there ` +
-            `is nothing to write to. Check that notion-companies-to-zapier-table is populating that column.`,
-        );
-        continue;
-      }
-
-      if (written >= MAX_LINKS_PER_RUN) {
-        skipped.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, reason: "per-run link cap reached" });
-        continue;
-      }
-
-      if (dryRun) {
-        console.log(
-          `dry run: would link ${c.accountNumber} (${c.name}) -> Notion page ${pageId}, ` +
-            `${COMPANY_XERO_ID_PROP} = ${c.contactId}`,
-        );
-        linked.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, pageId, outcome: "dry-run" });
-        continue;
-      }
-
-      // Notion FIRST — it is the source of truth, and the other durable's
-      // dedupe guard reads it.
-      await indexedStep(ctx, `write-notion-${tag}`, async () => {
-        await writeXeroIdToNotion(pageId, c.contactId);
-        return { pageId, contactId: c.contactId };
-      });
-
-      // Then warm the Table so the gate closes without waiting on the mirror.
-      // Free, and it cannot diverge — it is the value just written to Notion.
-      await indexedStep(ctx, `warm-table-${tag}`, async () => {
-        await warmTableCache(String(row.id), c.contactId);
-        return { recordId: String(row.id) };
-      });
-
-      written++;
-      linked.push({ contactId: c.contactId, name: c.name, accountNumber: c.accountNumber, pageId, outcome: "linked" });
-      console.log(`linked ${c.accountNumber} (${c.name}) -> Notion page ${pageId} = ${c.contactId}`);
     }
 
     console.log(
-      `xero-contact-to-notion-company done: ${linked.length} linked, ${skipped.length} skipped, ` +
+      `xero-contact-to-notion-company sweep done: ${linked.length} linked, ${skipped.length} skipped, ` +
         `${conflicts.length} conflict(s)`,
     );
 
     return {
+      mode: "sweep",
       dryRun,
       windowFrom: sinceIso,
       windowTo: today,

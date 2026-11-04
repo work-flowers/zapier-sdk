@@ -6,15 +6,16 @@
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "ScheduleCLIAPI@1.7.0",
-    "action": "everyDay",
-    "authentication_id": null,
-    "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. Xero and Notion are bound as connection ALIASES because both are called from the workflow body.",
-    "params": { "hod": "6:30 AM", "weekends": "yes" },
-    "params_note": "`everyDay` params: `hod` (required) plus optional `weekends`/`timezone_override` — NOT `moh`, which is everyHour's. `hod` is in the account timezone (Asia/Singapore). Verify `triggers[0].status == \"active\"` after every publish.",
-    "cadence_note": "Daily at 6:30 AM since 2026-10-31; was everyHour. From 2026-12-01 every successful durable run costs at least 1 task and each run here also makes one Xero read, so hourly cost ~720 tasks a month for ~12 contacts per 13 days. A link now lands within a day of the Account Number being set. Polling is still not an option: a durable trigger has no interval field (checked against @zapier/zapier-sdk 0.119.0 on 2026-10-31), so a Xero poller runs at ~1/min, ~1,440 Xero calls a day against the tenant's 5,000.",
+    "selected_api": "XeroCLIAPI@2.22.1",
+    "action": "updated_contact",
+    "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "authentication_note": "The work.flowers Xero connection — the same one bound as the `xero_wf` alias, which the manual sweep still uses.",
+    "params": { "organization": "62699a8c-3351-40e8-9265-bdca5e037b03", "_zap_polling_interval_minutes": 15 },
+    "params_note": "`organization` is the work.flowers tenant. `_zap_polling_interval_minutes` is an UNDOCUMENTED Zapier key, offered by Zapier support on 2026-11-04 as a 'temporary workaround'; without it a durable poller runs ~1/min (~1,440 Xero calls/day against the tenant's 5,000). Verified 2026-11-04 on a Drive poller (15 → polls 15–17 min apart, files batched per poll). It must be a NUMBER. scripts/publish-changed-zaps.mjs refuses a Xero polling trigger without it. If Zapier ever drops support, the fallback is the schedule trigger this replaced (git history, before PR for 2026-11).",
+    "cadence_note": "Polls every 15 minutes since 2026-11 (~96 Xero calls/day, the classic Zap's old rate). Was a daily 6:30 AM schedule (2026-10-31) and hourly before that, sweeping a 7-day window. Polls that find nothing cost no Zapier task; each updated contact is one run (≥1 task from 2026-12-01) — ~12 contacts per 13 days observed, so about the same task count as the daily schedule, with links landing in ≤15 min instead of ≤1 day.",
     "status": "active",
-    "manual_run_note": "`trigger-workflow 019fdb77-594e-7426-a1f2-9c0b153d986c --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD write, writing nothing. Run it before every publish, and confirm the run reached the decision logic rather than stopping at the fetch."
+    "dedupe_note": "The main case is a contact created by hand and given its Account Number LATER — an UPDATE to a contact that already fired once. That only reaches us if Zapier re-fires `updated_contact` for an already-seen ContactID (bug W6ZE93-VMEWP, fixed for durable app triggers 2026-10-28 but never tested on Xero). Verify after cutover by setting an Account Number on an existing contact; if it does not fire, revert to the schedule.",
+    "manual_run_note": "`trigger-workflow 019fdb77-594e-7426-a1f2-9c0b153d986c --input '{\"sweep\":true,\"dryRun\":true}'` runs the old 7-day sweep and reports what it WOULD write, writing nothing; drop dryRun to apply it. Use after an outage or if a link was missed. An empty `{}` now THROWS rather than sweeping — the poller never sends one."
   },
   "connections": {
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
@@ -34,7 +35,7 @@
     "the_bug_they_had": "They wrote the ContactID into [Table] Company IDs (f15) and left the Notion property empty. (1) THE LINK WAS TEMPORARY: notion-companies-to-zapier-table is a true mirror — its source comment reads 'empty in Notion clears the table value' — and `Xero Contact ID` is in its mirrored set, so the next edit of that company wiped f15 back out. (2) THE OTHER DURABLE'S DEDUPE GUARD STAYED BLIND: it reads `Xero Contact ID` off the Notion page, so a later Companies-button or Deals-stage trigger would re-run the upsert, and Xero matches contacts on NAME — silently overwriting the hand-made vendor contact's people.",
     "action_required": "TURN BOTH OFF in the Zapier UI. While enabled they keep writing f15 directly (reintroducing the temporary-link bug) and keep costing ~192 Xero calls/day. Classic Zaps are exposed by neither the SDK CLI nor the MCP connector, so this is not machine-verifiable from here."
   },
-  "why_schedule_not_polling": "Migrating `updated_contact` as a POLLING durable would have been WORSE than the classic Zap: a durable trigger has no polling-interval field (the --trigger payload accepts only selected_api / action / authentication_id / params, verified across all 43 live triggers in the account), so it would run at the account default — ~1,440 Xero calls/day versus the 96/day the classic Zap cost at its 15-minute override. A schedule trigger costs Xero nothing and puts the rate under our control: ~24/day.",
+  "why_schedule_not_polling_2026_08": "HISTORICAL (superseded 2026-11 by _zap_polling_interval_minutes — see trigger.params_note). Migrating `updated_contact` as a POLLING durable would have been WORSE than the classic Zap: a durable trigger has no polling-interval field (the --trigger payload accepts only selected_api / action / authentication_id / params, verified across all 43 live triggers in the account), so it would run at the account default — ~1,440 Xero calls/day versus the 96/day the classic Zap cost at its 15-minute override. A schedule trigger costs Xero nothing and puts the rate under our control: ~24/day.",
   "tables": {
     "company_ids": {
       "id": "01JM8PH8YM93A482M8BFZ6WKW6",
@@ -51,11 +52,11 @@
   },
   "safety": {
     "changed_link_never_applied": "If the Notion company already carries a DIFFERENT Xero contact id, the workflow changes nothing and reports a conflict with a WARNING naming both ids. Either two Xero contacts claim the same company or an Account Number is wrong; both need a human, and silently repointing the link would hide it. The classic Zap's `f15 isnull` filter declined this case too, but silently.",
-    "blast_radius": "MAX_LINKS_PER_RUN (25) caps Notion writes per fire. Nothing is lost when it trips — the next fire re-reads the same window.",
-    "self_healing": "The 7-day UpdatedDateUTC overlap means a failed run, or an hour spent disabled, is simply re-read next fire."
+    "blast_radius": "A poll run writes at most one link. MAX_LINKS_PER_RUN (25) caps Notion writes per manual sweep; nothing is lost when it trips — re-run the sweep.",
+    "self_healing": "No longer automatic: a poll run that fails is not retried by a later poll. Recovery is the manual {\"sweep\":true} run, which re-reads 7 days of UpdatedDateUTC."
   },
   "determinism_note": "The body runs in GUARDED mode, where `Date` is a Proxy whose construct trap throws DeterminismViolation BEFORE inspecting its arguments — so even a deterministic `new Date(Date.UTC(y,m,d))` is rejected as hard as a clock read. All date arithmetic is integer maths; the ONLY clock read is inside ctx.step(\"today\"). Verified by grep before publish.",
-  "description": "Daily schedule (6:30 AM) -> GET /Contacts where UpdatedDateUTC >= today-7d (summaryOnly) -> for each contact carrying an Account Number, resolve it against [Table] Company IDs on Notion Company ID -> if the company has no Xero Contact ID yet, PATCH it onto the Notion Company page and warm the Table's copy. Declines a changed link rather than applying it. Replaces two functionally identical classic Zaps that wrote to the Table instead of Notion.",
+  "description": "Xero New or Updated Contact poller (every 15 min) -> if the contact carries an Account Number, resolve it against [Table] Company IDs on Notion Company ID -> if the company has no Xero Contact ID yet, PATCH it onto the Notion Company page and warm the Table's copy. Declines a changed link rather than applying it. Replaces two functionally identical classic Zaps that wrote to the Table instead of Notion.",
   "version_history": [
     {
       "id": "019fdb77-9560-7e68-ad83-c1199510cc61",
