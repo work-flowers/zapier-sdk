@@ -27,10 +27,29 @@ An event usually exists, with guests, before Dennis is added as a host. By then 
 So after recording the event, this Zap:
 
 1. Reads the event through the integration's `new_event` trigger, called as a **read action** with `event_ids: [id]` and `lookback_days: 30`. The integration's polling triggers are exposed as `read` actions to `sdk.runAction`. If it isn't on the Notion SG calendar (a host invite from workFlowers', Zapier's or Lenny's calendar), the key can't see it: the row is marked `not-on-calendar` and the run stops.
-2. Resolves the two target workflows **by name** with `listWorkflows`, refusing on anything but exactly one match. They shipped in the same PR as this Zap, so their ids didn't exist to hardcode.
+2. Resolves the two target workflows, and this one, **by name** with `listWorkflows`, refusing on anything but exactly one match. They shipped in the same PR as this Zap, so their ids didn't exist to hardcode.
 3. Fires `luma-hosted-event-to-notion` with the event (`source: "backfill"`), then waits 120 s so the Event page exists before any guest looks for it.
 4. Reads every guest through `new_or_updated_guest` (same read-action trick) and fires `luma-hosted-guest-to-event-attendance` once per guest who is **not invited-only**, **one at a time, 20 s apart**. Every Attendance create appends to the Event page's two-way relation, and creates that land together drop each other's links. The first backfill, in batches of 10, left only 9 of 23 rows linked. See the guest workflow's README.
-5. Sets `Backfill Status` to `done: N guests fired, M invited skipped`.
+5. Fires at most **75 guests per run**. If more are left, it sets `Backfill Status` to `pending: N guests fired, M queued for run K` and fires a **continuation run** of this same workflow carrying the remaining guest ids (see below).
+6. When the queue is empty, sets `Backfill Status` to `done: N guests fired, M invited skipped`.
+
+### Long guest lists: batches and continuation runs
+
+**A durable run has a wall-clock limit, and `ctx.wait` counts toward it.** On 2026-11-04 the backfill for *NotionSG SME Series: Is Your Business Finance Ready?* (`evt-9hO0MFRkAd3yKfi`, 101 non-invited guests of 2,367) was stopped with `wall_clock_limit_exceeded` after 41m48s, having fired 98 guests. Zapier said "Retrying this run will not help", and it couldn't: the row stayed `pending`, so a re-run would start again from guest 0 and die at the same point. Zapier also sent a *Needs review* email offering an AI-diagnosed fix in its editor. Don't accept those here, because an editor draft blocks the repo's publish pipeline.
+
+So each run now fires at most `GUEST_BATCH_SIZE` (75) guests, about 27 minutes of spacing plus the 2-minute event head start, and hands the rest on. It calls `triggerWorkflow` on itself with:
+
+```json
+{ "luma_backfill_continuation": {
+    "event_id": "evt-…", "row_id": "<Table record id>",
+    "guest_ids": ["gst-…", "…"], "fired_before": 75, "invited_skipped": 2266, "hop": 1 } }
+```
+
+A continuation run waits 20 s to keep the spacing across the hand-off. It re-reads the event's guests and picks the queued ones by bare `guest_id`. The composite `id` (`gst-…_approved_none`) embeds the approval status and can change between runs. Then it does the same batch-or-hand-on step. The event is not re-fired. A queued guest no longer on the event is logged and dropped. The chain terminates because every hop takes at least one guest off a finite queue, and it **throws** past 40 hops (3,000 guests). A malformed continuation payload also throws, never skips.
+
+The `pending:` prefix is deliberate. If a new manager email for the same event arrives mid-chain, it restarts the backfill from guest 0. That only repeats work, because both targets upsert.
+
+`npm test` (offline, Node ≥ 23) drives the whole workflow body against a fake Table, Luma read and `triggerWorkflow`. It covers the 101-guest case split 75 + 26, a 3-run chain that fires every guest exactly once, the hop cap, vanished guests, malformed continuations and empty pings. `npm run build` type-checks.
 
 `sdk.triggerWorkflow` is **not** subject to the trigger dedupe: two fires with the same top-level `id` both ran (verified 2026-10-15 on a probe). Both targets are idempotent upserts, so a guest that both the backfill and the live trigger deliver ends up in the same records. The one exception is a narrow race that could produce a second Attendance row if both runs land at the same moment (see "Concurrency" in the shared rules).
 
@@ -52,8 +71,13 @@ flowchart TD
     G --> H["triggerWorkflow → luma-hosted-event-to-notion"]
     H --> W["wait 120 s"]
     W --> I["read new_or_updated_guest (event_ids=[id])<br/>keep non-invited or checked-in"]
-    I --> J["triggerWorkflow → luma-hosted-guest-to-event-attendance<br/>one guest at a time, 20 s apart"]
-    J --> K["Backfill Status = done: N fired, M invited skipped"]
+    I --> J["triggerWorkflow → luma-hosted-guest-to-event-attendance<br/>one guest at a time, 20 s apart, max 75 per run"]
+    J -->|"queue empty"| K["Backfill Status = done: N fired, M invited skipped"]
+    J -->|"guests left"| P["Backfill Status = pending: N fired, M queued<br/>triggerWorkflow → this workflow<br/>{luma_backfill_continuation: remaining gst- ids}"]
+    P -.->|"next run"| CR{"continuation payload"}
+    CR -->|"malformed or hop > 40"| X2["Throw"]
+    CR -->|"valid"| CW["wait 20 s, re-read guests,<br/>pick queued ids"]
+    CW --> J
 ```
 
 ## Verified (2026-10-15)
@@ -101,5 +125,6 @@ Two consequences:
 
 ## Before touching it
 
-- The workflow **names** `luma-hosted-event-to-notion` and `luma-hosted-guest-to-event-attendance` are load-bearing: renaming either breaks the backfill (it throws, so the failure is loud). Once both ids are stable they can be pinned in place of the name lookup.
+- The workflow **names** `luma-hosted-event-to-notion`, `luma-hosted-guest-to-event-attendance` and `luma-manager-email-to-table` (its own, for continuation runs) are load-bearing: renaming any of them breaks the backfill (it throws, so the failure is loud).
+- Keep `GUEST_BATCH_SIZE` × ~21 s well under the run's wall-clock limit (about 40 minutes, measured 2026-11-04), together with the 120 s event head start. Raising `GUEST_SPACING_SECONDS` means lowering the batch size. Once both ids are stable they can be pinned in place of the name lookup.
 - `isBackfillGuest` mirrors `isInvitedOnly` in the guest workflow. Keep them in step; the tests assert that they select the same 23 of 254 real guests.
