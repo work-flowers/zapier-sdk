@@ -469,41 +469,70 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
      */
     const dryRun = payload?.dryRun === true || payload?.dry_run === true || payload?.dryRun === "true";
 
-    // The ONLY clock read, and it is inside a step so its value is fixed for
-    // every retry of this run.
-    const today = await ctx.step("today", async () => isoDateFromEpochMs(Date.now()));
+    // ---- Which deployment fired? ------------------------------------------
+    //
+    // Two deployments publish this one source (zap.json `deployments[]`):
+    //
+    //  - "new-bank-transaction-poller": Xero's `bank_transaction` trigger,
+    //    polled every 15 minutes (`_zap_polling_interval_minutes`). It hands
+    //    over ONE new transaction, in the same shape the original 2025 poller
+    //    delivered (DateString, BankTransactionID, lowercase `id`), which
+    //    `extractSnapshot` was written for. It upserts that one row, so a
+    //    payment lands in the mirror within ~15 minutes — which is what
+    //    `drive-invoice-to-xero` needs to see an invoice as already paid.
+    //  - "daily-sweep": the schedule. It re-reads a 7-day window and repairs
+    //    what Xero restates after creation (Reference at reconciliation,
+    //    has_attachments), which a "new transaction" trigger never re-delivers.
+    //
+    // Both funnel into the same upsert loop below, which converges on the
+    // earliest ULID if the two ever race on one transaction.
+    const polled = firstString(payload?.BankTransactionID) ? payload : null;
 
-    // 1. How far back to read. One free Table read: no filters, newest first,
-    //    a single row. Free, so it costs nothing to be precise.
-    const newestRow = await ctx.step("latest-mirrored-row", async () =>
-      sdk.listTableRecords({
-        table: TABLE_ID,
-        keyMode: "names",
-        sort: { fieldKey: "date", direction: "desc" },
-        pageSize: 1,
-      }),
-    );
-    const latestRowDate = toIsoDate((newestRow?.data ?? [])[0]?.data?.date);
+    let today: string | null = null;
+    let sinceIso: string | null = null;
+    let latestRowDate: string | null = null;
+    let fetch: { rows: any[]; pages: number; truncated: boolean };
 
-    // An unreadable newest row is a harder fault than a stale one — an empty
-    // table, a renamed `date` column and a failed read are indistinguishable
-    // from here — so fall back to a fixed lookback rather than trusting it.
-    const sinceIso =
-      latestRowDate == null
-        ? shiftIsoDate(today, -INITIAL_LOOKBACK_DAYS)
-        : shiftIsoDate(latestRowDate, -OVERLAP_DAYS);
-    if (latestRowDate == null) {
-      console.log(
-        `WARNING: no newest row could be read from table ${TABLE_ID} — falling back to a ` +
-          `${INITIAL_LOOKBACK_DAYS}-day lookback from ${today}. If this repeats, check the ` +
-          `\`date\` column still exists and the table is not empty.`,
+    if (polled) {
+      fetch = { rows: [polled], pages: 0, truncated: false };
+      console.log(`poll: one new bank transaction ${polled.BankTransactionID}${dryRun ? " — DRY RUN" : ""}`);
+    } else {
+      // The ONLY clock read, and it is inside a step so its value is fixed for
+      // every retry of this run.
+      today = await ctx.step("today", async () => isoDateFromEpochMs(Date.now()));
+
+      // 1. How far back to read. One free Table read: no filters, newest first,
+      //    a single row. Free, so it costs nothing to be precise.
+      const newestRow = await ctx.step("latest-mirrored-row", async () =>
+        sdk.listTableRecords({
+          table: TABLE_ID,
+          keyMode: "names",
+          sort: { fieldKey: "date", direction: "desc" },
+          pageSize: 1,
+        }),
       );
-    }
-    console.log(`syncing Xero bank transactions dated ${sinceIso}..${today} (newest mirrored row: ${latestRowDate ?? "none"})`);
+      latestRowDate = toIsoDate((newestRow?.data ?? [])[0]?.data?.date);
 
-    // 2. Read Xero. Bounded pages, all inside ONE step so the whole fetch is a
-    //    single retry unit and a partial page walk is never half-applied.
-    const fetch = await fetchWindow(ctx, sinceIso);
+      // An unreadable newest row is a harder fault than a stale one — an empty
+      // table, a renamed `date` column and a failed read are indistinguishable
+      // from here — so fall back to a fixed lookback rather than trusting it.
+      sinceIso =
+        latestRowDate == null
+          ? shiftIsoDate(today, -INITIAL_LOOKBACK_DAYS)
+          : shiftIsoDate(latestRowDate, -OVERLAP_DAYS);
+      if (latestRowDate == null) {
+        console.log(
+          `WARNING: no newest row could be read from table ${TABLE_ID} — falling back to a ` +
+            `${INITIAL_LOOKBACK_DAYS}-day lookback from ${today}. If this repeats, check the ` +
+            `\`date\` column still exists and the table is not empty.`,
+        );
+      }
+      console.log(`syncing Xero bank transactions dated ${sinceIso}..${today} (newest mirrored row: ${latestRowDate ?? "none"})`);
+
+      // 2. Read Xero. Bounded pages, all inside ONE step so the whole fetch is a
+      //    single retry unit and a partial page walk is never half-applied.
+      fetch = await fetchWindow(ctx, sinceIso);
+    }
 
     // Deterministic order, so the per-item step names below are stable across
     // retries regardless of what order Xero returned things in.
@@ -661,12 +690,13 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     }
 
     console.log(
-      `sync complete for ${sinceIso}..${today}: ${created} created, ${updated} updated, ` +
+      `${polled ? "poll" : `sync ${sinceIso}..${today}`} complete: ${created} created, ${updated} updated, ` +
         `${unchanged} unchanged, ${duplicatesRemoved} duplicate row(s) removed ` +
         `(${fetch.pages} Xero page read${fetch.pages === 1 ? "" : "s"})`,
     );
 
     return {
+      mode: polled ? "poll" : "sweep",
       dryRun,
       windowFrom: sinceIso,
       windowTo: today,

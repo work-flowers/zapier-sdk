@@ -1,26 +1,112 @@
 {
   "name": "xero-invoice-alerts",
-  "workflow_id": "019fd4cc-6d23-7aa4-964a-ddc6cf489a1b",
-  "current_version_id": "01a18fad-c569-75ad-9c43-3766c75299a8",
-  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfoEGVl7ZLu-3M2wCex1hA",
-  "enabled": true,
   "is_private": false,
-  "trigger": {
-    "selected_api": "ScheduleCLIAPI@1.7.0",
-    "action": "everyDay",
-    "authentication_id": null,
-    "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. Xero, Slack and Gmail are all bound as connection ALIASES instead, because every one of them is called from the workflow body.",
-    "params": {
-      "hod": "9:00 AM",
-      "weekends": "no"
+  "deployments": [
+    {
+      "name": "daily-sweep",
+      "workflow_id": "019fd4cc-6d23-7aa4-964a-ddc6cf489a1b",
+      "current_version_id": "01a18fad-c569-75ad-9c43-3766c75299a8",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfoEGVl7ZLu-3M2wCex1hA",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "ScheduleCLIAPI@1.7.0",
+        "action": "everyDay",
+        "authentication_id": null,
+        "authentication_note": "NONE — `get-app ScheduleCLIAPI` reports `auth_type: \"\"`, so Schedule by Zapier needs no connection. Xero, Slack and Gmail are all bound as connection ALIASES instead, because every one of them is called from the workflow body.",
+        "params": {
+          "hod": "9:00 AM",
+          "weekends": "no"
+        },
+        "params_note": "`everyDay` params: `hod` (required) plus optional `weekends`/`timezone_override` — NOT `moh`, which is everyHour's. `hod` is in the account timezone (Asia/Singapore). Verify `triggers[0].status == \"active\"` after every publish.",
+        "cadence_republish_note": "The cadence change merged in PR #279 on 2026-10-31, but that publish run stopped on an analyzer refusal in xero-bank-transactions-to-zapier-table before reaching this Zap. This note is what makes the follow-up PR re-offer the trigger change (a zap.json edit is a trigger candidate).",
+        "cadence_note": "Daily at 9:00 AM on weekdays since 2026-10-31; was everyHour, weekends included. From 2026-12-01 every successful durable run costs at least 1 task and each fire also makes at least one Xero read, so hourly cost ~720+ tasks a month. Weekdays-daily is ~22. An alert now waits up to a working day (Friday 9 AM to Monday 9 AM over a weekend). The 7-day window still covers the weekend gap. Wanted next: three fires a weekday (9 AM, 1 PM, 5 PM) as extra deployments of this source, which needs scripts/publish-changed-zaps.mjs to create a pending deployment inside deployments[]. SUPERSEDED 2026-11: polling IS now an option — the trigger param `_zap_polling_interval_minutes` (verified 2026-11-04) sets the interval, and the poller deployments in deployments[] use 15 minutes. This schedule stays as the backstop/repair pass. updated_invoice_v2 is push but delivers sales invoices only, so it cannot carry the two bill channels.",
+        "status": "active",
+        "trigger_note": "SCHEDULE trigger — daily at 9:00 AM account time, weekdays only (hourly until 2026-10-31; see cadence_note). `details.webhook_url` is https://hooks.zapier.com/hooks/standard/20495893/855338bda2e7439cb065eb211945e43b/ which is Zapier's OWN plumbing for the schedule subscription, NOT a catch URL for any external service to call. Nothing external should ever POST here.",
+        "manual_run_note": "`trigger-workflow 019fd4cc-6d23-7aa4-964a-ddc6cf489a1b --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD send, sending nothing and writing no state. That is the safe way to inspect this Zap against live Xero data."
+      },
+      "created_at": "2026-08-06T01:59:54.917Z",
+      "version_created_at": "2026-10-31T01:58:14.296Z",
+      "description": "Schedule, weekdays 9 AM: the 7-day window read. Since 2026-11 a BACKSTOP for the three pollers below (shared alert-state Table, so nothing alerts twice) and still the only path that marks expense claims Paid."
     },
-    "params_note": "`everyDay` params: `hod` (required) plus optional `weekends`/`timezone_override` — NOT `moh`, which is everyHour's. `hod` is in the account timezone (Asia/Singapore). Verify `triggers[0].status == \"active\"` after every publish.",
-    "cadence_republish_note": "The cadence change merged in PR #279 on 2026-10-31, but that publish run stopped on an analyzer refusal in xero-bank-transactions-to-zapier-table before reaching this Zap. This note is what makes the follow-up PR re-offer the trigger change (a zap.json edit is a trigger candidate).",
-    "cadence_note": "Daily at 9:00 AM on weekdays since 2026-10-31; was everyHour, weekends included. From 2026-12-01 every successful durable run costs at least 1 task and each fire also makes at least one Xero read, so hourly cost ~720+ tasks a month. Weekdays-daily is ~22. An alert now waits up to a working day (Friday 9 AM to Monday 9 AM over a weekend). The 7-day window still covers the weekend gap. Wanted next: three fires a weekday (9 AM, 1 PM, 5 PM) as extra deployments of this source, which needs scripts/publish-changed-zaps.mjs to create a pending deployment inside deployments[]. Polling is still not an option: a durable trigger has no interval field (checked against @zapier/zapier-sdk 0.119.0 on 2026-10-31), so a Xero poller runs at ~1/min, ~1,440 Xero calls a day against the tenant's 5,000. updated_invoice_v2 is push but delivers sales invoices only, so it cannot carry the two bill channels.",
-    "status": "active",
-    "trigger_note": "SCHEDULE trigger — daily at 9:00 AM account time, weekdays only (hourly until 2026-10-31; see cadence_note). `details.webhook_url` is https://hooks.zapier.com/hooks/standard/20495893/855338bda2e7439cb065eb211945e43b/ which is Zapier's OWN plumbing for the schedule subscription, NOT a catch URL for any external service to call. Nothing external should ever POST here.",
-    "manual_run_note": "`trigger-workflow 019fd4cc-6d23-7aa4-964a-ddc6cf489a1b --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD send, sending nothing and writing no state. That is the safe way to inspect this Zap against live Xero data."
-  },
+    {
+      "name": "poll-bill-draft",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "XeroCLIAPI@2.22.1",
+        "action": "bill",
+        "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+        "params": {
+          "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+          "status": "draft",
+          "_zap_polling_interval_minutes": 15
+        },
+        "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
+      },
+      "version_created_at": null,
+      "description": "Xero New Bill (status=draft), polled every 15 min → Slack #finance alert, via the shared per-invoice loop and alert-state Table.",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "xero-invoice-alerts · poll bill draft",
+        "description": "Polls Xero for new DRAFT bills every 15 minutes and posts a #finance Slack alert. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "enable_on_publish": true
+      }
+    },
+    {
+      "name": "poll-bill-authorised",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "XeroCLIAPI@2.22.1",
+        "action": "bill",
+        "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+        "params": {
+          "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+          "status": "authorised",
+          "_zap_polling_interval_minutes": 15
+        },
+        "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
+      },
+      "version_created_at": null,
+      "description": "Xero New Bill (status=authorised), polled every 15 min → approval email to the subcontractor (bills with a line on account 490 only).",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "xero-invoice-alerts · poll bill approved",
+        "description": "Polls Xero for newly AUTHORISED bills every 15 minutes and emails subcontractors their approval confirmation. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "enable_on_publish": true
+      }
+    },
+    {
+      "name": "poll-sales-invoice-draft",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "XeroCLIAPI@2.22.1",
+        "action": "sales_invoice_v2",
+        "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+        "params": {
+          "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+          "status": "draft",
+          "_zap_polling_interval_minutes": 15
+        },
+        "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
+      },
+      "version_created_at": null,
+      "description": "Xero New Sales Invoice (status=draft), polled every 15 min → Slack #finance alert.",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "xero-invoice-alerts · poll sales invoice draft",
+        "description": "Polls Xero for new DRAFT sales invoices every 15 minutes and posts a #finance Slack alert. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "enable_on_publish": true
+      }
+    }
+  ],
   "connections": {
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
@@ -111,8 +197,6 @@
     }
   ],
   "pending_verification": "No fire has yet completed a successful Xero read. What to watch for on the first one after ~10:11 UTC 2026-08-06: (1) `priming: true` and `alertsSent: 0` — a priming run must not send anything; (2) rows appearing in table 01KZACA2ZA3XJWWGSMNEC381ZE with `last_alerted_status` set to each invoice's current status; (3) on the NEXT fire, `priming: false` and `alertsSent: 0` again, because nothing has changed since priming. A non-zero `alertsSent` on either of the first two fires means the dedupe rule is wrong and should be investigated before more alerts go out. Also confirm `coverageIncomplete: false` — if true, the window returned more than MAX_PAGES/MAX_INVOICES and the caps need revisiting.",
-  "created_at": "2026-08-06T01:59:54.917Z",
-  "version_created_at": "2026-10-31T01:58:14.296Z",
   "claim_paid": {
     "table": "01M4BBZ4ET36BQ29EAXJ5833JZ (Expense Claim Bills), owned by expense-claim-to-xero-bill",
     "note": "After the alert loop, read the Table's `pending` rows (free) and match them against the invoices THIS pass already fetched. An ACCPAY bill now PAID sets its Notion claim's Status to 'Paid' and the row to `paid` (paid_at = Xero FullyPaidOnDate). Zero extra Xero calls. Exists because Xero has no push trigger for a paid bill: updated_invoice_v2 delivers sales invoices only (verified 2026-10-07: 18 runs of xero-invoice-paid-to-gmail-confirmation, all ACCREC, over a period in which ~20 bills were paid). A Notion refusal closes the row as `error` and fails the run once. Limit: a bill paid while this Zap is down for longer than the 7-day window is never seen; set that claim to Paid by hand.",

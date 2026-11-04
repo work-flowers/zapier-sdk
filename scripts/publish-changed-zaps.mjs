@@ -386,12 +386,41 @@ export function sameConnections(a, b) {
 // version to read metadata off — so zap.json is the only source of truth, and a
 // silent default (wrong visibility, a dropped trigger) is unrecoverable or
 // invisible. Every field is therefore required to be explicit.
-function readCreateSpec(dir) {
+//
+// A multi-deployment dir can also gain a NEW deployment: a `deployments[]` entry
+// with no workflow_id and its own `deploy` block. Its fields come from the entry,
+// falling back to the top level for what the dir shares (visibility,
+// connections, dependencies, durable version, app-versions).
+export function pendingDeploymentEntry(zap, depName) {
+  if (!Array.isArray(zap.deployments)) return null;
+  const hits = zap.deployments.filter(
+    (x) => !x.workflow_id && x?.deploy?.state === "pending-create" && (x.name ?? null) === (depName ?? null),
+  );
+  if (hits.length !== 1) {
+    throw new Error(
+      `expected exactly one pending-create deployments[] entry named ${JSON.stringify(depName)}, found ${hits.length}`,
+    );
+  }
+  return hits[0];
+}
+
+export function readCreateSpec(dir, dep) {
   const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
-  const d = zap.deploy;
+  let entry = null;
+  if (Array.isArray(zap.deployments)) {
+    try {
+      entry = pendingDeploymentEntry(zap, dep?.name);
+    } catch (err) {
+      fail(`${dir}: ${err.message}`);
+    }
+    if (!entry.name) fail(`${dir}: a new deployments[] entry needs a unique "name" — the sync-back finds it by name`);
+  }
+  const src = entry ?? zap;
+  const d = src.deploy;
   if (!d || d.state !== "pending-create") {
     fail(`${dir}: expected zap.json deploy.state === "pending-create"`);
   }
+  const isPrivate = src.is_private ?? zap.is_private;
   const need = (value, what) => {
     if (value === undefined || value === null || value === "") fail(`${dir}: zap.json is missing ${what}`);
     return value;
@@ -399,19 +428,19 @@ function readCreateSpec(dir) {
 
   // Visibility is settable ONLY at create time (repo rule 7), so it must be
   // stated rather than defaulted.
-  if (typeof zap.is_private !== "boolean") {
+  if (typeof isPrivate !== "boolean") {
     fail(`${dir}: zap.json must state "is_private" (true/false) — visibility cannot be changed after create`);
   }
   // Likewise the start mode: publishing without --trigger silently unclaims a
   // trigger and the Zap never fires, so "no trigger" has to be deliberate.
-  if (zap.trigger === undefined) {
+  if (src.trigger === undefined) {
     fail(`${dir}: zap.json must state "trigger" (a trigger config, or null for a manual workflow)`);
   }
   if (typeof d.enable_on_publish !== "boolean") {
     fail(`${dir}: zap.json must state deploy.enable_on_publish (true/false)`);
   }
 
-  const trigger = validateTrigger(dir, zap.trigger);
+  const trigger = validateTrigger(dir, src.trigger);
 
   // The catch URL is READ BACK after publishing and written by replacing a
   // literal `"webhook_url": null`, so the key has to be there before the
@@ -431,28 +460,30 @@ function readCreateSpec(dir) {
 
   // publish wants { alias: { connectionId } }; zap.json stores { alias: id }.
   const connections = {};
-  for (const [alias, value] of Object.entries(zap.connections || {})) {
-    if (typeof value !== "string") continue; // non-connection notes live here too
-    connections[alias] = { connectionId: value };
+  for (const [alias, value] of Object.entries(src.connections ?? zap.connections ?? {})) {
+    // { alias: id }, or { alias: { connectionId, ...notes } } as whatsapp-slack-bridge stores it;
+    // anything else is a note.
+    const id = typeof value === "string" ? value : typeof value?.connectionId === "string" ? value.connectionId : null;
+    if (id) connections[alias] = { connectionId: id };
   }
 
   return {
-    workflowName: d.workflow_name || zap.name || dir,
+    workflowName: d.workflow_name || src.name || zap.name || dir,
     description: need(d.description, "deploy.description"),
-    isPrivate: zap.is_private,
+    isPrivate,
     enableOnPublish: d.enable_on_publish,
     sourceFileKeys: Array.isArray(d.source_files) && d.source_files.length ? d.source_files : ["workflow.ts"],
-    dependencies: need(zap.dependencies, "dependencies"),
-    durableVersion: need(zap.zapier_durable_version, "zapier_durable_version"),
+    dependencies: need(src.dependencies ?? zap.dependencies, "dependencies"),
+    durableVersion: need(src.zapier_durable_version ?? zap.zapier_durable_version, "zapier_durable_version"),
     connections: Object.keys(connections).length ? connections : null,
-    appVersions: zap.app_versions ?? null,
+    appVersions: src.app_versions ?? zap.app_versions ?? null,
     trigger,
   };
 }
 
 // Returns { plan } when !execute, else { plan, workflowId, newVersionId, triggerUrl, webhookUrl }.
 function createAndPublish(dir, dep, execute) {
-  const spec = readCreateSpec(dir);
+  const spec = readCreateSpec(dir, dep);
   const startMode = spec.trigger === null ? "manual" : "trigger";
 
   const plan = {
@@ -565,6 +596,10 @@ function createAndPublish(dir, dep, execute) {
     webhookUrl: isCatchHookTrigger(afterTriggers[0]) ? afterTriggers[0]?.details?.webhook_url || null : null,
     enabled: typeof after?.enabled === "boolean" ? after.enabled : spec.enableOnPublish,
   };
+}
+
+function isMultiDeployment(dir) {
+  return Array.isArray(JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8")).deployments);
 }
 
 // ---- Republishing an existing deployment ---------------------------------
@@ -889,9 +924,53 @@ export function syncBackWebhookUrl(dir, oldUrl, newUrl) {
 // pending state. Same in-place, value-targeted replacement as above so the rest
 // of the file stays byte-for-byte (a JSON round-trip would re-encode every
 // escape and reformat the whole file).
-function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl, webhookUrl, enabled }) {
+// The [start, end) text span of the deployments[] entry named `name` — the
+// object that directly owns `"name": "<name>"`. Used to scope a NEW
+// deployment's first-publish sync-back, so a null in a sibling entry (or the
+// top level) can never be filled with this deployment's ids.
+export function deploymentSpan(raw, name) {
+  const re = new RegExp('"name":\\s*' + JSON.stringify(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g");
+  const owners = [];
+  for (let m; (m = re.exec(raw)); ) {
+    const owner = enclosingObjectStart(raw, m.index);
+    if (owner >= 0 && !owners.includes(owner)) owners.push(owner);
+  }
+  // The entry is an owner that sits DIRECTLY in the top-level "deployments"
+  // array: after that key, with the root object as its parent (a nested
+  // `"name"`, e.g. inside trigger params, has the entry as its parent instead).
+  const depsAt = raw.indexOf('"deployments"');
+  const root = raw.indexOf("{");
+  const inDeps = owners.filter((o) => depsAt >= 0 && o > depsAt && enclosingObjectStart(raw, o) === root);
+  if (inDeps.length !== 1) throw new Error(`found ${inDeps.length} deployments[] entries named ${JSON.stringify(name)}`);
+  const start = inDeps[0];
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < raw.length; i++) {
+    const c = raw[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return [start, i + 1];
+  }
+  throw new Error(`unterminated deployments[] entry ${JSON.stringify(name)}`);
+}
+
+export function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl, webhookUrl, enabled }, depName = null) {
   const abs = join(REPO_ROOT, dir, "zap.json");
-  let raw = readFileSync(abs, "utf8");
+  const full = readFileSync(abs, "utf8");
+  // A new deployments[] entry: rewrite only that entry's text.
+  let lo = 0;
+  let hi = full.length;
+  if (depName) {
+    try {
+      [lo, hi] = deploymentSpan(full, depName);
+    } catch (err) {
+      fail(`${dir}: ${err.message} — record workflow_id "${workflowId}" and current_version_id "${newVersionId}" by hand`);
+    }
+  }
+  let raw = full.slice(lo, hi);
 
   const setNull = (key, value, required) => {
     if (value === null || value === undefined) return;
@@ -928,7 +1007,8 @@ function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl, webho
   // Anchored to the top-level key (two-space indent) so a nested "enabled"
   // somewhere in the metadata can never be hit instead.
   if (typeof enabled === "boolean") {
-    const re = /^(  "enabled":\s*)(?:true|false)/m;
+    // A deployments[] entry's own keys sit at six spaces; the top level's at two.
+    const re = depName ? /^(      "enabled":\s*)(?:true|false)/m : /^(  "enabled":\s*)(?:true|false)/m;
     if (!re.test(raw)) fail(`${dir}: could not find a top-level "enabled" in zap.json to sync back`);
     raw = raw.replace(re, "$1" + String(enabled));
   }
@@ -937,7 +1017,7 @@ function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl, webho
   if (!stateRe.test(raw)) fail(`${dir}: could not find deploy.state "pending-create" in zap.json`);
   raw = raw.replace(stateRe, "$1published$2");
 
-  writeFileSync(abs, raw);
+  writeFileSync(abs, full.slice(0, lo) + raw + full.slice(hi));
 }
 
 // ---- main ----------------------------------------------------------------
@@ -1057,7 +1137,7 @@ function main() {
           `enabled on publish: ${plan.enabled}, files: ${plan.sourceFileKeys.join(", ")}`,
       );
       if (args.execute) {
-        syncBackFirstPublish(dir, result);
+        syncBackFirstPublish(dir, result, isMultiDeployment(dir) ? dep.name : null);
         const atWarning = syncBackVersionCreatedAt(dir, result.workflowId, result.newVersionId, result.versionCreatedAt);
         if (atWarning) log(`- ${atWarning}`);
         synced.push({ dir, workflowId: result.workflowId, newVersionId: result.newVersionId, created: true });

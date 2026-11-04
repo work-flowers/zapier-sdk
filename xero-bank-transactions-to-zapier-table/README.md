@@ -1,13 +1,28 @@
 # Xero Bank Transactions → Zapier Table
 
-Durable workflow (trigger **`read`** — "Every Day" at 6:00 AM — `ScheduleCLIAPI@1.7.0`) that mirrors Xero
-bank transactions into the **Xero Bank Transactions** Zapier Table, one row per transaction.
+Durable workflow, **two deployments of one source**, that mirrors Xero bank transactions into the
+**Xero Bank Transactions** Zapier Table, one row per transaction:
+
+| Deployment | Trigger | Does |
+| --- | --- | --- |
+| `new-bank-transaction-poller` (since 2026-11) | Xero `bank_transaction`, every 15 min | upserts the one new transaction |
+| `daily-sweep` | Schedule, daily 6:00 AM | re-reads a 7-day window and repairs what Xero restated |
 Migrated from the classic Zap *"Process New Reconciled Transactions"*.
 
 > **This workflow is load-bearing.** [`drive-invoice-to-xero`](../drive-invoice-to-xero/) reads
 > this Table to decide whether an invoice has already been paid. If this workflow stops, that one
 > does not error — it silently starts raising duplicate draft bills. That is exactly what happened
 > when the classic Zap's write step was accidentally paused.
+
+> ### ⚡ Since 2026-11: a 15-minute poller for new transactions
+>
+> The trigger param `_zap_polling_interval_minutes: 15` (undocumented; Zapier support's "temporary
+> workaround", verified 2026-11-04) lets a durable poller run every 15 minutes instead of every minute:
+> ~96 Xero calls a day. New transactions now reach the Table within ~15 minutes, which closes the
+> trade-off below: [`drive-invoice-to-xero`](../drive-invoice-to-xero/) no longer sees a same-day payment
+> as unpaid. A "new transaction" trigger never re-delivers a transaction Xero later restates, so the
+> daily sweep stays as the repair pass. Both use the same find-or-create-then-converge upsert, so a race
+> between them settles on one row. If Zapier withdraws the param, delete the poller deployment.
 
 > ### 🔁 It is schedule-driven, not Xero-poll-driven (since `019fd4b2`, 2026-08-06)
 >
@@ -31,6 +46,7 @@ Migrated from the classic Zap *"Process New Reconciled Transactions"*.
 
 ```mermaid
 flowchart TD
+    PL["⚡ Xero New Bank Transaction<br/>every 15 min · one transaction per run"] --> LOOP
     T["⏰ Schedule: Every Day 6:00 AM<br/><i>0 Xero calls</i>"] --> L["🔎 Zapier Table<br/>newest row's date<br/><i>free</i>"]
     L --> W{"newest row<br/>readable?"}
     W -- no --> WB["⚠️ fall back to<br/>today − 30d<br/><i>logged</i>"]

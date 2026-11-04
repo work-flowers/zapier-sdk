@@ -100,7 +100,12 @@ function readJson(absPath) {
 // publisher decides by comparing against the live trigger.
 function affectedDeployments(zap, changedSourceFilesInDir, zapJsonChanged) {
   const deployments = Array.isArray(zap?.deployments)
-    ? zap.deployments
+    ? // An entry with no workflow_id and its own `deploy.state: "pending-create"`
+      // is a NEW deployment added to an existing dir (a second trigger on the
+      // same source): the publisher creates its container and publishes v1.
+      zap.deployments.map((d) =>
+        !d.workflow_id && d?.deploy?.state === "pending-create" ? { ...d, pendingCreate: true } : d,
+      )
     : zap?.workflow_id
       ? [{ name: zap.name || null, workflow_id: zap.workflow_id, enabled: zap.enabled, entry_file: "workflow.ts" }]
       : zap?.deploy?.state === "pending-create"
