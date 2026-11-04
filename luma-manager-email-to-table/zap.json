@@ -34,7 +34,7 @@
     "managed_events": {
       "id": "01M4ZRWQAHCB41XGGJ263S9BDH",
       "name": "Luma Managed Events",
-      "role": "Written here, one row per evt- id, idempotent. Backfill Status: pending -> `done: N guests fired, M invited skipped` or `not-on-calendar` (an event on another Luma calendar the key cannot see)."
+      "role": "Written here, one row per evt- id, idempotent. Backfill Status: pending -> (`pending: N guests fired, M queued for run K` while a long guest list continues across runs, 75 guests per run) -> `done: N guests fired, M invited skipped` or `not-on-calendar` (an event on another Luma calendar the key cannot see)."
     }
   },
   "seeded": {
