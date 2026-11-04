@@ -5,7 +5,7 @@
     {
       "name": "daily-sweep",
       "workflow_id": "019fa885-7d5e-73a8-b601-4ec31290bf4a",
-      "current_version_id": "01a18fad-5782-786b-92f0-e22c174e54ba",
+      "current_version_id": "01a1a4ec-4b71-74e7-a517-6627b43e27f6",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaVB57afDcrtlFL0dbihDA",
       "enabled": true,
       "trigger": {
@@ -25,15 +25,15 @@
         "manual_run_note": "`trigger-workflow 019fa885-7d5e-73a8-b601-4ec31290bf4a --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD write, writing nothing. Added in 019fdb43 and NOT optional discipline: the version that wiped the date column was 'validated' by a run-durable that died at the Xero fetch on a rate limit, so the extraction and upsert code was never executed once before reaching production. Use the dry run to exercise the main path against real Xero data before any publish. An empty input `{}` is a real re-sync."
       },
       "created_at": "2026-07-28T11:35:00.000Z",
-      "version_created_at": "2026-10-31T01:57:45.757Z",
+      "version_created_at": "2026-11-04T04:58:32.972Z",
       "description": "Schedule, daily 6:00 AM: re-reads a 7-day window and repairs what Xero restates after creation (Reference at reconciliation, has_attachments). Since 2026-11 new transactions arrive via the poller below; this is the repair pass and the backstop."
     },
     {
       "name": "new-bank-transaction-poller",
-      "workflow_id": null,
-      "current_version_id": null,
-      "trigger_url": null,
-      "enabled": false,
+      "workflow_id": "01a1a4ec-5f71-76b1-b76d-2bf258e16f63",
+      "current_version_id": "01a1a4ec-7764-7364-bd4e-6e843b0bbeee",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATw_FK0ZcnNiDQ3L4ClFcw",
+      "enabled": true,
       "trigger": {
         "selected_api": "XeroCLIAPI@2.22.1",
         "action": "bank_transaction",
@@ -44,10 +44,10 @@
         },
         "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
       },
-      "version_created_at": null,
+      "version_created_at": "2026-11-04T04:58:44.296Z",
       "description": "Xero New Bank Transaction, polled every 15 min → upserts that one row, so drive-invoice-to-xero sees a payment within ~15 minutes instead of up to a day.",
       "deploy": {
-        "state": "pending-create",
+        "state": "published",
         "workflow_name": "xero-bank-transactions-to-zapier-table · poll new",
         "description": "Polls Xero for new bank transactions every 15 minutes and upserts each into the Xero Bank Transactions Zapier Table. One of two deployments of xero-bank-transactions-to-zapier-table (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-bank-transactions-to-zapier-table).",
         "enable_on_publish": true
