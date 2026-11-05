@@ -5,37 +5,37 @@
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/create/SKILL.md",
-      "computedHash": "98d77864f3c42078b8321dbc52020879204ae36f338dc49008050e3ff796194d"
+      "computedHash": "98a1d5be094c92b3035ea0d9abafb896c63e6423ddea7af99027f01a3d7329ba"
     },
     "workflows-doctor": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/doctor/SKILL.md",
-      "computedHash": "6fe3c1e72e2eae2ea1c1675a71d55194dfcc339943817567cfe7336160674d33"
+      "computedHash": "255b3bf01ba7ac7a249a03ad858fff56403f535ee7ca88c11da7fe60b55eed0c"
     },
     "workflows-history": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/history/SKILL.md",
-      "computedHash": "92f344640cb59f9f2293fb8c4731c129f7857b3125e9ff838d9cbcf126d66616"
+      "computedHash": "87c12692f4ad79b5d9daa34fcf1789cd6158172d9a9149c7b8905d63586cc445"
     },
     "workflows-install": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/install/SKILL.md",
-      "computedHash": "cc2cb392f11ad08e24f1f9def3dfea28da6142c13637d5fd3ced78ddf82c30ed"
+      "computedHash": "30510b537d6a7e5dd7b4e0b3145703f95977e7c3594d6e3f175bcc94ca0795fe"
     },
     "workflows-list": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/list/SKILL.md",
-      "computedHash": "c3c3b47f17e1a71d78c4ef3efe3e1e64ed7909416e43dbb0bfb0f0d466be9a35"
+      "computedHash": "1787f93218598b1a81e8f9ec2176f2047f8ae2b3cfc69949fa1de1f9245c0824"
     },
     "workflows-modify": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/modify/SKILL.md",
-      "computedHash": "a832eb9558a0f02a814f728a30f3d9e7a149076ebb4454ae7a9399fb63cfe20b"
+      "computedHash": "a71f5e52546a5d20ff5026dc0c9539e0aa1fffd16c0a32766b08abf360c6ccbd"
     },
     "zapier-sdk": {
       "source": "zapier/sdk",
