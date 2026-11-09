@@ -1,7 +1,7 @@
 {
   "name": "buttondown-unsubscribe-to-notion-contact",
   "workflow_id": "019febf8-14c3-77c3-bdf2-b47bda07eb5a",
-  "current_version_id": "019febf8-990a-7f4c-8120-ef7cc39771fb",
+  "current_version_id": "01a1c2bc-55b8-7b4d-a82a-86cb338dcd21",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ad3irtPKfZaBFD9TBXqMIw",
   "enabled": true,
   "is_private": false,
@@ -68,7 +68,7 @@
     "typecheck": "tsc --strict --skipLibCheck clean"
   },
   "created_at": "2026-08-10T13:58:00.000Z",
-  "version_created_at": "2026-08-10T13:59:25.912Z",
+  "version_created_at": "2026-11-09T23:54:45.329Z",
   "description": "Buttondown unsubscribe -> untick Mailing List on the matching Notion contact, resolved via the shared email->page-id Zapier Table.",
   "cutover": {
     "status": "complete \u2014 2026-08-10, confirmed by Dennis.",

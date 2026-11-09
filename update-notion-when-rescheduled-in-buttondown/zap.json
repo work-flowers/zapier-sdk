@@ -1,7 +1,7 @@
 {
   "name": "update-notion-when-rescheduled-in-buttondown",
   "workflow_id": "019fdb92-378d-71b7-878e-f0791bf29515",
-  "current_version_id": "019fdb92-6cf3-71eb-8971-61c306ca7493",
+  "current_version_id": "01a1c2bc-7a20-7179-b5b0-4e254e442c42",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AcLUKiGWPT9WrAQ4NQXQxQ",
   "enabled": true,
   "is_private": false,
@@ -71,6 +71,6 @@
     "use_zapier_datetime_fields passes the Buttondown UTC string through rather than converting to the account timezone, so Send Date is rewritten from Notion's +08:00 form to the equivalent +00:00 form. Same instant, renders identically in Notion, and the outbound Zap reads date.start where both forms are unambiguous."
   ],
   "created_at": "2026-08-07T09:33:40.621Z",
-  "version_created_at": "2026-08-07T09:33:54.506Z",
+  "version_created_at": "2026-11-09T23:54:54.597Z",
   "description": "Buttondown send date set or changed -> write it back onto the Notion Newsletter Issues page, resolved via the Email Newsletter ID Mapping Zapier Table. Reverse leg of notion-newsletter-to-buttondown."
 }
