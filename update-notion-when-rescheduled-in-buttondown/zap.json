@@ -31,7 +31,7 @@
   "app_versions": {
     "TableCLIAPI": {
       "implementation_name": "TableCLIAPI",
-      "version": "1.26.0"
+      "version": "1.27.0"
     },
     "NotionCLIAPI": {
       "implementation_name": "NotionCLIAPI",

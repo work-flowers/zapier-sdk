@@ -16,7 +16,9 @@
 // 2026-09-18, when enrich-contact-records swapped three enrichment connections
 // for one and the carried-forward set would have left the new alias unbound —
 // a publish that succeeds and then fails on the first run); a zap.json with no
-// `connections` keeps the deployed set. Every republish compares the trigger
+// `connections` keeps the deployed set. App-version pins work the same way
+// (added 2026-11-10): a pin zap.json declares replaces the deployed pin for
+// that app, so a deprecated pin can be bumped by PR. Every republish compares the trigger
 // zap.json declares against the deployed one, on the four fields that are
 // actually Zapier's (selected_api, action, authentication_id, params — the rest
 // of the block is repo annotation and a webhook_url readback). Identical, the
@@ -379,6 +381,60 @@ export function sameConnections(a, b) {
   return norm(a) === norm(b);
 }
 
+// ---- App-version pins: zap.json wins for the apps it pins -------------------
+//
+// Added 2026-11-10, when Zapier deprecated TableCLIAPI 1.26.0 with a deadline
+// and three Zaps pinned it: the republish path carried the deployed
+// app_versions forward verbatim, so bumping the pin in zap.json would have
+// republished 1.26.0 again and the bump could only ship by a direct publish.
+//
+// A pin zap.json declares (top-level `app_versions`, or a deployment's own
+// non-null `app_versions`) REPLACES the deployed pin for that implementation;
+// deployed pins for apps zap.json does not mention are kept, and a zap.json
+// with no pins keeps the deployed set. Entries are matched by
+// implementation_name, not by alias key, because the two sides may key the
+// same app differently ("slack" vs "SlackCLIAPI"). Non-object values are notes.
+export function declaredAppVersions(dir, dep) {
+  const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+  let source = zap.app_versions;
+  if (Array.isArray(zap.deployments)) {
+    const d = zap.deployments.find((x) => x.workflow_id === dep.workflowId);
+    if (d && d.app_versions != null) source = d.app_versions;
+  }
+  const out = {};
+  for (const [key, v] of Object.entries(source || {})) {
+    if (v && typeof v === "object" && typeof v.implementation_name === "string" && typeof v.version === "string") {
+      out[key] = { implementation_name: v.implementation_name, version: v.version };
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Deployed pins with every implementation zap.json pins replaced by its pin.
+export function mergeAppVersions(deployed, declared) {
+  if (declared == null) return deployed ?? null;
+  const pinned = new Set(Object.values(declared).map((v) => v.implementation_name));
+  const out = {};
+  for (const [key, v] of Object.entries(deployed || {})) {
+    if (!pinned.has(v?.implementation_name)) out[key] = v;
+  }
+  return Object.assign(out, declared);
+}
+
+// implementation_name → version, order- and key-insensitive.
+export function appVersionPins(a) {
+  const out = {};
+  for (const v of Object.values(a || {})) {
+    if (v && typeof v.implementation_name === "string") out[v.implementation_name] = v.version ?? null;
+  }
+  return out;
+}
+
+export function sameAppVersions(a, b) {
+  const norm = (x) => JSON.stringify(Object.entries(appVersionPins(x)).sort());
+  return norm(a) === norm(b);
+}
+
 // ---- First publish of a brand-new Zap -----------------------------------
 
 // Read the `deploy` block a not-yet-created Zap declares, and fail loudly on
@@ -623,7 +679,7 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const dependencies = version?.dependencies ?? null;
   const durableVersion = version?.zapier_durable_version ?? null;
   const deployedConnections = version?.connections ?? null;
-  const appVersions = version?.app_versions ?? null;
+  const deployedAppVersions = version?.app_versions ?? null;
   const deployedTrigger = version?.trigger ?? null;
 
   // 2. Reconcile the trigger against what the repo declares. zap.json wins, so
@@ -640,11 +696,16 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const connectionsChanged = declared != null && !sameConnections(declared, deployedConnections);
   const connections = connectionsChanged ? declared : deployedConnections;
 
+  // 2c. And for app-version pins: a pin zap.json declares replaces the
+  //     deployed pin for that app (see declaredAppVersions).
+  const appVersions = mergeAppVersions(deployedAppVersions, declaredAppVersions(dir, dep));
+  const appVersionsChanged = !sameAppVersions(appVersions, deployedAppVersions);
+
   // 3. This deployment is only here because zap.json changed, and neither the
-  //    trigger nor the bindings it declares differ from what is live: nothing
-  //    to publish. (Checked BEFORE the draft refusal below, so an open draft
-  //    can't fail a run that is a no-op.)
-  if (!dep.bySource && !triggerChanged && !connectionsChanged) {
+  //    trigger, the bindings nor the app pins it declares differ from what is
+  //    live: nothing to publish. (Checked BEFORE the draft refusal below, so an
+  //    open draft can't fail a run that is a no-op.)
+  if (!dep.bySource && !triggerChanged && !connectionsChanged && !appVersionsChanged) {
     return { skipped: "no-trigger-change", workflowId: id };
   }
 
@@ -692,10 +753,12 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     hasAppVersions: appVersions != null,
     triggerChanged,
     connectionsChanged,
+    appVersionsChanged,
     reason: [
       dep.bySource ? "source" : null,
       triggerChanged ? "trigger" : null,
       connectionsChanged ? "connections" : null,
+      appVersionsChanged ? "app-versions" : null,
     ]
       .filter(Boolean)
       .join(" + "),
@@ -703,6 +766,8 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     triggerTo: triggerCore(desired),
     connectionsFrom: connectionIds(deployedConnections),
     connectionsTo: connectionIds(connections),
+    appVersionsFrom: appVersionPins(deployedAppVersions),
+    appVersionsTo: appVersionPins(appVersions),
   };
 
   if (!execute) return { plan };
@@ -1176,6 +1241,11 @@ function main() {
       log(`  - live: \`${JSON.stringify(plan.connectionsFrom)}\``);
       log(`  - repo: \`${JSON.stringify(plan.connectionsTo)}\``);
     }
+    if (plan.appVersionsChanged) {
+      log(`- 📌 app-version pins change — zap.json wins:`);
+      log(`  - live: \`${JSON.stringify(plan.appVersionsFrom)}\``);
+      log(`  - repo: \`${JSON.stringify(plan.appVersionsTo)}\``);
+    }
     if (args.execute) {
       syncBackVersionId(dir, currentVersionId, newVersionId);
       const atWarning = syncBackVersionCreatedAt(dir, dep.workflowId, newVersionId, result.versionCreatedAt);
@@ -1189,8 +1259,9 @@ function main() {
         log(`- 🔗 catch URL ${result.webhookUrl} was missing from zap.json — recorded now (unchanged on Zapier)`);
       }
     } else {
-      log(`- would republish from \`${plan.fromVersion}\` carrying deps/app-versions forward` +
-        (plan.connectionsChanged ? " with the declared connection bindings" : ", connections unchanged"));
+      log(`- would republish from \`${plan.fromVersion}\` carrying deps forward` +
+        (plan.connectionsChanged ? " with the declared connection bindings" : ", connections unchanged") +
+        (plan.appVersionsChanged ? ", with the declared app-version pins" : ", app-versions unchanged"));
     }
     log("");
   }
