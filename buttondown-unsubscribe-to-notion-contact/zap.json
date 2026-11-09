@@ -16,9 +16,11 @@
     "notes": "Polling trigger on the private `Buttondown Unofficial #2` app (source: ~/Repos/zapier-buttondown), the same app that carries `new_email_reschedule` for update-notion-when-rescheduled-in-buttondown. The official ButtondownCLIAPI exposes an `unsubscriber` read, but it is is_hidden and therefore off the stable surface. Durable triggers cannot set a polling interval, so any custom interval on the classic Zap was silently dropped at migration."
   },
   "connections": {
-    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "buttondown_wf": "02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe"
   },
   "connection_notes": {
+    "buttondown_wf": "Official Buttondown app, connection titled `workflowers`. Bound on the live version but not referenced by workflow.ts; declared 2026-11-10 so a republish keeps the deployed binding set unchanged.",
     "notion_wf": "work.flowers | Dennis <dennis@work.flowers>. NEVER the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
     "TableCLIAPI": "search/find_record against Zapier Table 01JYEPSEARXB2Z6BJRCMFGXBC2 \u2014 Zapier Tables need no connection and cost no tasks."
   },
@@ -29,7 +31,7 @@
     },
     "TableCLIAPI": {
       "implementation_name": "TableCLIAPI",
-      "version": "1.26.0"
+      "version": "1.27.0"
     }
   },
   "zapier_durable_version": "0.12.5",

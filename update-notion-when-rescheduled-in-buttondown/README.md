@@ -162,7 +162,7 @@ zapier-sdk --experimental publish-workflow-version 019fdb92-378d-71b7-878e-f0791
   --dependencies '{"zod":"4.3.6","@zapier/zapier-sdk":"0.70.2"}' \
   --zapier-durable-version '0.8.0' \
   --connections '{"notioncliapi_connection":{"connection_id":50656433}}' \
-  --app-versions '{"TableCLIAPI":{"implementation_name":"TableCLIAPI","version":"1.26.0"},"NotionCLIAPI":{"implementation_name":"NotionCLIAPI","version":"2.39.1"}}' \
+  --app-versions '{"TableCLIAPI":{"implementation_name":"TableCLIAPI","version":"1.27.0"},"NotionCLIAPI":{"implementation_name":"NotionCLIAPI","version":"2.39.1"}}' \
   --trigger '{"selected_api":"App240106CLIAPI@1.0.4","action":"new_email_reschedule","authentication_id":"63956850","params":{}}' \
   --enabled --json
 ```
