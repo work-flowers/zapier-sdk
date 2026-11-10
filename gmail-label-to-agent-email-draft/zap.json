@@ -3,7 +3,7 @@
   "workflow_id": "01a1c391-6df2-72e7-96d4-3d4deaddd701",
   "current_version_id": "01a1c40c-7d58-7c9d-8b8e-2354cf04039e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ad_5DOMbYD_eH-Iycq2TnA",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",

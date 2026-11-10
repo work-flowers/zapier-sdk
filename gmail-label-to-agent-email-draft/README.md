@@ -105,6 +105,8 @@ The Zap is published **disabled** (`enable_on_publish: false`), so it and the Cu
 2. Turn off the Custom Agent's trigger in Notion.
 3. `enable-workflow <id>`, tag a test thread, and check the draft and the session.
 
+**Enabled 2026-11-10**, with the Custom Agent's trigger already off. First enabled with v1, which drafted once per message; disabled, fixed (PR #291), and re-enabled on the fixed version.
+
 ## Costs
 
 Zapier tasks per run: one for the thread read, one for the agent call, one per poll, and one each for the draft, the Send to Notion label and the label removal. The skipped runs for a thread's other messages cost one task each, for the thread read. The agent's own work uses Notion AI credits.
