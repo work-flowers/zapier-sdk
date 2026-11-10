@@ -208,6 +208,33 @@ export function parseAgentReply(text: string): AgentDraft | null {
   return { kind: "reply", to, cc: cc.filter((a) => !to.includes(a)), body };
 }
 
+export interface ThreadMessage {
+  id: string;
+  labelIds: string[];
+}
+
+// Messages that are not part of the conversation for this purpose.
+const IGNORED_MESSAGE_LABELS = new Set(["DRAFT", "TRASH", "SPAM"]);
+
+/** The id of the newest message in the thread that still carries the trigger
+ *  label, ignoring drafts, trash and spam. Gmail lists a thread's messages
+ *  oldest first. Null when no message carries the label any more.
+ *
+ *  Why: tagging a thread labels EVERY message in it, and "New Labeled Email"
+ *  fires once per message — the first live tag (2026-11-10, a 6-message
+ *  thread) started six runs and left six drafts. Each run asks this question
+ *  and only the run for the answer proceeds. All of a tag's runs read the
+ *  thread within seconds of each other, long before the winner removes the
+ *  label, so they agree on the answer. */
+export function latestLabelledMessageId(messages: ThreadMessage[], labelId: string): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const labels = messages[i].labelIds;
+    if (labels.some((l) => IGNORED_MESSAGE_LABELS.has(l))) continue;
+    if (labels.includes(labelId)) return messages[i].id;
+  }
+  return null;
+}
+
 // --- Step helpers ------------------------------------------------------------------
 
 type AgentResult = Record<string, any>;
@@ -264,6 +291,34 @@ const workflow = defineDurable("gmail-label-to-agent-email-draft", async (ctx, r
     throw new Error(
       `Unrecognised trigger payload: no Gmail thread id. Keys: ${Object.keys(payload as object).join(", ")}`,
     );
+  }
+
+  // 0. One request per tag, not one per message: only the run for the newest
+  //    labelled message goes on (see latestLabelledMessageId). A read, so it
+  //    can retry.
+  if (email.messageId) {
+    const thread = await ctx.step("read-thread", async () => {
+      const res = await sdk.fetch(
+        `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(email.threadId)}?format=minimal`,
+        { connection: GMAIL_CONNECTION, method: "GET" },
+      );
+      const text = await res.text();
+      if (!res.ok) throw new Error(`Gmail threads.get ${email.threadId} -> ${res.status}: ${clip(text, 300)}`);
+      const body = JSON.parse(text) as { messages?: Array<{ id?: unknown; labelIds?: unknown }> };
+      return (body.messages ?? []).map((m) => ({
+        id: str(m.id),
+        labelIds: Array.isArray(m.labelIds) ? m.labelIds.map(str) : [],
+      }));
+    });
+    const latest = latestLabelledMessageId(thread, TRIGGER_LABEL_ID);
+    if (latest !== email.messageId) {
+      console.log(
+        `thread ${email.threadId}: message ${email.messageId} is not the newest labelled message (${latest ?? "none labelled"}); skipping`,
+      );
+      return { skipped: latest ? "not-latest-message" : "label-removed", thread_id: email.threadId, message_id: email.messageId };
+    }
+  } else {
+    console.log(`thread ${email.threadId}: trigger record has no message id, so the latest-message check is skipped`);
   }
 
   // 1. Hand off. ONE attempt: a retry after an ambiguous failure could open a

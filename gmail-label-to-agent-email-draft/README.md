@@ -12,7 +12,10 @@ flowchart TD
   B -- yes --> Z[skip: empty-payload]
   B -- no --> C{Thread id?}
   C -- no --> X[throw: trigger shape changed]
-  C -- yes --> D[hand-off-to-agent<br/>Notion Agents 1.4.0 send_message<br/>notion_ai, wait 20s, 1 attempt]
+  C -- yes --> T[read-thread<br/>Gmail threads.get via gmail_wf]
+  T --> N{Newest labelled<br/>message?}
+  N -- no --> Z2[skip: not-latest-message<br/>or label-removed]
+  N -- yes --> D[hand-off-to-agent<br/>Notion Agents 1.4.0 send_message<br/>notion_ai, wait 20s, 1 attempt]
   D --> E{Finished?}
   E -- no --> W[ctx.wait 30s → get_agent_reply<br/>up to 20 polls, ~17 min]
   W --> E
@@ -29,6 +32,7 @@ flowchart TD
 
 Gmail **New Labeled Email** (`label_message_v2`) on dennis@work.flowers. That trigger also fires on every later reply in a thread that still carries the label, so the workflow removes the label at the end. Each tag is then exactly one request.
 
+- **One draft per tag, not one per message.** Tagging a thread labels every message in it, and the trigger fires once per labelled message. So each run first reads the thread (`threads.get`, `format=minimal`, through `sdk.fetch` on `gmail_wf`) and goes on only if its message is the **newest message still carrying the label**, ignoring drafts, trash and spam (`latestLabelledMessageId()`). The other runs return `skipped: "not-latest-message"`, or `"label-removed"` once the winner has un-tagged the thread. A tag's runs all start within seconds, minutes before the winner removes the label, so they agree on which one proceeds. The newest labelled message can be Dennis's own sent message; the agent still reads the whole thread and writes the next reply.
 - **On failure the label stays on**, so an unhandled thread is easy to find. If the other side replies before you retry, that reply fires the Zap again, which is usually what you want anyway.
 - **Re-tagging** a thread fires again once a new message has arrived. Re-tagging with no new message since the last run does not fire, because the trigger deduplicates on message id.
 - The label id lives in two places: `trigger.params.label_ids` in `zap.json` and `TRIGGER_LABEL_ID` in `workflow.ts`. Keep them in step.
@@ -90,6 +94,8 @@ The prompt is the Custom Agent's instructions, shortened, because the personal a
 | 2026-11-10 | Aspire sandbox API follow-up | First design (agent drafts itself): session completed, label removed, **no draft**. The agent has no Gmail write tool in API sessions. This led to the current design. |
 | 2026-11-10 | same | Current design: agent returned **NO_REPLY**, claiming Dennis had already replied. Gmail had no sent reply or draft; it most likely took its first-session reply as sent. The prompt now says only messages from Dennis in the thread count as sent, and NO_REPLY is for automated mail only. |
 | 2026-11-10 | same | Current design after that fix: draft created in the thread, To `support@aspireapp.com`, addressed to Rose, mentions the 12 November demo; Send to Notion added, nosey-reply removed. |
+| 2026-11-10 | Al-Falah Task Management System (6 messages) | First live tag after enabling: **six runs, six agent sessions, six drafts**, one per message, because tagging a thread labels every message. Zap disabled; the latest-labelled-message check above was added. |
+| 2026-11-10 | same, `run-durable` with an older message id | `read-thread` succeeded from the durable sandbox through `sdk.fetch`; run returned `skipped: "label-removed"` before any agent call. |
 
 ## Before enabling
 
@@ -101,4 +107,4 @@ The Zap is published **disabled** (`enable_on_publish: false`), so it and the Cu
 
 ## Costs
 
-Zapier tasks per run: one for the agent call, one per poll, and one each for the draft, the Send to Notion label and the label removal. The agent's own work uses Notion AI credits.
+Zapier tasks per run: one for the thread read, one for the agent call, one per poll, and one each for the draft, the Send to Notion label and the label removal. The skipped runs for a thread's other messages cost one task each, for the thread read. The agent's own work uses Notion AI credits.
