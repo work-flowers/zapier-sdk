@@ -1,12 +1,12 @@
 {
   "name": "gmail-label-to-agent-email-draft",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a1c391-6df2-72e7-96d4-3d4deaddd701",
+  "current_version_id": "01a1c391-ad5d-7fdf-8aed-93e4b6e7862b",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ad_5DOMbYD_eH-Iycq2TnA",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "gmail-label-to-agent-email-draft",
     "description": "Gmail thread tagged with the nosey-reply label -> ask Dennis's personal Notion agent (Notion AI, via Notion Agents (Unofficial) 1.4.0) to write the reply -> wait for it -> save the reply as a Gmail draft in the thread, add Send to Notion, remove nosey-reply. Replaces the label-triggered Custom Agent.",
     "enable_on_publish": false
