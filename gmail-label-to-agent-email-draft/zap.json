@@ -1,0 +1,35 @@
+{
+  "name": "gmail-label-to-agent-email-draft",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "gmail-label-to-agent-email-draft",
+    "description": "Gmail thread tagged with the nosey-reply label -> ask Dennis's personal Notion agent (Notion AI, via Notion Agents (Unofficial) 1.4.0) to write the reply -> wait for it -> save the reply as a Gmail draft in the thread, add Send to Notion, remove nosey-reply. Replaces the label-triggered Custom Agent.",
+    "enable_on_publish": false
+  },
+  "trigger": {
+    "selected_api": "GoogleMailV2CLIAPI@2.14.0",
+    "action": "label_message_v2",
+    "authentication_id": "02dc1dc2-a395-8c45-8534-f6372752bb8c",
+    "params": {
+      "label_ids": "Label_4453408798701039753"
+    },
+    "authentication_note": "Gmail dennis@work.flowers, the account-wide connection on 2.14.0 (also bound as gmail_wf for the draft and label writes).",
+    "trigger_note": "Polling 'New Labeled Email': fires when the label is added, and ALSO on every later reply in a thread that still carries it. The workflow removes the label at the end so each tag is one request; on failure the label stays on as a marker. Deduped on message id, so re-tagging a thread with no new message since the last run does not fire again."
+  },
+  "connections": {
+    "notion_agents": "02587715-aaf7-8577-a712-37f53d57b4bb",
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
+  },
+  "connections_note": "notion_agents is the 'zapier-personal-agent' connection on the Notion Agents (Unofficial) custom integration (made on 1.1.0; the workflow calls App245513CLIAPI@1.4.0 explicitly). Not 'custom-agent-embed', which agent-chat-session-to-notion uses.",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "zapier_durable_version": "0.14.1",
+  "app_versions": null,
+  "app_versions_note": "Versions are pinned in the workflow's app ids (App245513CLIAPI@1.4.0, GoogleMailV2CLIAPI@2.14.0), not here."
+}
