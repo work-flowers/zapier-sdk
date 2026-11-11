@@ -1,0 +1,41 @@
+{
+  "name": "openai-image-to-cloudinary",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "openai-image-to-cloudinary",
+    "description": "Generate an image with OpenAI GPT Image 2.6 (flare or sunburst; edits when a reference_image_url is given), upload it to Cloudinary's hero-images folder, and return the hosted secure_url instead of base64. Optionally attaches the URL to a Blog page's Cover Image File in Notion. Called on demand via Zapier MCP run_workflow by the hero-image-prompting skill.",
+    "enable_on_publish": true
+  },
+  "trigger": null,
+  "trigger_notes": "Manual start mode, deliberately: the caller is the hero-image-prompting skill, which runs it with Zapier MCP run_workflow and reads the return value from the run (run_workflow output, or get_run_output). A catch hook is fire-and-forget and can't hand the URL back.",
+  "connections": {
+    "openai_wf": "02131365-e65f-8b84-a118-7145c518deeb",
+    "cloudinary_wf": "02775269-7b5b-883d-a9d0-d78c2405a3bd",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connections_note": "openai_wf = ChatGPT (OpenAI) connection titled 'ChatGPT (OpenAI)' (the account default; 'ChatGPT Work.Flowers' 02fb748e… is the older one). Used via sdk.fetch, not an app action, so the base64 never leaves the step. cloudinary_wf = 'Cloudinary ddvqw2xgc', the only Cloudinary connection. notion_wf = the work.flowers workspace connection (never the Knoxx one).",
+  "openai": {
+    "endpoints": "POST /v1/images/generations (no reference) or /v1/images/edits with images: [{image_url}] (JSON body, no multipart)",
+    "models": ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst"],
+    "note": "GPT Image models only return data[0].b64_json. Content-Type: application/json is required or OpenAI answers 400."
+  },
+  "cloudinary": {
+    "folder": "hero-images",
+    "action": "CloudinaryCLIAPI write upload_signed, file = data:image/png;base64,…"
+  },
+  "notion": {
+    "blog_data_source": "1d791b07-11ac-8146-9124-000b0d6dbcc8",
+    "cover_file_property": "Cover Image File",
+    "api_version": "2026-03-11",
+    "note": "Only when notion_page_id is passed. The page is checked to be in the Blog data source BEFORE the image is generated. The property is replaced with one external file pointing at the Cloudinary URL. No create_database_item call, so repo rule 5 does not apply."
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  }
+}
