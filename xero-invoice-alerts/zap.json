@@ -5,7 +5,7 @@
     {
       "name": "daily-sweep",
       "workflow_id": "019fd4cc-6d23-7aa4-964a-ddc6cf489a1b",
-      "current_version_id": "01a1a4ec-a85e-7445-86e9-3b7c2f816545",
+      "current_version_id": "01a1ca09-c670-7b04-a438-0753d964c91e",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AfoEGVl7ZLu-3M2wCex1hA",
       "enabled": true,
       "trigger": {
@@ -25,13 +25,13 @@
         "manual_run_note": "`trigger-workflow 019fd4cc-6d23-7aa4-964a-ddc6cf489a1b --input '{\"dryRun\":true}'` computes the whole pass and reports what it WOULD send, sending nothing and writing no state. That is the safe way to inspect this Zap against live Xero data."
       },
       "created_at": "2026-08-06T01:59:54.917Z",
-      "version_created_at": "2026-11-04T04:58:57.159Z",
+      "version_created_at": "2026-11-11T09:56:42.357Z",
       "description": "Schedule, weekdays 9 AM: the 7-day window read. Since 2026-11 a BACKSTOP for the three pollers below (shared alert-state Table, so nothing alerts twice) and still the only path that marks expense claims Paid."
     },
     {
       "name": "poll-bill-draft",
       "workflow_id": "01a1a4ec-bb09-7d01-9de5-84c1ecf739fc",
-      "current_version_id": "01a1a4ec-d409-7fdc-9de0-08ba4362a9d9",
+      "current_version_id": "01a1ca09-f56a-7336-92fb-bd7cbc20543c",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AWfiBQuTVwzq-TAeOs2rqA",
       "enabled": true,
       "trigger": {
@@ -45,7 +45,7 @@
         },
         "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
       },
-      "version_created_at": "2026-11-04T04:59:08.987Z",
+      "version_created_at": "2026-11-11T09:56:54.573Z",
       "description": "Xero New Bill (status=draft), polled every 15 min → Slack #finance alert, via the shared per-invoice loop and alert-state Table.",
       "deploy": {
         "state": "published",
@@ -57,7 +57,7 @@
     {
       "name": "poll-bill-authorised",
       "workflow_id": "01a1a4ec-e96b-76e1-ad2d-63d956bc8034",
-      "current_version_id": "01a1a4ed-0369-76e2-8f95-f5a361e02d95",
+      "current_version_id": "01a1ca0a-20c3-7558-9f59-23cca3d5872b",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVjhtSIaFvHIT2nIRwk3dg",
       "enabled": true,
       "trigger": {
@@ -71,7 +71,7 @@
         },
         "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
       },
-      "version_created_at": "2026-11-04T04:59:20.475Z",
+      "version_created_at": "2026-11-11T09:57:05.510Z",
       "description": "Xero New Bill (status=authorised), polled every 15 min → approval email to the subcontractor (bills with a line on account 490 only).",
       "deploy": {
         "state": "published",
@@ -83,7 +83,7 @@
     {
       "name": "poll-sales-invoice-draft",
       "workflow_id": "01a1a4ed-1600-7a3d-b5fa-3ee36d6befd2",
-      "current_version_id": "01a1a4ed-320b-7daf-97ee-b94acb5fb241",
+      "current_version_id": "01a1ca0a-4b33-71ba-96cc-2ad5c28cca8f",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXYSTLesUD1cC78ZjpH2jA",
       "enabled": true,
       "trigger": {
@@ -97,7 +97,7 @@
         },
         "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
       },
-      "version_created_at": "2026-11-04T04:59:32.345Z",
+      "version_created_at": "2026-11-11T09:57:16.399Z",
       "description": "Xero New Sales Invoice (status=draft), polled every 15 min → Slack #finance alert.",
       "deploy": {
         "state": "published",
@@ -108,10 +108,10 @@
     },
     {
       "name": "poll-bill-paid",
-      "workflow_id": null,
-      "current_version_id": null,
-      "trigger_url": null,
-      "enabled": false,
+      "workflow_id": "01a1ca0a-5d96-7208-ae97-d43e36f73e68",
+      "current_version_id": "01a1ca0a-75c9-7f3f-835c-eead1643c360",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQ7riNyzfqvNFkZa2TMYtg",
+      "enabled": true,
       "trigger": {
         "selected_api": "XeroCLIAPI@2.22.1",
         "action": "bill",
@@ -125,7 +125,7 @@
       },
       "description": "Xero New Bill (status=paid), polled every 15 min → if the bill belongs to a pending expense claim (Expense Claim Bills Table), set the Notion claim to Paid. No alerts.",
       "deploy": {
-        "state": "pending-create",
+        "state": "published",
         "workflow_name": "xero-invoice-alerts · poll bill paid",
         "description": "Polls Xero for newly PAID bills every 15 minutes and sets the matching Notion expense claim to Paid. One of five deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
         "enable_on_publish": true
