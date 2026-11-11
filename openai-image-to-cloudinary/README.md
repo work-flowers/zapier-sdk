@@ -13,7 +13,9 @@ short URL.
 - **Start mode:** manual, with no trigger. The skill calls it with Zapier MCP
   `run_workflow` and reads the return value from the run, in the same session. A
   catch hook would be fire-and-forget and couldn't return the URL.
-- **Workflow ID:** assigned on first publish (see `zap.json`).
+- **Workflow ID:** `01a1c8b3-5044-7297-b62c-8f412cbe6dfc` · account-visible · enabled
+  (published 2026-11-11 via PR #293)
+- **Editor:** https://zapier.com/durables-editor/01a1c8b3-5044-7297-b62c-8f412cbe6dfc
 - **Connections:** `openai_wf` ChatGPT (OpenAI), `cloudinary_wf` Cloudinary
   ddvqw2xgc, `notion_wf` the work.flowers Notion workspace.
 
@@ -39,8 +41,8 @@ flowchart TD
 
 ## How to call it
 
-Zapier MCP `run_workflow` with `workflow` set to this Zap's `workflow_id` and `input`
-set to:
+Zapier MCP `run_workflow` with `workflow: "01a1c8b3-5044-7297-b62c-8f412cbe6dfc"` and
+`input` set to:
 
 | Field | Required | Default | Notes |
 | --- | --- | --- | --- |
@@ -124,7 +126,20 @@ Each run also uses Zapier tasks for the action and fetch steps.
 
 ## Tested
 
-2026-11-11 with `run-durable` (hosted, same runtime as production):
+**Acceptance, 2026-11-11, through Zapier MCP `run_workflow` + `get_run_output` on the
+published v1 (`01a1c8b3-88b8-…`):**
+
+- flare, `low`, text-only → `finished` in 17 s,
+  `hero-images/acceptance-flare-low.webp` (run `01a1c8b3-d750-…`). `get_run_output`
+  returns the same output.
+- sunburst edit, `low`, reference = the image above → `finished` in 20 s,
+  `hero-images/acceptance-sunburst-edit.webp` (run `01a1c8b4-36bf-…`).
+
+The operations journal shows `max_attempts: 5` on the completed generate step. That is
+the server's default on a *completed* checkpoint (durable 0.14.1 doesn't send it on
+success). The client enforces the step's `maxAttempts: 1` when deciding whether to retry.
+
+Before publish, 2026-11-11 with `run-durable` (hosted, same runtime as production):
 
 - flare, `low`, text-only → `hero-images/zap-test-flare-low.webp`, 1824x1024; both
   `image_url` and `png_url` serve.
