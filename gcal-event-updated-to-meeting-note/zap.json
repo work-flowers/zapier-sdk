@@ -1,10 +1,16 @@
 {
   "name": "gcal-event-updated-to-meeting-note",
-  "retired": {
-    "retired_on": "2026-10-20",
-    "reason": "The Meeting Notes data source was converted to a Notion Meetings database (Full Page Meeting Notes, early access). In a Meetings database the linked calendar event supplies the note's title, date and Notion-member attendees, and Notion updates them when the event changes, so this Zap's job is now native.",
-    "classic_handoff_disabled": "2026-10-20 — the classic hand-off Zap \"Updated Meeting -> hand off to durable\" was turned off in the Zapier UI.",
-    "how_to_revive": "`enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and turn the classic hand-off Zap back on. No republish needed; the version is intact."
+  "revival": {
+    "revived_on": "2026-11-11",
+    "why": "The 2026-10-20 retirement assumed a Notion Meetings database moves a note when its linked calendar event is rescheduled. It does not. Found on the Neha Hebbar note (event m9hfa9ru0a3gv89nsptu9ltrco): moved 11 Nov 09:30 -> 12 Nov 10:00 SGT, note still on the old time hours later.",
+    "previous_retirement": {
+      "retired_on": "2026-10-20",
+      "reason": "The Meeting Notes data source was converted to a Notion Meetings database (Full Page Meeting Notes, early access). In a Meetings database the linked calendar event supplies the note's title, date and Notion-member attendees, and Notion updates them when the event changes, so this Zap's job is now native.",
+      "classic_handoff_disabled": "2026-10-20 — the classic hand-off Zap \"Updated Meeting -> hand off to durable\" was turned off in the Zapier UI.",
+      "how_to_revive": "`enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and turn the classic hand-off Zap back on. No republish needed; the version is intact."
+    },
+    "table_still_populated": "Checked 2026-11-11: [Table] Meeting Note IDs still gets a row per new note, keyed on the occurrence id (e.g. m9hfa9ru0a3gv89nsptu9ltrco, 7gqqej0vk0bsqq970rg12sjq98), so the lookup works unchanged.",
+    "post_merge": "The republish keeps the live enabled state (disabled). After the publish run: `enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b`, set `enabled: true` here and in the root README. Do NOT turn the classic hand-off Zap back on."
   },
   "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
   "current_version_id": "01a13d21-4bde-790f-b81d-1cf92415b14a",
@@ -12,12 +18,16 @@
   "enabled": false,
   "is_private": false,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
-    "action": "hook_v2",
-    "authentication_id": null,
-    "params": {},
-    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/omxtpUyRac5QSs8W/",
-    "trigger_note": "Catch hook fed by the classic hand-off Zap (see handoff + README). `webhook_url` is filled by the publish pipeline on merge; it is the URL the classic Zap POSTs to. `trigger_url` is Zapier-internal. The Google credential now lives on the classic Zap, not here."
+    "selected_api": "GoogleCalendarCLIAPI@1.15.0",
+    "action": "event_updated",
+    "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "params": {
+      "calendarid": "dennis@work.flowers",
+      "expand_recurring": false
+    },
+    "authentication_note": "work.flowers Google Calendar connection (Google Calendar dennis@work.flowers), the same one workflowers-events-to-scw-busy polls.",
+    "trigger_note": "Native polling trigger again since 2026-11-11 (it was a catch hook fed by a classic hand-off Zap from 2026-10-15). Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so an event already delivered re-fires on each new `updated`, which is exactly a reschedule. The raw Google event path in normalizeInput is the one this trigger feeds. Fires ~60 times a day; everything but a real reschedule of a meeting with a note exits at a free step.",
+    "params_note": "expand_recurring: false, as before the hand-off and as on the sibling calendar Zaps. A single-occurrence edit arrives keyed by occurrence id; a whole-series edit arrives as the master and skips."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
@@ -33,7 +43,7 @@
   "created_at": "2026-07-31T09:10:03.422Z",
   "version_created_at": "2026-10-15T01:15:55.013Z",
   "replaces_classic_zap": "Updated Meeting -> Update Meeting Note in Notion",
-  "description": "Classic hand-off Zap (Google Calendar reschedule of a meeting with a note) -> catch hook -> update the Date on its Notion meeting note. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates.",
+  "description": "Google Calendar event updated on dennis@work.flowers -> if it is a reschedule of a meeting with a Notion note, update the note Date and the date in its title. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates.",
   "handoff": {
     "why": "Durables dedupe trigger deliveries on the raw record id (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08). The native event_updated trigger sends the bare Google occurrence id, so it fired only on first sighting (300 runs, 300 distinct ids, 2026-09-07 → 2026-10-14) and a reschedule never reached this update-only Zap. A classic Zap (which dedupes on id + updated) forwards real reschedules here.",
     "classic_zap": "Updated Meeting → hand off to durable",
@@ -61,6 +71,7 @@
       },
       "retired": "2026-10 — restore it here once Zapier ships the W6ZE93-VMEWP fix and two reschedules of one event both fire"
     },
-    "verified": "2026-10-15: the Busy note (event 3c7cdd60bd6456b59d6220681b56f0b6) moved 11:00 -> 11:30 -> 11:00 SGT on 16 Oct produced two durable runs, 01a13d16-2759 (01:03Z) and 01a13d19-4987 (01:07Z), both updated: true."
+    "verified": "2026-10-15: the Busy note (event 3c7cdd60bd6456b59d6220681b56f0b6) moved 11:00 -> 11:30 -> 11:00 SGT on 16 Oct produced two durable runs, 01a13d16-2759 (01:03Z) and 01a13d19-4987 (01:07Z), both updated: true.",
+    "retired": "2026-11-11 — replaced by the native event_updated trigger now that W6ZE93-VMEWP is fixed. The classic Zap \"Updated Meeting -> hand off to durable\" stays OFF; its catch URL https://hooks.zapier.com/hooks/catch/20495893/omxtpUyRac5QSs8W/ stops being this Zap trigger on the republish. The classic-handoff branch in workflow.ts stays, unused."
   }
 }

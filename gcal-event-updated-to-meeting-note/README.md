@@ -1,21 +1,20 @@
 # gcal-event-updated-to-meeting-note
 
-> **⏸️ Retired 2026-10-20 — disabled, not deleted.** The Meeting Notes data source is now a Notion **Meetings database** (Full Page Meeting Notes, early access). In a Meetings database the linked calendar event supplies the note's title, date and Notion-member attendees, and Notion updates them itself when the event is rescheduled, so this Zap's job is native. The classic hand-off Zap *"Updated Meeting → hand off to durable"* was turned off the same day. To revive: `enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and turn the hand-off Zap back on; no republish needed. Everything below describes the workflow as it ran.
+> **🔁 Revived 2026-11-11, back on the native trigger.** It was retired on 2026-10-20 on the assumption that a Notion **Meetings database** keeps a note's date in step with its linked calendar event. **It does not.** The Neha Hebbar note (event `m9hfa9ru0a3gv89nsptu9ltrco`) was moved from 11 Nov 09:30 to 12 Nov 10:00 SGT, and the note stayed on the old time. `[Table] Meeting Note IDs` still gets a row for every new note, so the lookup works unchanged. The workflow now runs on Google Calendar `event_updated` directly, as before the hand-off. Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so a reschedule of an event that was already delivered now re-fires. **The classic hand-off Zap stays off.** **After the publish run:** `enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b`, because a republish keeps the Zap's live state (disabled). The sections on the classic hand-off below are history.
 
 Keeps a Notion **meeting note**'s `Date`, and the time shown in its title, in step with the Google Calendar event it came from. When a meeting is rescheduled, this writes the new start/end onto the existing note. It is **update-only**: it never creates a note, and touches only `Date` and the title's date mention.
 
 Replaces the classic Zap **“Updated Meeting → Update Meeting Note in Notion”**, which had been silently failing since May 2026 (see [Why the classic Zap stopped working](#why-the-classic-zap-stopped-working)).
 
-- **Trigger:** a `WebHookCLIAPI` catch hook, fed by the **classic hand-off Zap** *"Updated Meeting → hand off to durable"*, which watches Google Calendar → *New or Updated Event* on `dennis@work.flowers` and forwards only real reschedules of meetings that have a note (see [Classic hand-off](#classic-hand-off)). Until 2026-10 this durable polled `event_updated` itself. On durables that trigger fires **only on an event's first sighting**, so this update-only Zap never saw a reschedule.
-- **Catch URL:** filled into `zap.json` `trigger.webhook_url` by the publish pipeline on merge.
+- **Trigger:** Google Calendar → *New or Updated Event* (`GoogleCalendarCLIAPI@1.15.0` `event_updated`) on `dennis@work.flowers`, `expand_recurring: false`. Native again since 2026-11-11. From 2026-10-15 to 2026-11-11 a **classic hand-off Zap** fed a `WebHookCLIAPI` catch hook instead (see [Classic hand-off](#classic-hand-off)), because until Zapier's fix the durable trigger fired only on an event's first sighting, so this update-only Zap never saw a reschedule.
 - **Workflow ID:** `019fb770-139b-74ca-bf9b-fec7ea0c9c3b` · [editor](https://zapier.com/durables-editor/019fb770-139b-74ca-bf9b-fec7ea0c9c3b)
-- **Cost:** about 2–3 tasks per *actual* reschedule: the classic Zap's Webhooks POST plus this workflow's Notion read and write. The classic Zap's Table lookup and filters are free, and they stop everything else before the POST.
+- **Cost:** about 2 tasks per *actual* reschedule (the Notion read and write). The trigger fires ~60 times a day, but every other run exits at a free Table lookup or guard; see the historical note under Maintainer notes.
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    C([Classic Zap: GCal New or Updated Event<br/>+ free Table lookup + filter]) -- "POST source, id = event_id_updated, event fields" --> T([Catch hook])
+    T([Google Calendar: New or Updated Event<br/>dennis@work.flowers, expand_recurring false])
     T --> P{empty ping?}
     P -- yes --> S0[/skip: empty-payload/]
     P -- no --> G1{has event id?}
@@ -37,6 +36,8 @@ flowchart TD
 ```
 
 ## Classic hand-off
+
+> **History (2026-10-15 → 2026-11-11).** No longer in use: the workflow is back on the native trigger and the classic Zap is off. Kept in case the pattern is needed again; the `classic-handoff` branch in `workflow.ts` still accepts this payload.
 
 **Why it exists:** durables add a dedupe layer keyed on the trigger record's raw `id` (Zapier bug W6ZE93-VMEWP, filed from this Zap among others, confirmed 2026-09-08, no ETA). `event_updated` sends the bare occurrence id, so this workflow saw each event only once, on its first sighting: 300 runs, 300 distinct ids (2026-09-07 → 2026-10-14). A reschedule, the one thing it exists for, never arrived. Classic Zaps dedupe on `id` + `updated`, so a classic Zap watches the calendar and forwards each real reschedule here. Zapier Support recommended this workaround on 2026-09-08 and again on 2026-10-14.
 

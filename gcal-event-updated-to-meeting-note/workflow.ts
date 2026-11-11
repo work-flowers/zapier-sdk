@@ -6,10 +6,11 @@ import { z } from "zod";
 const sdk = createZapierSdk();
 
 // --- Bindings --------------------------------------------------------------
-// The Google Calendar credential lives on the classic hand-off Zap's trigger,
-// not here: this workflow never calls Google, it only consumes the event the
-// hand-off forwards. (It used to poll `event_updated` itself; that trigger
-// never re-fires on durables — see the README.)
+// The Google Calendar credential lives on the trigger (`event_updated`, see
+// zap.json), not here: this workflow never calls Google, it only consumes the
+// event the trigger delivers. From 2026-10-15 to 2026-11-11 a classic hand-off
+// Zap fed it through a catch hook instead, because the durable trigger did not
+// re-fire for an event it had already delivered; Zapier has since fixed that.
 const NOTION_CONNECTION = "notion_wf";
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
