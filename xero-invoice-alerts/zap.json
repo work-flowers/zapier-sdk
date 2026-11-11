@@ -50,7 +50,7 @@
       "deploy": {
         "state": "published",
         "workflow_name": "xero-invoice-alerts · poll bill draft",
-        "description": "Polls Xero for new DRAFT bills every 15 minutes and posts a #finance Slack alert. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "description": "Polls Xero for new DRAFT bills every 15 minutes and posts a #finance Slack alert. One of five deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
         "enable_on_publish": true
       }
     },
@@ -76,7 +76,7 @@
       "deploy": {
         "state": "published",
         "workflow_name": "xero-invoice-alerts · poll bill approved",
-        "description": "Polls Xero for newly AUTHORISED bills every 15 minutes and emails subcontractors their approval confirmation. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "description": "Polls Xero for newly AUTHORISED bills every 15 minutes and emails subcontractors their approval confirmation. One of five deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
         "enable_on_publish": true
       }
     },
@@ -102,7 +102,32 @@
       "deploy": {
         "state": "published",
         "workflow_name": "xero-invoice-alerts · poll sales invoice draft",
-        "description": "Polls Xero for new DRAFT sales invoices every 15 minutes and posts a #finance Slack alert. One of four deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "description": "Polls Xero for new DRAFT sales invoices every 15 minutes and posts a #finance Slack alert. One of five deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
+        "enable_on_publish": true
+      }
+    },
+    {
+      "name": "poll-bill-paid",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "XeroCLIAPI@2.22.1",
+        "action": "bill",
+        "authentication_id": "02336808-1736-878b-a0a8-87e02bb0aec3",
+        "params": {
+          "organization": "62699a8c-3351-40e8-9265-bdca5e037b03",
+          "status": "paid",
+          "_zap_polling_interval_minutes": 15
+        },
+        "params_note": "`_zap_polling_interval_minutes: 15` — undocumented Zapier key (support's 'temporary workaround', verified 2026-11-04); without it a durable poller runs ~1/min (~1,440 Xero calls/day). Must be a number; publish-changed-zaps.mjs refuses a Xero poller without it."
+      },
+      "description": "Xero New Bill (status=paid), polled every 15 min → if the bill belongs to a pending expense claim (Expense Claim Bills Table), set the Notion claim to Paid. No alerts.",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "xero-invoice-alerts · poll bill paid",
+        "description": "Polls Xero for newly PAID bills every 15 minutes and sets the matching Notion expense claim to Paid. One of five deployments of xero-invoice-alerts (source of truth: github.com/work-flowers/zapier-sdk/tree/main/xero-invoice-alerts).",
         "enable_on_publish": true
       }
     }

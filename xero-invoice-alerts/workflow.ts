@@ -498,10 +498,12 @@ interface PendingClaimBill {
   billNumber: string;
 }
 
-/** Xero's `/Date(1790844250093+0000)/` as `YYYY-MM-DD`, or null. */
-function xeroDotNetDate(v: unknown): string | null {
-  const m = /\/Date\((-?\d+)/.exec(String(v ?? ""));
-  return m ? isoDateFromEpochMs(Number(m[1])) : null;
+/** A raw Xero invoice that is a bill (ACCPAY) and fully paid. */
+export function isPaidBill(inv: any): boolean {
+  return (
+    (firstString(inv?.Type) ?? "").toUpperCase() === "ACCPAY" &&
+    (firstString(inv?.Status) ?? "").toUpperCase() === "PAID"
+  );
 }
 
 /** Pending claim bills whose invoice this pass read as PAID. */
@@ -517,10 +519,10 @@ function paidClaimBills(
   const out: { claim: PendingClaimBill; paidOn: string | null }[] = [];
   for (const claim of pending) {
     const inv = byId.get(claim.invoiceId);
-    if (!inv) continue;
-    if ((firstString(inv.Type) ?? "").toUpperCase() !== "ACCPAY") continue;
-    if ((firstString(inv.Status) ?? "").toUpperCase() !== "PAID") continue;
-    out.push({ claim, paidOn: xeroDotNetDate(inv.FullyPaidOnDate) });
+    if (!inv || !isPaidBill(inv)) continue;
+    // The sweep's GET /Invoices sends `/Date(ms+0000)/`; a poller payload sends
+    // ISO `2026-11-11T00:00:00`. toIsoDate reads both.
+    out.push({ claim, paidOn: toIsoDate(inv.FullyPaidOnDate) });
   }
   return out;
 }
@@ -1004,9 +1006,11 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     // 4. Expense claims whose bill is now paid. Runs after the alerts, and
     //    reads only what this pass already fetched — no extra Xero call.
-    //    Sweep only: a poll run carries a draft or approved invoice, never a paid one.
+    //    The sweep checks every bill in its window; a poll run checks only when
+    //    it carries a paid bill (the `poll-bill-paid` deployment). The draft and
+    //    authorised pollers never do, so they skip the Table read.
     let pendingClaims: PendingClaimBill[] = [];
-    if (!polled) pendingClaims = await ctx.step("read-pending-claim-bills", async () => {
+    if (!polled || isPaidBill(polled)) pendingClaims = await ctx.step("read-pending-claim-bills", async () => {
       const hit = await sdk.listTableRecords({
         table: CLAIM_BILLS_TABLE,
         keyMode: "names",
