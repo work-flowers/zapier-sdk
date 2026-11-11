@@ -1,12 +1,12 @@
 {
   "name": "openai-image-to-cloudinary",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a1c8b3-5044-7297-b62c-8f412cbe6dfc",
+  "current_version_id": "01a1c8b3-88b8-73a1-aedd-f12f333cc8e0",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZwQmg1M3tk7JggvV-8uBQ",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "openai-image-to-cloudinary",
     "description": "Generate an image with OpenAI GPT Image 2.6 (flare or sunburst; edits when a reference_image_url is given), upload it to Cloudinary's hero-images folder, and return the hosted secure_url instead of base64. Optionally attaches the URL to a Blog page's Cover Image File in Notion. Called on demand via Zapier MCP run_workflow by the hero-image-prompting skill.",
     "enable_on_publish": true
