@@ -13,7 +13,7 @@
     "post_merge": "The republish keeps the live enabled state (disabled). After the publish run: `enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b`, set `enabled: true` here and in the root README. Do NOT turn the classic hand-off Zap back on."
   },
   "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
-  "current_version_id": "01a13d21-4bde-790f-b81d-1cf92415b14a",
+  "current_version_id": "01a1cb26-9b66-7670-b399-851e0262a428",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Aer77C2EnpxTXUZysGSaog",
   "enabled": false,
   "is_private": false,
@@ -41,7 +41,7 @@
     "01JZCVG73MBWWB0357CEPS4903": "[Table] Meeting Note IDs — read for the page lookup, written back to keep Start/End/iCal UID current. Owned by the meeting-note-db-updates Notion Worker."
   },
   "created_at": "2026-07-31T09:10:03.422Z",
-  "version_created_at": "2026-10-15T01:15:55.013Z",
+  "version_created_at": "2026-11-11T15:07:49.078Z",
   "replaces_classic_zap": "Updated Meeting -> Update Meeting Note in Notion",
   "description": "Google Calendar event updated on dennis@work.flowers -> if it is a reschedule of a meeting with a Notion note, update the note Date and the date in its title. Looks the page up in [Table] Meeting Note IDs on the per-occurrence Google event id; update-only, never creates.",
   "handoff": {
