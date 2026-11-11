@@ -10,12 +10,12 @@
       "how_to_revive": "`enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and turn the classic hand-off Zap back on. No republish needed; the version is intact."
     },
     "table_still_populated": "Checked 2026-11-11: [Table] Meeting Note IDs still gets a row per new note, keyed on the occurrence id (e.g. m9hfa9ru0a3gv89nsptu9ltrco, 7gqqej0vk0bsqq970rg12sjq98), so the lookup works unchanged.",
-    "post_merge": "The republish keeps the live enabled state (disabled). After the publish run: `enable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b`, set `enabled: true` here and in the root README. Do NOT turn the classic hand-off Zap back on."
+    "post_merge": "Done 2026-11-11: published as 01a1cb26-9b66-7670-b399-851e0262a428 (run 43045073403), then enable-workflow at 15:08Z; get-workflow reports the event_updated trigger active. The classic hand-off Zap stays off."
   },
   "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
   "current_version_id": "01a1cb26-9b66-7670-b399-851e0262a428",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Aer77C2EnpxTXUZysGSaog",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "trigger": {
     "selected_api": "GoogleCalendarCLIAPI@1.15.0",
