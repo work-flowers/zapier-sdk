@@ -73,6 +73,16 @@ flowchart TD
 
 Design + spike evidence: [Notion task TKT-825](https://www.notion.so/3ce91b0711ac811aa266cfae9b977315).
 
+## Notion now nests replies, and the API can't (2026-11-12)
+
+Mirrored comments no longer read as one thread in Notion. **The sync still writes what it always has**: the first comment opens a discussion, and every later message is posted into it with `discussion_id`. On the first thread linked after the revival (the *dennis@work.flowers / Arvind* meeting note), the comments API returns all of them with one `discussion_id` and the same parent, including a reply Dennis typed in the Notion UI.
+
+**What changed is Notion's UI.** It now nests a reply under the specific comment it answers, shown indented with a *Hide reply* toggle. This is threaded comments, an early-access Notion feature (not GA or beta). The comments API has no way to reply to a specific comment: `POST /v1/comments` takes a `parent` (page or block) or a `discussion_id`, nothing more. So every mirrored message lands at the top level of the discussion and renders as its own item, in order and under its author's name. Existing threads render the same way, e.g. the October thread on *Obtain Claude Partner Network Certified status*.
+
+- **Not a bug here, and not fixable from the API today.** Revisit if the comments API gains a reply-to-comment field.
+- **Side observation:** comments created on 2026-11-12 report `parent: {type: "block_id", block_id: <page id>}` where October's reported `page_id`, on both `2022-06-28` and `2026-03-11`. A UI reply has the same parent, so this is not what changes the nesting. Nothing in the sync reads `parent`.
+- **Untested workaround:** open every linked thread on a 💬 callout block (see *Why an anchor block*) and check whether block discussions nest. Editing one ever-growing comment would lose per-author attribution, so it was ruled out.
+
 ## Why an anchor block
 
 The Notion API cannot open a second page-level thread. A page-parented comment opens a fresh discussion only when the page has none open; otherwise it joins the **most recently created** open thread (re-verified 2026-10-30). Until 2026-10-30 the link step posted page-parented regardless, and that day it linked a Slack thread to a task's open status-update thread, so every later status update on the task was mirrored into Slack.
