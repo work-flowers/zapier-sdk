@@ -16,23 +16,23 @@
 // (scw-events-to-workflowers-block-peter / workflowers-events-to-scw-busy-peter). Those
 // Zaps deliberately refuse to CREATE a mirror for an occurrence starting more
 // than HORIZON_DAYS out, because `expand_recurring: true` fires an open-ended
-// weekly series ~14 years (≈730 instances) into the future and Zapier's
-// polling dedupe means a skipped instance never re-fires on its own. This
+// weekly series ~14 years (≈730 instances) into the future, and a skipped
+// instance re-fires only if it is edited again. This
 // sweep runs daily, scans the sliver of calendar that just rolled INTO the
 // horizon (default window: days 23..30 from now, generous overlap so a few
 // missed days self-heal), and creates any mirror the map table says is
 // missing. Rows that already exist are free Table reads, so a quiet day
 // costs approximately nothing.
 //
-// It is also the RECONCILER for the coming week (days 0..7 by default), and
-// since 2026-09-08 that is where every post-creation change propagates:
+// It is also the RECONCILER for the coming week (days 0..7 by default), a
+// backstop for changes the trigger Zaps miss:
 //
-//   - Zapier's `event_updated` trigger never re-fires for an occurrence it
-//     has already delivered — 300 runs across the three event_updated Zaps
-//     in this repo, 300 distinct event ids, and a live reschedule that the
-//     trigger's own poll returned first yet never produced a run. So a
-//     moved or renamed occurrence, a decline, a switch to all-day or Free
-//     never reaches the trigger Zaps' update/delete branches.
+//   - From 2026-09-08 to 2026-10-28 this was the ONLY path for post-creation
+//     changes: durables deduped `event_updated` on the raw event id (Zapier
+//     bug W6ZE93-VMEWP), so a moved or renamed occurrence, a decline, or a
+//     switch to all-day or Free never reached the trigger Zaps' update/delete
+//     branches. Zapier fixed that (verified 2026-10-28); the trigger Zaps now
+//     handle those changes themselves, and this pass catches any they drop.
 //   - A recurring series truncated or moved with "this and following" gets
 //     an UNTIL on the old series instead of a cancellation per occurrence,
 //     so even `event_cancelled` never hears about the vanished occurrences.
@@ -794,9 +794,9 @@ const workflow = defineDurable<Input, unknown>(
         }
         // No row, or a row previously marked deleted (source was cancelled,
         // declined, made Free or all-day at the time) whose source is
-        // block-worthy again: create a fresh mirror and (re)record it. The
-        // trigger Zaps' own revive path never runs, because event_updated does
-        // not re-fire for an occurrence it has already delivered.
+        // block-worthy again: create a fresh mirror and (re)record it. Since
+        // the 2026-10-28 dedupe fix the trigger Zaps' own revive path usually
+        // gets there first; this is the backstop.
         const spec = mirrorSpec(dir, eventId, event);
         const updatedAt = firstString(event.updated);
         const entry = { eventId, start: spec.startDateTime, summary: spec.mirrorSummary };
@@ -830,8 +830,8 @@ const workflow = defineDurable<Input, unknown>(
 
       // --- Reconcile: bring every ACTIVE row in the coming week into line with
       // its source -----------------------------------------------------------
-      // The trigger Zaps only ever see an occurrence once (see the header), so
-      // everything that happens to it afterwards is caught here: gone or
+      // Backstop for what the trigger Zaps miss (see the header), including
+      // "this and following" truncations they never hear about: gone or
       // cancelled -> unmirror; no longer block-worthy (declined, Free,
       // all-day) -> unmirror; moved or renamed -> update the mirror. A source
       // that did not come back from the searches is fetched by id before it is
