@@ -50,5 +50,5 @@ The test row was deleted afterwards.
 ## Maintenance notes
 
 - **Unrecognized-payload posture: throw** (repo default).
-- **Cost:** one `sdk.fetch` (the welcome send) per enrolled subscriber, so 1 task a run from 2026-12-01. That is the same as the 1-task minimum the run would cost anyway. Skipped runs cost the minimum, 1 task. The Table reads and writes are free.
+- **Cost:** one `sdk.fetch` (the welcome send) per enrolled subscriber, so 1 task a run from 2026-12-01. Skipped runs cost nothing: on 2026-11-12 Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord, not yet on the pricing page): a run that exits without running an app action is free. The Table reads and writes are free.
 - The Table id, `WELCOME_EMAIL_ID` and the step-2 offset are also in the sender. Change them together.

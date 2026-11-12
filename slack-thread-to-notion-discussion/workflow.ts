@@ -727,8 +727,10 @@ async function linkThread(
   // timed-out attempt so nothing linked). Instead the prompt is started once
   // with createActionRun, whose callbackUrl is a durable callback: Zapier POSTs
   // the finished run there and the run parks at no cost until then. There is
-  // deliberately no pending row and no Decline button: an ignored request means
-  // "do nothing", and mentioning a page again re-prompts. Anyone may approve.
+  // deliberately no pending row: an ignored request means "do nothing", and
+  // mentioning a page again re-prompts. A Reject button (since 2026-11-12)
+  // dismisses the prompt for good: the thread gets a `declined` thread_map row,
+  // so later mentions in it exit at the free guard. Anyone may click either.
   const title = await ctx.step("get-page-title", async () => pageTitle(pageId!));
   const [approvalDone, approvalCallbackUrl] = await ctx.createCallback({
     name: "approval-result",
@@ -742,7 +744,9 @@ async function linkThread(
       connection: SLACK_CONNECTION,
       callbackUrl: approvalCallbackUrl,
       inputs: {
-        request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments.`,
+        request_message: `Link this thread to *<${notionPageUrl(pageId!)}|${title.replace(/[<>|]/g, "")}>*? Approving mirrors every reply here into Notion comments. Rejecting stops asking in this thread.`,
+        decline_inclusion: "yes",
+        decline_label: "Reject",
         send_as: "bot",
         approval_type: "channel",
         channel: msg.channelId,
@@ -770,6 +774,37 @@ async function linkThread(
     }
     return approvalDecision(approvalOutcome.value) ?? "unknown";
   });
+  if (decision === "Declined") {
+    // Record the rejection so this thread never prompts again. Skip the write
+    // if the thread got a row meanwhile (linked by another approval, or an
+    // earlier rejection): never overwrite an active link with a decline.
+    const rowMeanwhile = await findThreadMapRow(
+      ctx,
+      "recheck-thread-map-declined",
+      msg.channelId,
+      msg.threadTs,
+    );
+    if (rowMeanwhile) {
+      console.log(`approval for ${msg.channelId}/${msg.threadTs} rejected, but the thread already has a row — leaving it`);
+      return { handled: "declined", recorded: false };
+    }
+    await ctx.step("write-thread-map-declined", async () =>
+      sdk.runAction({
+        appKey: "TableCLIAPI",
+        actionType: "write",
+        actionKey: "create_record",
+        inputs: {
+          table_id: THREAD_MAP_TABLE,
+          new__data__f1: msg.channelId,
+          new__data__f2: msg.threadTs,
+          new__data__f4: pageId,
+          new__data__f6: "declined",
+        },
+      }),
+    );
+    console.log(`approval for ${msg.channelId}/${msg.threadTs} rejected — thread marked declined`);
+    return { handled: "declined", recorded: true };
+  }
   if (decision !== "Approved") {
     console.log(`approval for ${msg.channelId}/${msg.threadTs} returned ${decision} — not linking`);
     return { handled: "not-approved", decision };

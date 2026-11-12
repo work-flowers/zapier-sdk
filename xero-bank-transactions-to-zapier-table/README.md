@@ -141,8 +141,9 @@ ours to set:
 
 ### Cost and freshness
 
-From 2026-12-01 every successful durable run costs at least 1 task, and each fire here makes at
-least one Xero read (`runAction`, 1 task per page). Hourly that was ~720+ tasks a month; daily it is
+Each fire here makes at least one Xero read (`runAction`, 1 task per page). That is an app action, so
+every fire costs at least 1 task from 2026-12-01, even though Zapier dropped its planned 1-task floor
+for runs with no app action on 2026-11-12. Hourly that was ~720+ tasks a month; daily it is
 **~30**. Xero's bank feeds arrive about once a day anyway, so most hourly fires found nothing new.
 
 **The trade:** [`drive-invoice-to-xero`](../drive-invoice-to-xero/) reads this Table to decide whether
