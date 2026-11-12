@@ -72,7 +72,7 @@ flowchart TD
 > **Verified 2026-10-29:** two renames of 3Cricket produced two runs on the native trigger (02:02Z and 02:07Z), each renaming Xero, Harvest and Drive. The classic Zap is off.
 
 **Why it exists:** durables add a dedupe layer keyed on the trigger record's raw
-`id` (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA). Notion's trigger
+`id` (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, fixed 2026-10-28). Notion's trigger
 sends the bare page id, so this Zap fired once per company and then never again:
 **48 of its 49 runs (2026-08-24 → 2026-10-14) fired on the day the company was
 created**, so renames of established companies never reached Xero, Harvest or
@@ -116,9 +116,9 @@ and the page id goes in `page_id`. On this path the workflow never reads `id`.
 **Cost:** 1 classic task per rename (the POST), plus the durable's usual tasks.
 Renames are rare.
 
-**When Zapier fixes W6ZE93-VMEWP:** switch this durable back to the native Notion
-trigger in `zap.json`, re-verify with two renames of the same company, then turn
-the classic Zap off. The hand-off branch can stay. A raw page id still works.
+**Done 2026-10-29:** Zapier fixed W6ZE93-VMEWP, so this durable is back on the native
+Notion trigger (verified with two renames of 3Cricket) and the classic Zap is off.
+The hand-off branch stays. A raw page id still works.
 
 ## Maintainer notes
 

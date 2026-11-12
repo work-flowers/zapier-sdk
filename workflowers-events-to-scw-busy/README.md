@@ -56,7 +56,7 @@ Same three layers as the sibling — structural (one direction per Zap), the sha
 ## Maintainer notes
 
 - **The horizon guard is load-bearing** — see the sibling README; keep `HORIZON_DAYS` (30) in lockstep across all three workflows.
-- Task cost: 0 for every skip path, 1 per create (and, if the trigger ever does re-fire, per move/delete). Renames and description edits on the source change nothing on a bare Busy block, so the sweep's reconcile pass compares times only in this direction.
+- Task cost: 0 for every skip path, 1 per create, move or delete (the trigger re-fires on edits since Zapier's 2026-10-28 dedupe fix). Renames and description edits on the source change nothing on a bare Busy block, so the sweep's reconcile pass compares times only in this direction.
 - Skip-worthy transitions (declined later, changed to all-day, changed to Free) delete an existing block.
 - **RSVP filter (2026-10-14):** only invites Dennis has accepted or marked tentative ("maybe") are mirrored. A declined or not-yet-answered (`needsAction`) invite is skipped, and an existing mirror is deleted. An event with no self attendee (his own event, no guests) has no RSVP and is mirrored. Accepting an invite later re-fires the trigger and creates the mirror then (since the W6ZE93 fix); `gcal-block-sweep`'s daily reconcile is the backstop.
 - This Zap polls the same calendar as [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/); they coexist (separate workflows, separate dedupe).

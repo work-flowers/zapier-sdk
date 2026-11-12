@@ -39,7 +39,7 @@ flowchart TD
 
 > **History (2026-10-15 → 2026-11-11).** No longer in use: the workflow is back on the native trigger and the classic Zap is off. Kept in case the pattern is needed again; the `classic-handoff` branch in `workflow.ts` still accepts this payload.
 
-**Why it exists:** durables add a dedupe layer keyed on the trigger record's raw `id` (Zapier bug W6ZE93-VMEWP, filed from this Zap among others, confirmed 2026-09-08, no ETA). `event_updated` sends the bare occurrence id, so this workflow saw each event only once, on its first sighting: 300 runs, 300 distinct ids (2026-09-07 → 2026-10-14). A reschedule, the one thing it exists for, never arrived. Classic Zaps dedupe on `id` + `updated`, so a classic Zap watches the calendar and forwards each real reschedule here. Zapier Support recommended this workaround on 2026-09-08 and again on 2026-10-14.
+**Why it exists:** durables add a dedupe layer keyed on the trigger record's raw `id` (Zapier bug W6ZE93-VMEWP, filed from this Zap among others, confirmed 2026-09-08, fixed 2026-10-28). `event_updated` sends the bare occurrence id, so this workflow saw each event only once, on its first sighting: 300 runs, 300 distinct ids (2026-09-07 → 2026-10-14). A reschedule, the one thing it exists for, never arrived. Classic Zaps dedupe on `id` + `updated`, so a classic Zap watches the calendar and forwards each real reschedule here. Zapier Support recommended this workaround on 2026-09-08 and again on 2026-10-14.
 
 **The catch hook dedupes too.** A raw catch hook drops a second POST whose top-level `id` it has already seen (proven 2026-10-01 on [`save-tagged-docs-to-notion`](../save-tagged-docs-to-notion/)). So the hand-off must **not** send the event id as `id`. It sends `<event id>_<updated>`, and the event id goes in `event_id`. On this path the workflow never reads `id`.
 
@@ -76,7 +76,7 @@ flowchart TD
 6. **Test:** move a past meeting that has a note by 30 minutes, then check `list-workflow-runs` for `updated: true`. Move it back and confirm a **second** run. That second run is the whole point of the hand-off.
 7. Turn the classic Zap on, and make sure the *old* classic Zap stays off. Otherwise both write the note.
 
-**When Zapier fixes W6ZE93-VMEWP:** switch back to the native trigger kept under `zap.json` `handoff.previous_trigger`, re-verify with two reschedules of one event, then turn the classic Zap off. The raw-event input path still works (`run-durable` replays use it), so the workflow needs no change.
+**Done 2026-11-11:** Zapier fixed W6ZE93-VMEWP (verified 2026-10-28), so the workflow is back on the native trigger and the classic Zap is off. The raw-event input path still works (`run-durable` replays use it), so the workflow needs no change.
 
 ## The two Google Calendar ids — and why it matters
 

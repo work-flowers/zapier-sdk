@@ -22,7 +22,7 @@ Both carry `https://luma.com/event/manage/evt-…`, which is where the event id 
 
 ## The backfill, and why the triggers alone are not enough
 
-An event usually exists, with guests, before Dennis is added as a host. By then the polling triggers have **already delivered** the event and its guests, and the two workflows skipped them as unmanaged. Durables never re-deliver an id (`CLAUDE.md` → "Known Zapier bug"), so without a backfill the event and everyone who registered before the invite would be lost.
+An event usually exists, with guests, before Dennis is added as a host. By then the polling triggers have **already delivered** the event and its guests, and the two workflows skipped them as unmanaged. Adding a host need not re-deliver them: Zapier's 2026-10-28 fix to W6ZE93-VMEWP re-fires an id only for a new `updated` value, which is untested on this Luma integration (see `CLAUDE.md`). Without a backfill the event and everyone who registered before the invite would be lost.
 
 So after recording the event, this Zap:
 

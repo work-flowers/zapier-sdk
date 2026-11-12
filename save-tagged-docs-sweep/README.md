@@ -6,7 +6,7 @@ Daily backstop for [`save-tagged-docs-to-notion`](../save-tagged-docs-to-notion/
 
 ## Why it exists
 
-The trigger Zap's Readwise trigger is deduped on the document id by the durable runtime (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, no ETA), so it fires **once per document, ever**. Reader auto-tags articles when they're saved, which usually uses up that one firing, so a `sendtonotion` tag added later never reaches the workflow. Nothing errors. Missed tags were backfilled by hand on 2026-10-01 and 2026-10-14 before this sweep existed.
+Until Zapier's fix, the trigger Zap's Readwise trigger was deduped on the document id by the durable runtime (Zapier bug W6ZE93-VMEWP, confirmed 2026-09-08, fixed 2026-10-28), so it fired **once per document, ever**. Reader auto-tags articles when they're saved, which usually uses up that one firing, so a `sendtonotion` tag added later never reaches the workflow. Nothing errors. Missed tags were backfilled by hand on 2026-10-01 and 2026-10-14 before this sweep existed.
 
 **Retired 2026-10-28**, after Zapier shipped the fix (see the note at the top).
 
