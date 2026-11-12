@@ -31,6 +31,7 @@ flowchart TD
 - Posting `as_bot` is load-bearing: the companion Zap's `user.is_bot` guard is what stops this post from echoing back into Notion.
 - The `message_map` row is written right after the post returns (the Slack `ts` isn't known before); the `is_bot` guard covers the seconds-wide gap.
 - Comment `rich_text` is flattened to plain text v1; mentions render as names, block-level formatting is dropped.
+- **Notion's nested replies don't sync back as nesting (2026-11-12).** A reply typed in the Notion UI under a specific comment is still one comment in the linked discussion, so it posts to Slack like any other. In the other direction, the API can't nest, so mirrored Slack messages appear as top-level items. See [`slack-thread-to-notion-discussion`](../slack-thread-to-notion-discussion/README.md#notion-now-nests-replies-and-the-api-cant-2026-11-12).
 
 ## Data
 
