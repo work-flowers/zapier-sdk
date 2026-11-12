@@ -30,7 +30,7 @@ The send endpoint rejects drafts ("You can't programmatically send emails with s
 
 **Schedule by Zapier** `everyDay` at 9:00 AM account time (Asia/Singapore), weekends included. The tick payload is ignored, and the clock is read in a step.
 
-It was `everyHour` until 2026-10-31. From 2026-12-01 every successful durable run costs at least 1 task, so hourly was ~720 tasks a month, nearly all of them runs with nothing due. Daily is ~30. The steps are days apart, so each now goes out at the first 9 AM run after it falls due, up to a day later than before. The welcome alone couldn't wait that long, so enrol sends it.
+It was `everyHour` until 2026-10-31, when Next Gen Zap billing (from 2026-12-01) was going to charge at least 1 task per run, so hourly would have been ~720 tasks a month, nearly all of them runs with nothing due. On 2026-11-12 Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord, not yet on the pricing page): a run that exits without running an app action is free. An idle run here only reads the Table, so hourly would now be free too. **It stays daily anyway (reviewed 2026-11-12):** the steps are days apart, enrol already sends the welcome at once, and 9 AM is a sensible time for an email to land. The steps are days apart, so each now goes out at the first 9 AM run after it falls due, up to a day later than before. The welcome alone couldn't wait that long, so enrol sends it.
 
 Manual runs (`trigger-workflow <id> --input '…'`) take:
 
@@ -113,6 +113,6 @@ Both test rows were deleted afterwards. The two `[TEST]` emails (`em_7mpx0k3aqe8
 
 ## Maintenance notes
 
-- **Cost:** from 2026-12-01 an idle run costs its 1-task minimum (the Table read itself is free), so ~30 tasks a month. Each row handled costs two `sdk.fetch` tasks (the subscriber GET and the send). Steps 2–5 come to 8 tasks per subscriber here, plus 1 for the welcome in enrol.
+- **Cost:** an idle run costs nothing (the Table read is free, and Zapier dropped the planned 1-task floor on 2026-11-12). Each row handled costs two `sdk.fetch` tasks (the subscriber GET and the send). Steps 2–5 come to 8 tasks per subscriber here, plus 1 for the welcome in enrol.
 - **Concurrency:** runs are daily and short, and enrol can send a welcome at the same moment. Two overlapping runs could both pick up a row, but the second send would get `EMAIL_ALREADY_SENT`, so no one gets an email twice. The same holds if this run picks up a fresh row while enrol is still sending its welcome.
 - `MAX_ROWS_PER_RUN` (50) bounds a run. If more rows are due, the rest wait a day.

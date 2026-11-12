@@ -164,11 +164,10 @@ as an unrecognised payload, never as a request to sweep.
 
 ## Cost
 
-Polls that find nothing cost no Zapier task. Each new or edited contact is one run (≥1 task from
-2026-12-01), plus one Notion `sdk.fetch` per link written. At the ~12 contacts per 13 days observed,
-that is roughly **30 tasks a month**, the same as the daily schedule it replaced. Every edit to *any*
-contact fires a run, so a burst of contact edits in Xero costs a task each, even though most exit at
-the Account Number check.
+Polls that find nothing cost no Zapier task. Each new or edited contact is one run, and a run that
+exits before any app action is free (Zapier dropped its planned 1-task floor on 2026-11-12), so a
+run that stops at the Account Number check costs nothing. Runs that go on cost their Notion
+`sdk.fetch` calls, one task each, from 2026-12-01.
 
 ## Maintainer notes
 

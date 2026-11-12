@@ -6,7 +6,7 @@ For guests of Notion SG events that **Dennis manages**, it upserts the Contact a
 
 ## Why one trigger covers new *and* updated guests
 
-The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest check-in | none>`**. Durables dedupe on the raw top-level id (`CLAUDE.md` → "Known Zapier bug", W6ZE93-VMEWP), so a versioned id is what lets an approval change or a check-in fire again. **No write is keyed on that id.** Notion writes key on the Luma event id, the guest's email (through the email Table) and the Event + Contact pair. Limitation, inherited from the integration: a guest who returns to a state they were already in (approved → declined → approved) does not fire again.
+The integration sets each item's `id` to **`<guest id>_<approval_status>_<latest check-in | none>`**. Durables deduped on the raw top-level id until Zapier's 2026-10-28 fix to W6ZE93-VMEWP (see `CLAUDE.md`), and the fix re-fires an id only for a new `updated` value, untested on this integration. So the versioned id is still what lets an approval change or a check-in fire again. **No write is keyed on that id.** Notion writes key on the Luma event id, the guest's email (through the email Table) and the Event + Contact pair. Limitation, inherited from the integration: a guest who returns to a state they were already in (approved → declined → approved) does not fire again.
 
 ## What it does
 

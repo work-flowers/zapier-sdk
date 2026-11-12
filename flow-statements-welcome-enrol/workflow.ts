@@ -13,8 +13,7 @@ const sdk = createZapierSdk();
 //
 // Sending here rather than in the sender is what let the sender drop from
 // hourly to daily without a new subscriber waiting up to a day for the
-// welcome. It costs no extra task: from 2026-12-01 this run is billed its
-// 1-task minimum anyway, and the send fetch is that one task.
+// welcome. The send fetch is this run's one task (from 2026-12-01).
 
 // --- Bindings --------------------------------------------------------------
 const BUTTONDOWN_CONNECTION = "buttondown_api";

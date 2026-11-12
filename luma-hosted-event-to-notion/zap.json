@@ -18,7 +18,7 @@
     "params": {},
     "authentication_note": "Private integration `Luma Calendar API (Unofficial Integration by work.flowers)` (App247901, source work-flowers/zapier-luma-hosted), connection `Notion Singapore Community` holding that calendar's API key. Dennis is not a manager of the calendar, so Zapier's built-in Luma app (OAuth) cannot see it.",
     "params_note": "Empty params = the integration's defaults: every event on the calendar starting from 2 days ago to 365 days ahead. Filtering to Dennis's events happens in code against the Luma Managed Events Table, because Luma's API does not list hidden hosts.",
-    "trigger_note": "Polling. The item id is the Luma event id, so each event is delivered ONCE ever (durable dedupe, ticket W6ZE93-VMEWP); there is no update path. An event delivered before Dennis managed it is replayed by luma-manager-email-to-table's backfill."
+    "trigger_note": "Polling. The item id is the Luma event id. Each event was delivered ONCE ever under the durable dedupe bug W6ZE93-VMEWP; Zapier fixed it 2026-10-28, but the fix re-fires an id only for a new `updated` value, untested on this private integration, so treat it as having no update path. An event delivered before Dennis managed it is replayed by luma-manager-email-to-table's backfill."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
