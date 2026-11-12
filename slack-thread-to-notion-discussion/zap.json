@@ -3,8 +3,8 @@
   "workflow_id": "01a05bff-37b5-7b12-b5aa-3bbafe623e84",
   "current_version_id": "01a1ce58-3a2c-7563-aac8-dcc1a1fe3aff",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXFDiWkQneWQ0eZXslP2ug",
-  "enabled": false,
-  "disabled_note": "Disabled 2026-10-31 by Dennis, with its two companions: the full two-way comment sync wasn't worth its cost once Next Gen Zap billing starts (2026-12-01; ~1,100 runs a month each for the two event Zaps, nearly all skips). Revival approved 2026-11-12: Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord), so a run that exits without an app action is free, and these skips exit at code and Table reads. Re-enable all three after the revival PR merges.",
+  "enabled": true,
+  "disabled_note": "Disabled 2026-10-31 by Dennis, with its two companions: the full two-way comment sync wasn't worth its cost once Next Gen Zap billing starts (2026-12-01; ~1,100 runs a month each for the two event Zaps, nearly all skips). Revival approved 2026-11-12: Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord), so a run that exits without an app action is free, and these skips exit at code and Table reads. Re-enabled 2026-11-12 with enable-workflow, after PR #298 published the Reject button.",
   "is_private": false,
   "deploy": {
     "state": "published",

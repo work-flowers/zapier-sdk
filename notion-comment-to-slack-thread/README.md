@@ -1,6 +1,6 @@
 # notion-comment-to-slack-thread
 
-> **⏸️ Disabled 2026-10-31, being revived (2026-11-12).** It was turned off, with its companions, because Next Gen Zap billing (from 2026-12-01) was going to charge at least 1 task per run, and the two event-driven Zaps ran ~1,100 times a month each, nearly all skips. On 2026-11-12 Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord, not yet on the pricing page): a run that exits without running an app action is free. Those skips exit at plain code and Zapier Table reads, so they will cost nothing. The revival also added a **Reject** button to the Slack link prompt. Re-enable after the PR merges: `enable-workflow` all three and set `enabled` in each `zap.json`.
+> **✅ Re-enabled 2026-11-12** (disabled 2026-10-31 to 2026-11-12). It was turned off, with its companions, because Next Gen Zap billing (from 2026-12-01) was going to charge at least 1 task per run, and the two event-driven Zaps ran ~1,100 times a month each, nearly all skips. On 2026-11-12 Zapier dropped the planned 1-task floor (per a Zapier PM in the NoCodeOps Discord, not yet on the pricing page): a run that exits without running an app action is free. Those skips exit at plain code and Zapier Table reads, so they will cost nothing. The revival also added a **Reject** button to the Slack link prompt.
 
 Notion → Slack half of the **Slack thread ↔ Notion discussion two-way sync** (TKT-825). A new comment in a linked task discussion posts into the linked Slack thread as a bot message under `<author> (via Notion)`.
 
