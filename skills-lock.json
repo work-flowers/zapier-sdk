@@ -1,47 +1,47 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "workflows-create": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/create/SKILL.md",
-      "computedHash": "98d77864f3c42078b8321dbc52020879204ae36f338dc49008050e3ff796194d"
+      "computedHash": "ec2f52a53b3a0b45b00d1e8cc4e891bd2338bca557d3ffc0bbc0b2cd86de09c7"
     },
     "workflows-doctor": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/doctor/SKILL.md",
-      "computedHash": "6fe3c1e72e2eae2ea1c1675a71d55194dfcc339943817567cfe7336160674d33"
+      "computedHash": "40f9dced05497c7444fabf9bc893f556930e0fc2e0e2964b74b50fcac98dd8f6"
     },
     "workflows-history": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/history/SKILL.md",
-      "computedHash": "92f344640cb59f9f2293fb8c4731c129f7857b3125e9ff838d9cbcf126d66616"
+      "computedHash": "9b856eb962c9798359dba6961a6e6fd09735914a037eae6cfd746f081e6934fa"
     },
     "workflows-install": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/install/SKILL.md",
-      "computedHash": "cc2cb392f11ad08e24f1f9def3dfea28da6142c13637d5fd3ced78ddf82c30ed"
+      "computedHash": "425e965660d59241fb0e8fcc3066e80b7dac6a1713d9d52ac2230fc1d5095a5c"
     },
     "workflows-list": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/list/SKILL.md",
-      "computedHash": "c3c3b47f17e1a71d78c4ef3efe3e1e64ed7909416e43dbb0bfb0f0d466be9a35"
+      "computedHash": "7ea96017f496f88ced322661a97489f6b8e21e871b4374c9c0185fb92d3dd1fb"
     },
     "workflows-modify": {
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/modify/SKILL.md",
-      "computedHash": "a832eb9558a0f02a814f728a30f3d9e7a149076ebb4454ae7a9399fb63cfe20b"
+      "computedHash": "bc35f835f27781aa560bf13e1b0244f98f7c406c002fa258aaf160630c18809a"
     },
     "zapier-sdk": {
       "source": "zapier/sdk",
       "sourceType": "github",
       "skillPath": "skills/zapier-sdk/SKILL.md",
-      "computedHash": "05c8672171b468a51ba32d3e0507702132f5c21442d2560db0e6ec9f4ff7d149"
+      "computedHash": "13518d280b3e76d94ffc712a50ebf3f528e2a9cda12a00c1cc2bc38262140eff"
     }
   }
 }
