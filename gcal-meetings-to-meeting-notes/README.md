@@ -1,12 +1,40 @@
 # gcal-meetings-to-meeting-notes
 
-Pre-creates a Notion **full-page meeting note**, linked to its Google Calendar event, for every upcoming meeting on Dennis's work calendar. It runs as a daily sweep over the next 7 days, so a note exists (and has been enriched) before the meeting starts.
+Pre-creates a Notion **full-page meeting note**, linked to its Google Calendar event, for every upcoming meeting on Dennis's work calendar, so a note exists (and has been enriched) before the meeting starts.
 
-- **Trigger:** Schedule by Zapier, every day at 6:00 AM, weekends included.
-- **Workflow ID:** assigned on first publish (see `zap.json`).
-- **Cost:** ~1 task per day for the calendar search, plus 1 task per note created. Table reads and writes are free. Roughly 30 + (meetings per month) tasks a month.
+One `workflow.ts`, **two deployments** (see `zap.json` → `deployments[]`):
+
+| Deployment | Trigger | Notes |
+| --- | --- | --- |
+| `new-event` | Google Calendar *New Event* (`primary` calendar) | A new **one-off** meeting gets its note straight away, however far ahead it is. A new **recurring series** gets notes for its **first 3** upcoming occurrences only. A single occurrence delivered on its own is noted only if it starts within 7 days. |
+| `sweep` | Schedule by Zapier, daily 6:00 AM, weekends included | Notes every meeting in the next 7 days that has no note yet. This is what reaches the 4th and later occurrences of a series, one day at a time. |
+
+- **Workflow IDs:** assigned on first publish.
+- **Cost:** each meeting is noted once, by whichever path reaches it first, for 1 task. The sweep adds ~1 task a day for its calendar search, and a new series adds 1 search task on the trigger path. Skips are free. Table reads and writes are free.
 
 ## Workflow
+
+### `new-event` deployment
+
+```mermaid
+flowchart TD
+    E([Google Calendar: New Event]) --> M{a meeting?<br/>same filter as the sweep}
+    M -- no --> X0[/skip, free/]
+    M -- yes --> K{shape}
+    K -- recurring master --> SS[expand-series<br/>event_v2 over 31 days from the next occurrence<br/>1 task]
+    SS --> F3[first 3 upcoming occurrences<br/>that pass the filter]
+    F3 --> L1[Table lookup each, free]
+    K -- one-off --> O{already over?}
+    O -- yes --> X1[/skip/]
+    O -- no --> L1
+    K -- single occurrence --> H{starts within 7 days?}
+    H -- no --> X2[/skip: left to the sweep/]
+    H -- yes --> L1
+    L1 -- has note --> X3[/skip/]
+    L1 -- no note --> N1[get-or-create note, 1 task<br/>then Table upsert, free]
+```
+
+### `sweep` deployment
 
 ```mermaid
 flowchart TD
@@ -41,10 +69,11 @@ On the 2026-11-17 dry run this kept 15 of 24 events in the coming week, skipping
 
 ## Recurring meetings and the cap
 
-A recurring invite with no end date is the obvious way to burn tasks, so two fences hold it:
+A recurring invite with no end date is the obvious way to burn tasks, so three fences hold it:
 
-1. **The window bounds it.** The search asks Google for events between now and 7 days out with `expand_recurring: true`, so a series can only ever contribute the occurrences inside that window, about one a day at most. Each day the next day rolls in.
-2. **`MAX_CREATES_PER_RUN` = 40.** A normal week here is around 15 meetings, so 40 is well above routine. Past the cap the run still creates and records the first 40 (soonest first), then throws, so the run shows red and Zapier sends an error alert. The rest roll into later runs. A cap hit means something abnormal, such as a mass import or a calendar shared by mistake, and someone should look before raising it.
+1. **The trigger notes only the first 3 occurrences** of a new series (`SERIES_FIRST_INSTANCES`), found with one search over the 31 days from its next occurrence (`SERIES_SEARCH_DAYS`). A series whose next occurrence is further out than that gets no notes from the trigger; the sweep reaches it as it comes within 7 days.
+2. **The sweep's window bounds it.** The search asks Google for events between now and 7 days out with `expand_recurring: true`, so a series can only ever contribute the occurrences inside that window, about one a day at most. Each day the next day rolls in.
+3. **`MAX_CREATES_PER_RUN` = 40** on the sweep. A normal week here is around 15 meetings, so 40 is well above routine. Past the cap the run still creates and records the first 40 (soonest first), then throws, so the run shows red and Zapier sends an error alert. The rest roll into later runs. A cap hit means something abnormal, such as a mass import or a calendar shared by mistake, and someone should look before raising it.
 
 ## How a note is created
 
@@ -91,8 +120,11 @@ Creating the note fires the Meeting Notes "page added" automation, so the Worker
 npx zapier-sdk --stability experimental trigger-workflow <workflow-id> --input '{"dryRun":true}'
 ```
 
+Either deployment accepts any of these (the code is the same):
+
 | Input | Default | Meaning |
 | --- | --- | --- |
+| `event_id` | | Replay the trigger path for one Google event id (1 task to fetch it): a one-off is noted, a series master gets its first 3 occurrences. Use it for an event the trigger missed. |
 | `dryRun` | `false` | List `wouldCreate` without writing anything. The search still costs 1 task. |
 | `from_days` / `to_days` | `0` / `7` | Window in days from now. Fractions are allowed (`0.1` ≈ 2.4 h); max 31. |
 | `max_creates` | `40` | Cap for this run, 1..200. |
@@ -100,9 +132,10 @@ npx zapier-sdk --stability experimental trigger-workflow <workflow-id> --input '
 
 ## Known limits
 
-- **A meeting booked after 6:00 AM for the same day** gets no note from this Zap, since by the next run it has passed. Its note still gets made the way notes were made before this Zap, at meeting time. An `event_created` trigger for that case was considered and left out to keep the first version simple.
+- **SCW mirrors are one-off events.** [`scw-events-to-workflowers-block`](../scw-events-to-workflowers-block/) mirrors each SCW occurrence as its own event, up to 30 days ahead, so each mirror is noted by the trigger as it is created, up to 30 days ahead, rather than by the sweep. Same total cost, earlier notes.
+- **New Event does not fire for a reschedule.** A meeting moved later is handled by [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/), which moves the note.
 - **The search returns one page.** Ordered by start time, a truncated page would drop the far end of the window, which later runs reach, so it is logged rather than fatal. The busiest week checked returned 24 events.
-- **Untested:** an event created minutes before the run, before Notion Calendar has synced it. Notion may reject an `event_id` it has not seen yet. If that happens the step throws and the next run retries it.
+- **Sync lag is not a problem:** Notion accepted a brand-new event's id 0 s after creation (probe 2026-11-17), so the trigger calls Notion without waiting.
 
 ## Verified behaviour (2026-11-17)
 
@@ -112,3 +145,10 @@ npx zapier-sdk --stability experimental trigger-workflow <workflow-id> --input '
 | Dry run over the next 7 days | 24 events → 15 meetings → 2 already noted → 13 to create |
 | Live create (one event, window 0..0.1 days) | Note created in Meeting Notes as Dennis, titled `AI COE - Weekly Long Sync @12:00`; Worker enriched it within ~13s; one Table row |
 | Search truncation | 20–24 Nov returned 8 events; no page limit hit |
+| Notion sync lag on a brand-new event | Free, guest-less test event created and POSTed at once: `200` on the first try (event deleted and note trashed afterwards) |
+| Trigger path: mirror that already ended | skipped `already-over` |
+| Trigger path: webinar listing only Dennis | skipped `no-other-guests` |
+| Trigger path: one-off that already has a note | skipped at the free Table check |
+| Trigger path: new recurring series (Procurement and Operations Automation, weekly) | notes for exactly the first 3 occurrences: 18 Nov, 25 Nov, 2 Dec |
+| Trigger path: one-off four weeks out (15 Dec) | note created |
+| Sweep dry run after the trigger tests | 15 meetings, 4 already noted, 11 to create: it skips what the trigger made |

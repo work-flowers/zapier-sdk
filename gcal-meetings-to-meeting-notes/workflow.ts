@@ -1,9 +1,16 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes
 //
-// Daily sweep that pre-creates a Notion full-page meeting note, linked to its
-// Google Calendar event, for every upcoming meeting on Dennis's work calendar.
+// Pre-creates a Notion full-page meeting note, linked to its Google Calendar
+// event, for every upcoming meeting on Dennis's work calendar. One source, two
+// deployments (see zap.json):
 //
-// Each morning it reads the next HORIZON_DAYS of the primary calendar with
+//   - TRIGGER (Google Calendar "New Event"): notes a new one-off meeting as soon
+//     as it is created, however far ahead; for a new recurring series, notes
+//     only its first SERIES_FIRST_INSTANCES occurrences. See handleNewEvent.
+//   - SWEEP (daily schedule): everything below. It is what eventually notes
+//     every later occurrence of a series, one horizon-day at a time.
+//
+// The SWEEP reads the next HORIZON_DAYS of the primary calendar with
 // recurring events expanded (one search task), keeps the events that are
 // meetings (see classifySkip), drops any occurrence that already has a row in
 // `[Table] Meeting Note IDs` (free), and for the rest calls Notion's
@@ -83,6 +90,10 @@ const MAX_CREATES_PER_RUN = 40;
  * rather than fatal.
  */
 const SEARCH_PAGE_WARN = 100;
+/** A new recurring series gets notes for this many upcoming occurrences; the sweep does the rest. */
+const SERIES_FIRST_INSTANCES = 3;
+/** How far the trigger path searches to expand a new series into occurrences. */
+const SERIES_SEARCH_DAYS = 31;
 
 // --- Input -------------------------------------------------------------------
 // On a scheduled run the payload is Schedule by Zapier's tick, whose `id` IS
@@ -96,6 +107,7 @@ const InputSchema = z
     to_days: z.number().optional().nullable(),
     max_creates: z.number().optional().nullable(),
     dryRun: z.boolean().optional().nullable(),
+    event_id: z.string().optional().nullable(),
   })
   .passthrough();
 
@@ -197,6 +209,8 @@ const FoundEventSchema = z
   .object({
     id: z.string().optional().nullable(),
     iCalUID: z.string().optional().nullable(),
+    recurringEventId: z.string().optional().nullable(),
+    recurrence: z.array(z.string()).optional().nullable(),
     status: z.string().optional().nullable(),
     eventType: z.string().optional().nullable(),
     summary: z.string().optional().nullable(),
@@ -384,38 +398,16 @@ async function upsertMeetingNoteRow(
   );
 }
 
-// --- Workflow ----------------------------------------------------------------
 
-const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: DurableContext, rawInput: Input) => {
-  const input = InputSchema.parse(normalizeInput(rawInput));
-  const dryRun = input.dryRun === true;
-
-  // "Now": a manual override, else the schedule tick's own timestamp, else
-  // one guarded clock read (fixed for every retry of the run).
-  const nowMs =
-    epochMsFromRfc3339(firstString(input.now)) ??
-    epochMsFromRfc3339(firstString(input.id)) ??
-    (await ctx.step("read-clock", async () => Date.now()));
-
-  const fromDays = typeof input.from_days === "number" ? input.from_days : 0;
-  const toDays = typeof input.to_days === "number" ? input.to_days : HORIZON_DAYS;
-  if (!(toDays > fromDays) || fromDays < 0 || toDays > 31) {
-    throw new Error(`invalid window: from_days=${fromDays} to_days=${toDays} (0 <= from < to <= 31)`);
-  }
-  const maxCreates = typeof input.max_creates === "number" ? input.max_creates : MAX_CREATES_PER_RUN;
-  if (!Number.isInteger(maxCreates) || maxCreates < 1 || maxCreates > 200) {
-    throw new Error(`invalid max_creates=${maxCreates} (an integer 1..200)`);
-  }
-
-  const afterMs = nowMs + fromDays * DAY_MS;
-  const beforeMs = nowMs + toDays * DAY_MS;
-
-  // One task. event_v2's field names are inverted: `start_time` is "Start
-  // Time BEFORE" (upper bound) and `end_time` is "End Time AFTER" (lower
-  // bound); verified on gcal-block-sweep 2026-08-28. An event already under
-  // way (ends after now) is included; its note usually exists, so it skips
-  // at the free Table lookup.
-  const found = await ctx.step("search-events", async () =>
+/**
+ * One task: `event_v2` over [afterMs, beforeMs] with recurring events
+ * expanded, ordered by start. The field names are inverted: `start_time` is
+ * "Start Time BEFORE" (upper bound) and `end_time` is "End Time AFTER" (lower
+ * bound); verified on gcal-block-sweep 2026-08-28. An event already under way
+ * (ends after `afterMs`) is included.
+ */
+async function searchEvents(ctx: DurableContext, stepId: string, afterMs: number, beforeMs: number): Promise<FoundEvent[]> {
+  const found = await ctx.step(stepId, async () =>
     sdk.runAction({
       appKey: GCAL_APP_KEY,
       actionType: "search",
@@ -431,7 +423,6 @@ const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: Dur
       },
     }),
   );
-
   const seen = new Set<string>();
   const events: FoundEvent[] = [];
   for (const raw of ((found as { data?: unknown[] }).data ?? [])) {
@@ -443,21 +434,213 @@ const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: Dur
     }
   }
   if (events.length >= SEARCH_PAGE_WARN) {
-    console.log(`search returned ${events.length} events; the far end of the window may be truncated and is left to later runs`);
+    console.log(`${stepId} returned ${events.length} events; the far end of the window may be truncated`);
   }
+  return events;
+}
 
-  const skipped: Record<string, number> = {};
-  const candidates: Array<{ event: FoundEvent; eventId: string }> = [];
-  for (const event of events) {
-    const reason = classifySkip(event);
-    if (reason) {
-      skipped[reason] = (skipped[reason] ?? 0) + 1;
+interface NoteOutcome {
+  eventId: string;
+  pageId: string;
+  summary: string | null;
+  start: string | null;
+  created: boolean;
+}
+
+/**
+ * The paid part, shared by both paths: get-or-create the note (one task),
+ * then record it in the Table (free). Callers have already checked the Table.
+ */
+async function noteForEvent(
+  ctx: DurableContext,
+  stepPrefix: string,
+  calendarId: string,
+  event: FoundEvent,
+): Promise<NoteOutcome> {
+  const eventId = firstString(event.id)!;
+  const note = await getOrCreateMeetingNote(ctx, `${stepPrefix}-meeting-note`, calendarId, eventId);
+  await upsertMeetingNoteRow(ctx, `${stepPrefix}-record`, event, eventId, note.pageId);
+  return {
+    eventId,
+    pageId: note.pageId,
+    summary: firstString(event.summary),
+    start: firstString(event.start?.dateTime),
+    created: note.created,
+  };
+}
+
+/** Free check, then the paid create, for a list of occurrences; returns what happened to each. */
+async function noteEach(
+  ctx: DurableContext,
+  stepPrefix: string,
+  calendarId: string,
+  events: FoundEvent[],
+): Promise<{ alreadyHaveNote: string[]; notes: NoteOutcome[] }> {
+  const alreadyHaveNote: string[] = [];
+  const notes: NoteOutcome[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const eventId = firstString(events[i].id)!;
+    if (await hasMeetingNoteRow(ctx, `${stepPrefix}-lookup-${i}`, eventId)) {
+      alreadyHaveNote.push(eventId);
       continue;
     }
-    candidates.push({ event, eventId: firstString(event.id)! });
+    notes.push(await noteForEvent(ctx, `${stepPrefix}-${i}`, calendarId, events[i]));
+  }
+  return { alreadyHaveNote, notes };
+}
+
+// --- Per-event path ------------------------------------------------------------
+
+/**
+ * The trigger deployment hands over one raw Google event. The schedule tick
+ * and manual inputs never carry a `start` object, so that is the switch.
+ */
+function isGoogleEventPayload(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === "string" &&
+    !!v.start &&
+    typeof v.start === "object" &&
+    (v.kind === "calendar#event" || typeof v.iCalUID === "string" || typeof v.etag === "string")
+  );
+}
+
+/** The occurrence ids of a series start with the master's id (`<master>_<startUTC>`). */
+function isOccurrenceOf(event: FoundEvent, masterId: string): boolean {
+  return firstString(event.recurringEventId) === masterId;
+}
+
+/**
+ * Google Calendar "New Event" delivers three shapes:
+ *
+ *   - a ONE-OFF meeting: noted now, however far ahead it is, as long as it has
+ *     not already ended;
+ *   - a recurring MASTER (it carries `recurrence`): the series is expanded with
+ *     one bounded search and its first SERIES_FIRST_INSTANCES upcoming
+ *     occurrences are noted; the rest roll into the sweep's 7-day window one at
+ *     a time, so an endless series never fans out;
+ *   - a single OCCURRENCE of a series, delivered on its own (an edited
+ *     instance): noted only if it starts within the sweep's horizon, because
+ *     anything later is the sweep's job anyway.
+ *
+ * Everything goes through the same meeting filter, free Table check and
+ * get-or-create as the sweep, so the two paths overlap harmlessly.
+ */
+async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record<string, unknown>> {
+  const parsed = FoundEventSchema.safeParse(raw);
+  const eventId = parsed.success ? firstString(parsed.data.id) : null;
+  if (!parsed.success || !eventId) {
+    // A non-empty payload we cannot read is a real event we failed to
+    // understand; the repo rule is to throw, never skip silently.
+    throw new Error(`unrecognised Google event payload: ${JSON.stringify(raw).slice(0, 300)}`);
+  }
+  const event = parsed.data;
+
+  const skip = classifySkip(event);
+  if (skip) return { path: "event", skipped: skip, eventId };
+
+  const calendarId = calendarIdFromEvents([event]);
+  if (!calendarId) {
+    throw new Error(`could not read the calendar id from event ${eventId}; the Google event payload may have changed`);
+  }
+
+  const nowMs = await ctx.step("read-clock", async () => Date.now());
+  const startMs = epochMsFromRfc3339(firstString(event.start?.dateTime));
+  const endMs = epochMsFromRfc3339(firstString(event.end?.dateTime));
+  if (startMs === null || endMs === null) return { path: "event", skipped: "not-timed", eventId };
+
+  const isMaster = (event.recurrence ?? []).length > 0;
+  const isOccurrence = !isMaster && firstString(event.recurringEventId) !== null;
+
+  if (isMaster) {
+    // The master's start is the series' first occurrence. Search from
+    // whichever is later, that or now, so a series created mid-way through
+    // its life is noted from its next occurrence.
+    const fromMs = Math.max(nowMs, startMs - 60000);
+    const occurrences = (await searchEvents(ctx, "expand-series", fromMs, fromMs + SERIES_SEARCH_DAYS * DAY_MS))
+      .filter((e) => isOccurrenceOf(e, eventId) && classifySkip(e) === null)
+      .slice(0, SERIES_FIRST_INSTANCES);
+    if (occurrences.length === 0) {
+      return { path: "series", skipped: "no-upcoming-occurrences", eventId, searchedDays: SERIES_SEARCH_DAYS };
+    }
+    const { alreadyHaveNote, notes } = await noteEach(ctx, "series", calendarId, occurrences);
+    return { path: "series", seriesId: eventId, summary: firstString(event.summary), alreadyHaveNote, notes };
+  }
+
+  if (endMs <= nowMs) return { path: "event", skipped: "already-over", eventId };
+  if (isOccurrence && startMs > nowMs + HORIZON_DAYS * DAY_MS) {
+    return { path: "occurrence", skipped: "beyond-horizon-left-to-sweep", eventId };
+  }
+
+  const { alreadyHaveNote, notes } = await noteEach(ctx, isOccurrence ? "occurrence" : "one-off", calendarId, [event]);
+  return { path: isOccurrence ? "occurrence" : "one-off", alreadyHaveNote, notes };
+}
+
+// --- Workflow ----------------------------------------------------------------
+
+const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: DurableContext, rawInput: Input) => {
+  const normalized = normalizeInput(rawInput);
+  if (isGoogleEventPayload(normalized)) {
+    const result = await handleNewEvent(ctx, normalized);
+    console.log(JSON.stringify(result));
+    return result;
+  }
+
+  const input = InputSchema.parse(normalized);
+  const dryRun = input.dryRun === true;
+
+  // Manual replay of the trigger path for one event: `{"event_id": "<id>"}`.
+  // One task to fetch the event, then exactly what the trigger would do.
+  const replayId = firstString(input.event_id);
+  if (replayId) {
+    const fetched = await ctx.step("fetch-event", async () =>
+      sdk.runAction({
+        appKey: GCAL_APP_KEY,
+        actionType: "search",
+        actionKey: "event_by_id",
+        connection: GCAL_CONNECTION,
+        inputs: { calendarid: GCAL_CALENDAR, event_id: replayId, _zap_search_success_on_miss: true },
+      }),
+    );
+    const event = ((fetched as { data?: unknown[] }).data ?? [])[0];
+    if (!event) throw new Error(`event ${replayId} not found on the primary calendar`);
+    const result = { replay: true, ...(await handleNewEvent(ctx, event)) };
+    console.log(JSON.stringify(result));
+    return result;
+  }
+
+  // "Now": a manual override, else the schedule tick's own timestamp, else
+  // one guarded clock read (fixed for every retry of the run).
+  const nowMs =
+    epochMsFromRfc3339(firstString(input.now)) ??
+    epochMsFromRfc3339(firstString(input.id)) ??
+    (await ctx.step("read-sweep-clock", async () => Date.now()));
+
+  const fromDays = typeof input.from_days === "number" ? input.from_days : 0;
+  const toDays = typeof input.to_days === "number" ? input.to_days : HORIZON_DAYS;
+  if (!(toDays > fromDays) || fromDays < 0 || toDays > 31) {
+    throw new Error(`invalid window: from_days=${fromDays} to_days=${toDays} (0 <= from < to <= 31)`);
+  }
+  const maxCreates = typeof input.max_creates === "number" ? input.max_creates : MAX_CREATES_PER_RUN;
+  if (!Number.isInteger(maxCreates) || maxCreates < 1 || maxCreates > 200) {
+    throw new Error(`invalid max_creates=${maxCreates} (an integer 1..200)`);
+  }
+
+  const afterMs = nowMs + fromDays * DAY_MS;
+  const beforeMs = nowMs + toDays * DAY_MS;
+  const events = await searchEvents(ctx, "search-events", afterMs, beforeMs);
+
+  const skipped: Record<string, number> = {};
+  const candidates: FoundEvent[] = [];
+  for (const event of events) {
+    const reason = classifySkip(event);
+    if (reason) skipped[reason] = (skipped[reason] ?? 0) + 1;
+    else candidates.push(event);
   }
 
   const summary: Record<string, unknown> = {
+    path: "sweep",
     dryRun,
     window: { from: isoFromEpochMs(afterMs), to: isoFromEpochMs(beforeMs) },
     events: events.length,
@@ -473,38 +656,37 @@ const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: Dur
   }
 
   const alreadyHaveNote: string[] = [];
-  const toCreate: Array<{ event: FoundEvent; eventId: string }> = [];
+  const toCreate: FoundEvent[] = [];
   for (let i = 0; i < candidates.length; i++) {
-    const { eventId } = candidates[i];
-    if (await hasMeetingNoteRow(ctx, `lookup-${i}`, eventId)) alreadyHaveNote.push(eventId);
-    else toCreate.push(candidates[i]);
+    if (await hasMeetingNoteRow(ctx, `lookup-${i}`, firstString(candidates[i].id)!)) {
+      alreadyHaveNote.push(firstString(candidates[i].id)!);
+    } else {
+      toCreate.push(candidates[i]);
+    }
   }
 
-  const planned = toCreate.map(({ event, eventId }) => ({
-    eventId,
-    start: firstString(event.start?.dateTime),
-    summary: firstString(event.summary),
-  }));
   if (dryRun) {
-    return { ...summary, meetings: candidates.length, alreadyHaveNote: alreadyHaveNote.length, wouldCreate: planned, cap: maxCreates };
+    return {
+      ...summary,
+      meetings: candidates.length,
+      alreadyHaveNote: alreadyHaveNote.length,
+      wouldCreate: toCreate.map((e) => ({ eventId: e.id, start: firstString(e.start?.dateTime), summary: firstString(e.summary) })),
+      cap: maxCreates,
+    };
   }
 
-  const created: Array<{ eventId: string; pageId: string; summary: string | null }> = [];
-  const linkedExisting: Array<{ eventId: string; pageId: string; summary: string | null }> = [];
   const batch = toCreate.slice(0, maxCreates);
+  const notes: NoteOutcome[] = [];
   for (let i = 0; i < batch.length; i++) {
-    const { event, eventId } = batch[i];
-    const note = await getOrCreateMeetingNote(ctx, `meeting-note-${i}`, calendarId, eventId);
-    await upsertMeetingNoteRow(ctx, `record-${i}`, event, eventId, note.pageId);
-    (note.created ? created : linkedExisting).push({ eventId, pageId: note.pageId, summary: firstString(event.summary) });
+    notes.push(await noteForEvent(ctx, `sweep-${i}`, calendarId, batch[i]));
   }
 
   const result = {
     ...summary,
     meetings: candidates.length,
     alreadyHaveNote: alreadyHaveNote.length,
-    created,
-    linkedExisting,
+    created: notes.filter((n) => n.created),
+    linkedExisting: notes.filter((n) => !n.created),
   };
   console.log(JSON.stringify(result));
 
