@@ -385,6 +385,28 @@ function isFreemail(email: string): boolean {
   return FREEMAIL_PREFIXES.some((p) => domain.startsWith(p));
 }
 
+/** Hosts that hold a profile or listing page rather than being the company's
+ *  own site. A request whose "website" is `linkedin.com/company/acme` names
+ *  LinkedIn's domain, and matching on it files the requester under the
+ *  LinkedIn company record (Arkidaadvisory, 2026-11-17). Matched on the host
+ *  and any subdomain (`au.linkedin.com`, `m.facebook.com`). */
+const NON_COMPANY_HOSTS = [
+  "linkedin.com", "lnkd.in", "facebook.com", "fb.com", "instagram.com",
+  "x.com", "twitter.com", "youtube.com", "youtu.be", "tiktok.com",
+  "threads.net", "pinterest.com", "github.com", "gitlab.com", "medium.com",
+  "substack.com", "linktr.ee", "beacons.ai", "calendly.com", "wa.me",
+  "whatsapp.com", "t.me", "google.com", "goo.gl", "bit.ly",
+  "notion.site", "wixsite.com", "carrd.co", "about.me",
+];
+
+/** The company's own domain from a website field, or "" when the field is a
+ *  social profile or other third-party page. */
+function companyWebsiteDomain(website: string): string {
+  const d = normalizeDomain(website);
+  if (d === "") return "";
+  return NON_COMPANY_HOSTS.some((h) => d === h || d.endsWith(`.${h}`)) ? "" : d;
+}
+
 /** The canonical spelling of a select option, or "" when the value isn't one.
  *  Case-insensitive, because a vocabulary we have never seen is unlikely to
  *  agree with Notion's on capitalisation. */
@@ -1337,7 +1359,7 @@ async function fileRequest(
   // consumer mailbox yields no domain (the host is the provider's, not the
   // employer's), so a Gmail requester is not filed under a company called Gmail.
   const emailDomain = isFreemail(req.email) ? "" : normalizeDomain(req.email);
-  const domain = normalizeDomain(req.website) || emailDomain;
+  const domain = companyWebsiteDomain(req.website) || emailDomain;
 
   const knownContactPageId = await ctx.step(`${key}-peek-contact`, async () => {
     try {

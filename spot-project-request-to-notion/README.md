@@ -342,6 +342,12 @@ Steps taken, in order:
 
 To republish after a change, the CLI path in the sibling READMEs applies unchanged; only `--trigger` needs the same version pin.
 
+## Social-profile websites (2026-11-17)
+
+A request's `website` is sometimes a profile page, not the company's own site. Arkidaadvisory (request `0270000000000c400hE`) gave `https://www.linkedin.com/company/arkida-advisory/posts/`. The workflow took `linkedin.com` as the company domain, matched the existing **LinkedIn** Company (`COM-6`) by Website, and linked the new Contact and Deal to it. Repaired by hand the same day: Deal and Contact relinked to Arkida Advisory (`COM-1002`), and the dedupe Table row's `Company Page ID` updated.
+
+`companyWebsiteDomain` now discards a website whose host (or a subdomain of it) is in `NON_COMPANY_HOSTS`: LinkedIn, Facebook, Instagram, X, GitHub, Linktree and similar. The domain then falls back to the requester's email domain, unless that is a consumer mailbox. Add a host to the list when another one turns up.
+
 ## Maintainer notes
 
 - **All three CRM data sources now have a default template**, so `template_mode: "default"` applies on every create here and the `no default template` fallback should never fire: Contacts `33b91b07-…`, Companies `21991b07-11ac-807d-…`, Deals `21a91b07-11ac-80a9-…`. (CLAUDE.md's note that only Contacts had one is a 2026-07-25 snapshot; Companies and Deals have since gained theirs.) The fallback is kept regardless — it is what lets a template be added or removed in Notion with no code change.

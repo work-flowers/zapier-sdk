@@ -61,6 +61,12 @@ Durable run `01a03cd4-0ed6-…` returned `checked: 5`, `acceptedWithEmail: 2`, a
 
 The first *real* filing run will happen the first time a genuinely new acceptance appears that isn't already in the dedupe Table; watch that run's history for the created Deal + the written dedupe row.
 
+## Social-profile websites (2026-11-17)
+
+A request's `website` is sometimes a profile page, not the company's own site. Arkidaadvisory (request `0270000000000c400hE`) gave `https://www.linkedin.com/company/arkida-advisory/posts/`. The workflow took `linkedin.com` as the company domain, matched the existing **LinkedIn** Company (`COM-6`) by Website, and linked the new Contact and Deal to it. Repaired by hand the same day: Deal and Contact relinked to Arkida Advisory (`COM-1002`), and the dedupe Table row's `Company Page ID` updated.
+
+`companyWebsiteDomain` now discards a website whose host (or a subdomain of it) is in `NON_COMPANY_HOSTS`: LinkedIn, Facebook, Instagram, X, GitHub, Linktree and similar. The domain then falls back to the requester's email domain, unless that is a consumer mailbox. Add a host to the list when another one turns up.
+
 ## Idempotency & concurrency
 
 The shared dedupe Table makes retries, overlapping runs, and the trigger Zap all safe. A scheduled run is a single execution (no concurrent trigger events), and each request is filed under keyed steps, so a durable retry re-runs only the steps that hadn't completed. As with the trigger Zap, a *failed* dedupe read rethrows rather than proceeding (a false "not seen" is how a duplicate Deal gets minted).
