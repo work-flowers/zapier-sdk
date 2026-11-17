@@ -1,0 +1,96 @@
+{
+  "name": "gcal-meetings-to-meeting-notes",
+  "is_private": false,
+  "deployments": [
+    {
+      "name": "sweep",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "ScheduleCLIAPI@1.7.0",
+        "action": "everyDay",
+        "authentication_id": null,
+        "params": {
+          "hod": "6:00 AM",
+          "weekends": "yes"
+        },
+        "authentication_note": "Schedule by Zapier needs no connection. Both credentials are connection aliases because the workflow body calls them.",
+        "trigger_note": "Daily at 6:00 AM account time, weekends included, so a meeting booked for later today normally has its note before it starts if it was booked before 6:00. The tick payload's `id` is the fire time as RFC 3339 and is the workflow's deterministic clock.",
+        "params_note": "`everyDay` params: `hod` (required) + optional `weekends`/`timezone_override`; NOT `moh` (that is everyHour's). Same shape as gcal-block-sweep.",
+        "manual_run_note": "trigger-workflow <id> --input '{\"dryRun\":true}' lists what it would create. Overrides: from_days/to_days (window in days from now, fractions allowed, max 31), max_creates (1..200, default 40), now (RFC 3339 anchor)."
+      },
+      "description": "Daily sweep of the next 7 days: notes every meeting not already in the Table, capped at 40 per run.",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "gcal-meetings-to-meeting-notes · daily sweep",
+        "description": "Daily sweep: read the next 7 days of Dennis's work Google Calendar (recurring events expanded), keep the meetings (timed, busy, not declined or unanswered, with another guest or mirrored from SCW), skip any occurrence already in [Table] Meeting Note IDs, and get-or-create a Notion full-page meeting note linked to each remaining event via POST /v1/meeting_notes with calendar_event (PAT through an API by Zapier connection, since Zapier's Notion connection is refused). Records each note's page id in the Table so later runs skip it for free. At most 40 notes per run; past that the run fails loudly. One of two deployments of gcal-meetings-to-meeting-notes (source of truth: github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes).",
+        "enable_on_publish": true
+      }
+    },
+    {
+      "name": "calendar-event",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": false,
+      "trigger": {
+        "selected_api": "GoogleCalendarCLIAPI@1.16.0",
+        "action": "event_updated",
+        "authentication_id": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+        "params": {
+          "calendarid": "primary",
+          "expand_recurring": false
+        },
+        "authentication_note": "work.flowers Google Calendar connection, the same one bound as gcal_wf (and the one the retired gcal-event-updated-to-meeting-note polled).",
+        "params_note": "`primary` resolves to the connection's own calendar; verified 2026-11-17 by running event_updated as a read action with calendarid primary (70 recent events). expand_recurring false, as on the retired Zap and the sibling calendar Zaps: a single-occurrence edit arrives keyed by occurrence id, a whole-series change arrives as the master.",
+        "trigger_note": "Polling 'New or Updated Event'. Fires on creation (an event's first sighting) and on every later change, ~60/day. Since Zapier fixed W6ZE93-VMEWP (verified 2026-10-28) an already-delivered event re-fires once per new `updated`, which is exactly a reschedule. handleCalendarEvent routes each: existing note → reschedule check (free unless the time moved); no note → create (one-off any distance ahead, new series → first 3 occurrences, lone occurrence within 7 days). Everything else exits before the first paid call."
+      },
+      "description": "Google Calendar New or Updated Event → move an existing note on a reschedule, or create one for a new one-off meeting (any distance ahead) or the first 3 occurrences of a new recurring series.",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "gcal-meetings-to-meeting-notes · calendar event",
+        "description": "Google Calendar New or Updated Event on the work calendar → if the event has a Notion meeting note and its time moved, update the note's Date and title date mention; if it has none, get-or-create a linked note for a new one-off meeting (however far ahead) or for the first 3 upcoming occurrences of a new recurring series. Replaces gcal-event-updated-to-meeting-note. One of two deployments of gcal-meetings-to-meeting-notes (source of truth: github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes).",
+        "enable_on_publish": true
+      }
+    }
+  ],
+  "connections": {
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "notion_pat": "020e5f35-d301-811a-ade5-db41827c330c",
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  },
+  "connections_note": "gcal_wf is the work.flowers Google Calendar connection (the one gcal-block-sweep and gcal-event-updated-to-meeting-note use); the search passes calendarid `primary`, so the address never appears in source. notion_pat is an API by Zapier connection (created 2026-11-17) holding Dennis's Notion personal access token as a Bearer token, called with sdk.fetch. It is NOT the NotionCLIAPI connection: POST /v1/meeting_notes answers that one 403 restricted_resource, \"This tool is not available to user_owned_guest_bot actors\" (probed 2026-11-17 through the Notion app's API Request (Beta) action, for both the create and the link endpoint). notion_wf is the work.flowers Notion connection (NotionCLIAPI), used only by the reschedule path to read and PATCH a note's page, as the retired gcal-event-updated-to-meeting-note did.",
+  "zapier_durable_version": "0.17.0",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.126.0"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.17.0 (2026-11-06) and @zapier/zapier-sdk 0.126.0 (2026-11-15) were the newest releases at least 24h old at build time; zod 4.4.3 matches the rest of the repo.",
+  "tables": {
+    "01JZCVG73MBWWB0357CEPS4903": "[Table] Meeting Note IDs, SHARED. Read to skip occurrences that already have a note (Event ID f3 exact AND Page ID f2 not null, free), and upserted with Page ID f2, Event ID f3, Start f5, End f6, Archived f7=false, Event Title f8, iCal UID f9 after each note. Event ID is the Google OCCURRENCE id. The meeting-note-db-updates Worker upserts the same row when it enriches the note, so whichever runs second updates rather than adds."
+  },
+  "notion": {
+    "calendar_account_id": "9c2abc99-fa17-424f-8b9f-e427591bc44e",
+    "calendar_account_note": "Notion Calendar's id for the work Google account, from calendar.accountId in Notion MCP notion-calendar-list-events. calendar_id is the Google calendar id, read at run time from the events' `self` attendee/organizer. event_id is the plain Google occurrence id.",
+    "filed_in": "Notion files a new note like the event's other notes; with none, in the Meeting Notes data source (collection 19891b07-11ac-8137-9d62-000b75fab86e), titled `<summary> @<start>`. Verified 2026-11-17.",
+    "sync_lag": "Notion accepted the event_id of a brand-new Google event on the first attempt, 0 s after creation (probe 2026-11-17: created a Free, guest-less test event, POSTed immediately → 200; event deleted and note trashed after). So the trigger path calls Notion with no wait."
+  },
+  "verification": {
+    "dry_run": "2026-11-17, run 01a1e74b-a86f-7dbc-b772-0ead255458d3: 24 events in the next 7 days, 15 meetings, 2 already with notes, 13 would be created; skipped 4 declined and 5 with no other guests.",
+    "live_create": "2026-11-17, run 01a1e74f-a3c1-7fe4-bce0-b2ac8a9890eb (window 0..0.1 days, max_creates 1): created the note for AI COE - Weekly Long Sync (page 41b91b07-11ac-81ac-8528-dc20bf5c8c63) in Meeting Notes; the Worker enriched it within ~13s (Event ID, Description, Internal Attendees, Type=Client); one Table row (01M7KMZKC7DWWY0JGEVQDW8FFW), no duplicate.",
+    "get_or_create_probe": "2026-11-17: POST with calendar_event for an event that already had a note returned 200, created:false, the existing page id.",
+    "trigger_path": "2026-11-17, run-durable with {event_id} replays: ended mirror → already-over; webinar with only Dennis → no-other-guests; noted one-off → alreadyHaveNote; recurring master 6cvf4kq2agdm7hk5aq97r9oifg → notes for its first 3 occurrences (18 Nov, 25 Nov, 2 Dec); one-off 3b2c970gpur5pvoibiv4mpctd4 on 15 Dec → note created. Sweep dry run afterwards: 11 to create (was 13), skipping the trigger's notes.",
+    "consolidated_path": "2026-11-17 after merging gcal-event-updated-to-meeting-note in: noted unchanged event → times-unchanged; reschedule write (row Start faked to 03:00Z, replayed) → updated:true, Date written back to the true time, row refreshed, titleMentionsMoved 0; new one-off e650dc8341fd41078ea73f54ab78a758 (Lunch & Laptops) → note created; raw payload of a 2025 series master edited today → series-edit-not-new; sweep dry run healthy."
+  },
+  "cost": "Calendar event: 0 tasks for the ~60 daily edits that are not a reschedule of a noted meeting or a new meeting; 2 per reschedule (Notion read + write, as before); 1 per new one-off note; 1 search + up to 3 notes for a new series. Sweep: ~1 task per daily run + 1 per note. Table reads/writes are free. Each meeting is created once in total, by whichever path reaches it first.",
+  "replaces": {
+    "gcal-event-updated-to-meeting-note": {
+      "workflow_id": "019fb770-139b-74ca-bf9b-fec7ea0c9c3b",
+      "why": "Its trigger (New or Updated Event) already delivers every new event, so one deployment can create notes and move them. Merged 2026-11-17 before either part shipped separately.",
+      "cutover": "After this PR merges: confirm one real reschedule (path reschedule, updated true) and one real new meeting (path one-off/series) on the calendar-event deployment, then `disable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b` and mark it retired. Running both meanwhile is safe: both write the same Date to a rescheduled note, and only this one creates.",
+      "status": "pending cutover"
+    }
+  }
+}
