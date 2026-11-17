@@ -85,6 +85,20 @@ Notion"** was disabled — confirmed by Dennis. Not machine-verifiable: classic
 Zap and Notion automation config are exposed by neither the SDK CLI nor the
 MCP connector.
 
+## Incident note: bot owner on a deal (ZAP-72)
+
+On 2026-11-17, the upstream deal automation assigned the deal owner to the
+record creator. For this deal, the creator was the Zapier bot user
+`142d872b-594c-81a3-971a-00274ec71b63`, not a human. The workflow correctly
+reported that this bot user had no entry in `[Table] Internal User IDs`; the
+run created the Slack channel before reaching that validation, so the channel
+needed manual reconciliation.
+
+Dennis disabled the automation that copied the creator into the deal owner
+field. No workflow code change is required for this incident. If a similar
+error appears, first verify that the deal owner is a human and that the owner
+has a matching Notion-user-to-Slack-user mapping before replaying the run.
+
 ## Maintainer notes
 
 - Connections: `notion_wf` = work.flowers Notion
