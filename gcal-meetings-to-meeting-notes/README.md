@@ -1,37 +1,46 @@
 # gcal-meetings-to-meeting-notes
 
-Pre-creates a Notion **full-page meeting note**, linked to its Google Calendar event, for every upcoming meeting on Dennis's work calendar, so a note exists (and has been enriched) before the meeting starts.
+Owns the life of a Notion **full-page meeting note** for every meeting on Dennis's work calendar. It creates the note, linked to its Google Calendar event, before the meeting (so it is already enriched when the meeting starts), and moves it when the meeting is rescheduled.
 
 One `workflow.ts`, **two deployments** (see `zap.json` → `deployments[]`):
 
-| Deployment | Trigger | Notes |
+| Deployment | Trigger | Does |
 | --- | --- | --- |
-| `new-event` | Google Calendar *New Event* (`primary` calendar) | A new **one-off** meeting gets its note straight away, however far ahead it is. A new **recurring series** gets notes for its **first 3** upcoming occurrences only. A single occurrence delivered on its own is noted only if it starts within 7 days. |
+| `calendar-event` | Google Calendar *New or Updated Event* (`primary`, `expand_recurring: false`) | **Reschedule:** an event that already has a note and whose time moved gets the note's `Date` and title date mention updated. **Create:** a new **one-off** meeting gets its note at once, however far ahead; a **new recurring series** gets notes for its **first 3** occurrences only; a single occurrence with no note is noted if it starts within 7 days. |
 | `sweep` | Schedule by Zapier, daily 6:00 AM, weekends included | Notes every meeting in the next 7 days that has no note yet. This is what reaches the 4th and later occurrences of a series, one day at a time. |
 
+**This replaces [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/)** (merged 2026-11-17). Its trigger already delivered every new event as that event's first sighting, so one deployment now creates notes and moves them. Its reschedule logic is ported unchanged; see [Cutover](#cutover-from-gcal-event-updated-to-meeting-note).
+
 - **Workflow IDs:** assigned on first publish.
-- **Cost:** each meeting is noted once, by whichever path reaches it first, for 1 task. The sweep adds ~1 task a day for its calendar search, and a new series adds 1 search task on the trigger path. Skips are free. Table reads and writes are free.
+- **Cost:** each meeting's note is created once, by whichever path reaches it first, for 1 task. A reschedule costs 2 tasks (Notion read and write), as before. The sweep adds ~1 task a day, and a new series adds 1 search task. The ~60 calendar edits a day that are neither exit at free steps. Table reads and writes are free.
 
 ## Workflow
 
-### `new-event` deployment
+### `calendar-event` deployment
 
 ```mermaid
 flowchart TD
-    E([Google Calendar: New Event]) --> M{a meeting?<br/>same filter as the sweep}
-    M -- no --> X0[/skip, free/]
+    E([Google Calendar: New or Updated Event]) --> G{cancelled or all-day?}
+    G -- yes --> X0[/skip/]
+    G -- no --> L[find-meeting-note-row<br/>Table: Event ID = occurrence id AND Page ID set<br/>0 tasks]
+    L -- row found --> T{start and end same instant<br/>as the row?}
+    T -- yes --> X1[/skip: times-unchanged/]
+    T -- no --> U[update-meeting-note-date<br/>Notion read + one PATCH on notion_wf:<br/>Date, and title date mention at the old start<br/>2 tasks]
+    U -- page gone --> AR[flag row Archived, free]
+    U -- ok --> RR[refresh row Start/End, free]
+    L -- no row --> M{a meeting?<br/>same filter as the sweep}
+    M -- no --> X2[/skip/]
     M -- yes --> K{shape}
-    K -- recurring master --> SS[expand-series<br/>event_v2 over 31 days from the next occurrence<br/>1 task]
-    SS --> F3[first 3 upcoming occurrences<br/>that pass the filter]
-    F3 --> L1[Table lookup each, free]
+    K -- series master --> NS{new series?<br/>created ≈ updated, 15 min}
+    NS -- no --> X3[/skip: series-edit-not-new<br/>the sweep reaches it/]
+    NS -- yes --> SS[expand-series<br/>event_v2 over 31 days, 1 task<br/>first 3 upcoming occurrences]
+    SS --> N1[for each without a note:<br/>get-or-create note, 1 task<br/>Table upsert, free]
     K -- one-off --> O{already over?}
-    O -- yes --> X1[/skip/]
-    O -- no --> L1
+    O -- yes --> X4[/skip/]
+    O -- no --> N1
     K -- single occurrence --> H{starts within 7 days?}
-    H -- no --> X2[/skip: left to the sweep/]
-    H -- yes --> L1
-    L1 -- has note --> X3[/skip/]
-    L1 -- no note --> N1[get-or-create note, 1 task<br/>then Table upsert, free]
+    H -- no --> X5[/skip: left to the sweep/]
+    H -- yes --> N1
 ```
 
 ### `sweep` deployment
@@ -71,7 +80,7 @@ On the 2026-11-17 dry run this kept 15 of 24 events in the coming week, skipping
 
 A recurring invite with no end date is the obvious way to burn tasks, so three fences hold it:
 
-1. **The trigger notes only the first 3 occurrences** of a new series (`SERIES_FIRST_INSTANCES`), found with one search over the 31 days from its next occurrence (`SERIES_SEARCH_DAYS`). A series whose next occurrence is further out than that gets no notes from the trigger; the sweep reaches it as it comes within 7 days.
+1. **The `calendar-event` path notes only the first 3 occurrences** of a new series (`SERIES_FIRST_INSTANCES`), found with one search over the 31 days from its next occurrence (`SERIES_SEARCH_DAYS`). It treats a master as new only when Google's `created` and `updated` are within 15 minutes (`NEW_SERIES_WINDOW_MS`), because *New or Updated Event* also fires on every RSVP or edit to a series, and each expansion costs a search task. An old series that is edited skips for free. A series whose next occurrence is more than 31 days out gets no notes from this path; the sweep reaches it as it comes within 7 days.
 2. **The sweep's window bounds it.** The search asks Google for events between now and 7 days out with `expand_recurring: true`, so a series can only ever contribute the occurrences inside that window, about one a day at most. Each day the next day rolls in.
 3. **`MAX_CREATES_PER_RUN` = 40** on the sweep. A normal week here is around 15 meetings, so 40 is well above routine. Past the cap the run still creates and records the first 40 (soonest first), then throws, so the run shows red and Zapier sends an error alert. The rest roll into later runs. A cap hit means something abnormal, such as a mass import or a calendar shared by mistake, and someone should look before raising it.
 
@@ -103,7 +112,7 @@ The meeting-notes endpoints accept only a personal access token or a Notion Work
 [`[Table] Meeting Note IDs`](https://tables.zapier.com/app/tables/t/01JZCVG73MBWWB0357CEPS4903) is shared with three other automations:
 
 - the [`meeting-note-db-updates`](https://github.com/work-flowers/notion-worker-meeting-note-db-updates) Worker upserts a row for every note it enriches;
-- [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/) looks notes up here on a reschedule;
+- this Zap's own reschedule path looks notes up here (it absorbed [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/));
 - [`notion-page-deleted-to-zapier-tables`](../notion-page-deleted-to-zapier-tables/) flags a deleted note's row `Archived`.
 
 This Zap writes the same upsert the Worker does (find-or-create on `Event ID`, then update), so whichever of the two runs second updates the row rather than adding one; the live test left exactly one row. **`Event ID` (f3) must stay the occurrence id**, never the iCalUID (see [the two Google Calendar ids](../gcal-event-updated-to-meeting-note/#the-two-google-calendar-ids--and-why-it-matters)).
@@ -112,7 +121,7 @@ The skip check matches any row with a Page ID, including one flagged `Archived`.
 
 ## Interaction with the enrichment Worker
 
-Creating the note fires the Meeting Notes "page added" automation, so the Worker enriches it straight away: Date, Google Calendar Event ID, Description, Call Link, Contacts, Internal Attendees, Companies, Deals and Type. In the live test that took about 13 seconds. Notes are therefore enriched up to a week before the meeting rather than at the meeting. A meeting rescheduled after that is handled by [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/), which moves the note's Date and title.
+Creating the note fires the Meeting Notes "page added" automation, so the Worker enriches it straight away: Date, Google Calendar Event ID, Description, Call Link, Contacts, Internal Attendees, Companies, Deals and Type. In the live test that took about 13 seconds. Notes are therefore enriched up to a week before the meeting rather than at the meeting. A meeting rescheduled after that is handled by this Zap's own `calendar-event` deployment, which moves the note's Date and title.
 
 ## Manual runs
 
@@ -124,16 +133,28 @@ Either deployment accepts any of these (the code is the same):
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `event_id` | | Replay the trigger path for one Google event id (1 task to fetch it): a one-off is noted, a series master gets its first 3 occurrences. Use it for an event the trigger missed. |
+| `event_id` | | Replay the `calendar-event` path for one Google event id (1 task to fetch it): a moved meeting with a note is rescheduled, a one-off is noted, a series master gets its first 3 occurrences. The new-series guard is lifted, so a missed series can be noted by hand. |
 | `dryRun` | `false` | List `wouldCreate` without writing anything. The search still costs 1 task. |
 | `from_days` / `to_days` | `0` / `7` | Window in days from now. Fractions are allowed (`0.1` ≈ 2.4 h); max 31. |
 | `max_creates` | `40` | Cap for this run, 1..200. |
 | `now` | the tick time | RFC 3339 anchor for the window. |
 
+## Cutover from gcal-event-updated-to-meeting-note
+
+1. Merge. The pipeline creates both deployments, enabled.
+2. Confirm on the `calendar-event` deployment (`list-workflow-runs`):
+   - one real reschedule: output `path: "reschedule", updated: true`;
+   - one real new meeting: output `path: "one-off"` or `"series"`.
+3. `npx zapier-sdk --stability experimental disable-workflow 019fb770-139b-74ca-bf9b-fec7ea0c9c3b`, then mark [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/) retired in its README, `zap.json` and the root index.
+
+Running both until step 3 is safe: on a reschedule both write the same `Date` and refresh the same row, and only this Zap creates notes.
+
 ## Known limits
 
 - **SCW mirrors are one-off events.** [`scw-events-to-workflowers-block`](../scw-events-to-workflowers-block/) mirrors each SCW occurrence as its own event, up to 30 days ahead, so each mirror is noted by the trigger as it is created, up to 30 days ahead, rather than by the sweep. Same total cost, earlier notes.
-- **New Event does not fire for a reschedule.** A meeting moved later is handled by [`gcal-event-updated-to-meeting-note`](../gcal-event-updated-to-meeting-note/), which moves the note.
+- **A series split with "this and following"** gets a new master (`<id>_R<date>`) that keeps the original `created`, so the new-series guard skips it. Its occurrences are noted by the sweep as they come within 7 days.
+- **An externally organised recurring invite** may carry the organizer's `created`. If that is older than 15 minutes at first sighting, the guard skips it and the sweep notes its occurrences instead. That is a later note, not a lost one.
+- **Reschedules run for any event with a note**, whether or not it passes the meeting filter, exactly as the retired Zap did.
 - **The search returns one page.** Ordered by start time, a truncated page would drop the far end of the window, which later runs reach, so it is logged rather than fatal. The busiest week checked returned 24 events.
 - **Sync lag is not a problem:** Notion accepted a brand-new event's id 0 s after creation (probe 2026-11-17), so the trigger calls Notion without waiting.
 
@@ -146,9 +167,13 @@ Either deployment accepts any of these (the code is the same):
 | Live create (one event, window 0..0.1 days) | Note created in Meeting Notes as Dennis, titled `AI COE - Weekly Long Sync @12:00`; Worker enriched it within ~13s; one Table row |
 | Search truncation | 20–24 Nov returned 8 events; no page limit hit |
 | Notion sync lag on a brand-new event | Free, guest-less test event created and POSTed at once: `200` on the first try (event deleted and note trashed afterwards) |
-| Trigger path: mirror that already ended | skipped `already-over` |
-| Trigger path: webinar listing only Dennis | skipped `no-other-guests` |
-| Trigger path: one-off that already has a note | skipped at the free Table check |
-| Trigger path: new recurring series (Procurement and Operations Automation, weekly) | notes for exactly the first 3 occurrences: 18 Nov, 25 Nov, 2 Dec |
-| Trigger path: one-off four weeks out (15 Dec) | note created |
+| `{event_id}` replay: mirror that already ended | skipped `already-over` |
+| `{event_id}` replay: webinar listing only Dennis | skipped `no-other-guests` |
+| `{event_id}` replay: one-off that already has a note | skipped at the free Table check |
+| `{event_id}` replay: new recurring series (Procurement and Operations Automation, weekly) | notes for exactly the first 3 occurrences: 18 Nov, 25 Nov, 2 Dec |
+| `{event_id}` replay: one-off four weeks out (15 Dec) | note created |
 | Sweep dry run after the trigger tests | 15 meetings, 4 already noted, 11 to create: it skips what the trigger made |
+| Consolidated path: noted event, time unchanged | `times-unchanged`, no paid call |
+| Consolidated path: reschedule write (Table Start set to a wrong time, then replayed) | `updated: true`; Date written back to the true 12:00–13:00, row refreshed, title untouched (its mention did not match the fake start) |
+| Consolidated path: new one-off (Lunch & Laptops, 23 Nov) | note created |
+| Consolidated path: edit to a 2025 series (The Weekly Pulse) | `series-edit-not-new`, no search task |

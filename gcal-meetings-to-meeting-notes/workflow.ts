@@ -1,12 +1,16 @@
 // Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes
 //
-// Pre-creates a Notion full-page meeting note, linked to its Google Calendar
-// event, for every upcoming meeting on Dennis's work calendar. One source, two
+// Owns the life of a Notion meeting note for every meeting on Dennis's work
+// calendar: creates it, linked to its Google Calendar event, before the
+// meeting, and moves it when the meeting is rescheduled. One source, two
 // deployments (see zap.json):
 //
-//   - TRIGGER (Google Calendar "New Event"): notes a new one-off meeting as soon
-//     as it is created, however far ahead; for a new recurring series, notes
-//     only its first SERIES_FIRST_INSTANCES occurrences. See handleNewEvent.
+//   - CALENDAR EVENT (Google Calendar "New or Updated Event"): an event that
+//     already has a note is a possible RESCHEDULE (moves the note's Date and
+//     title; this absorbed gcal-event-updated-to-meeting-note on 2026-11-17).
+//     An event with no note is a possible CREATE: a new one-off meeting is
+//     noted at once however far ahead, and a NEW recurring series gets notes
+//     for its first SERIES_FIRST_INSTANCES occurrences. See handleCalendarEvent.
 //   - SWEEP (daily schedule): everything below. It is what eventually notes
 //     every later occurrence of a series, one horizon-day at a time.
 //
@@ -55,6 +59,23 @@ const GCAL_CONNECTION = "gcal_wf";
 const GCAL_CALENDAR = "primary";
 
 const NOTION_PAT_CONNECTION = "notion_pat";
+/**
+ * The work.flowers Notion connection, used only by the reschedule path to read
+ * and patch a note's page (ordinary page endpoints, which it can call). The
+ * meeting-notes endpoint refuses it, hence notion_pat above.
+ */
+const NOTION_WF_CONNECTION = "notion_wf";
+const NOTION_API = "https://api.notion.com/v1";
+/** The meeting note's date property. The title property is found by type. */
+const DATE_PROP = "Date";
+/**
+ * Notion errors that mean "this page is gone", as opposed to a transient
+ * failure worth retrying. On a match the mapping row is flagged `Archived`
+ * rather than deleted: the row is the only remaining record that the note ever
+ * existed (and it also stops the create path from making the note again).
+ */
+const PAGE_GONE_PATTERN =
+  /object_not_found|could not find (page|block|item)|is archived|has been (deleted|trashed)|in the trash/i;
 const NOTION_MEETING_NOTES_URL = "https://api.notion.com/v1/meeting_notes";
 const NOTION_VERSION = "2026-03-11";
 /**
@@ -94,6 +115,13 @@ const SEARCH_PAGE_WARN = 100;
 const SERIES_FIRST_INSTANCES = 3;
 /** How far the trigger path searches to expand a new series into occurrences. */
 const SERIES_SEARCH_DAYS = 31;
+/**
+ * "New or Updated Event" fires on EVERY change to a series (an RSVP, a guest
+ * added, Gemini touching it), and expanding a series costs a search task. A
+ * master is treated as a NEW series only when Google's `created` and `updated`
+ * are this close; any other series edit skips for free.
+ */
+const NEW_SERIES_WINDOW_MS = 15 * 60 * 1000;
 
 // --- Input -------------------------------------------------------------------
 // On a scheduled run the payload is Schedule by Zapier's tick, whose `id` IS
@@ -183,6 +211,66 @@ function epochMsFromRfc3339(value: unknown): number | null {
   return epoch;
 }
 
+/** True when both parse and land on the same instant. An unparseable side is "different". */
+function sameInstant(a: unknown, b: unknown): boolean {
+  const left = epochMsFromRfc3339(a);
+  const right = epochMsFromRfc3339(b);
+  if (left === null || right === null) return false;
+  return left === right;
+}
+
+// --- Title date mention (reschedule path) ---------------------------------------
+// A note is titled "<meeting> @<start>", where @<start> is a Notion DATE
+// MENTION in the title's rich text. Moving `Date` leaves it on the old time, so
+// a reschedule rewrites it too. Ported unchanged from
+// gcal-event-updated-to-meeting-note (retired into this Zap).
+
+/**
+ * Rewrites the title's date mentions that point at the meeting's PREVIOUS
+ * start, so a hand-typed date elsewhere in a title is left alone. A mention
+ * with an end gets the new end only when that end matched the previous end.
+ *
+ * Returns the rich text to write (rebuilt in request shape) and how many
+ * mentions moved, or `null` when nothing in the title needs to change: a
+ * hand-edited title, a note with no time in it, or a step retry after the
+ * write already landed (the mention then already shows the new start).
+ */
+export function rewriteTitleDateMentions(
+  title: unknown,
+  previous: { start: string | null; end: string | null },
+  next: { start: string; end: string },
+): { richText: Array<Record<string, unknown>>; moved: number } | null {
+  const items = Array.isArray(title) ? (title as Array<Record<string, any>>) : [];
+  let moved = 0;
+
+  const richText = items.map((item) => {
+    const annotations = item.annotations;
+    if (item.type === "mention" && item.mention?.type === "date" && item.mention.date) {
+      const date = item.mention.date as { start?: unknown; end?: unknown; time_zone?: unknown };
+      if (previous.start && sameInstant(date.start, previous.start)) {
+        moved++;
+        const end =
+          date.end == null
+            ? null
+            : previous.end && sameInstant(date.end, previous.end)
+              ? next.end
+              : date.end;
+        return {
+          type: "mention",
+          mention: { type: "date", date: { start: next.start, end, time_zone: date.time_zone ?? null } },
+          ...(annotations ? { annotations } : {}),
+        };
+      }
+    }
+    // Everything else goes back as it came, in request shape: the response's
+    // `plain_text`/`href` are read-only and are dropped.
+    const type = String(item.type);
+    return { type, [type]: item[type], ...(annotations ? { annotations } : {}) };
+  });
+
+  return moved > 0 ? { richText, moved } : null;
+}
+
 // --- Events ------------------------------------------------------------------
 
 function firstString(value: unknown): string | null {
@@ -211,6 +299,8 @@ const FoundEventSchema = z
     iCalUID: z.string().optional().nullable(),
     recurringEventId: z.string().optional().nullable(),
     recurrence: z.array(z.string()).optional().nullable(),
+    created: z.string().optional().nullable(),
+    updated: z.string().optional().nullable(),
     status: z.string().optional().nullable(),
     eventType: z.string().optional().nullable(),
     summary: z.string().optional().nullable(),
@@ -277,8 +367,26 @@ export function calendarIdFromEvents(events: FoundEvent[]): string | null {
 // `ctx`: the publish-time analyzer rejects a template-literal step id in the
 // workflow body (`invalid-step-call`) but does not follow `ctx` into a helper.
 
-/** Free: whether the occurrence already has a meeting-note row with a page id. */
-async function hasMeetingNoteRow(ctx: DurableContext, stepId: string, eventId: string): Promise<boolean> {
+/** Dashed 8-4-4-4-12, the form Notion's page endpoints accept. */
+function toDashedPageId(value: unknown): string | null {
+  const raw = firstString(value)?.replace(/-/g, "");
+  if (!raw || !/^[0-9a-fA-F]{32}$/.test(raw)) return null;
+  return [raw.slice(0, 8), raw.slice(8, 12), raw.slice(12, 16), raw.slice(16, 20), raw.slice(20)].join("-").toLowerCase();
+}
+
+interface MappingRow {
+  recordId: string;
+  pageId: string;
+  start: string | null;
+  end: string | null;
+}
+
+/**
+ * Free: the occurrence's meeting-note row, if it has one with a Page ID. An
+ * `Archived` row (its note was deleted) still counts, so a note someone
+ * deleted is not made again.
+ */
+async function findMeetingNoteRow(ctx: DurableContext, stepId: string, eventId: string): Promise<MappingRow | null> {
   const result = await ctx.step(stepId, async () =>
     sdk.runAction({
       appKey: "TableCLIAPI",
@@ -300,7 +408,14 @@ async function hasMeetingNoteRow(ctx: DurableContext, stepId: string, eventId: s
     }),
   );
   const rows = (result as { data?: unknown }).data;
-  return Array.isArray(rows) && rows.some((r) => firstString((r as { record_id?: unknown })?.record_id));
+  const hit = (Array.isArray(rows) ? rows[0] : undefined) as
+    | { record_id?: unknown; old?: { data?: Record<string, unknown> } }
+    | undefined;
+  const recordId = firstString(hit?.record_id);
+  const data = hit?.old?.data ?? {};
+  const pageId = toDashedPageId(data.f2);
+  if (!recordId || !pageId) return null;
+  return { recordId, pageId, start: firstString(data.f5), end: firstString(data.f6) };
 }
 
 interface MeetingNoteResult {
@@ -480,7 +595,7 @@ async function noteEach(
   const notes: NoteOutcome[] = [];
   for (let i = 0; i < events.length; i++) {
     const eventId = firstString(events[i].id)!;
-    if (await hasMeetingNoteRow(ctx, `${stepPrefix}-lookup-${i}`, eventId)) {
+    if (await findMeetingNoteRow(ctx, `${stepPrefix}-lookup-${i}`, eventId)) {
       alreadyHaveNote.push(eventId);
       continue;
     }
@@ -492,8 +607,8 @@ async function noteEach(
 // --- Per-event path ------------------------------------------------------------
 
 /**
- * The trigger deployment hands over one raw Google event. The schedule tick
- * and manual inputs never carry a `start` object, so that is the switch.
+ * The calendar-event deployment hands over one raw Google event. The schedule
+ * tick and manual inputs never carry a `start` object, so that is the switch.
  */
 function isGoogleEventPayload(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -506,28 +621,135 @@ function isGoogleEventPayload(value: unknown): boolean {
   );
 }
 
-/** The occurrence ids of a series start with the master's id (`<master>_<startUTC>`). */
+/** An occurrence names its series' master id in `recurringEventId`. */
 function isOccurrenceOf(event: FoundEvent, masterId: string): boolean {
   return firstString(event.recurringEventId) === masterId;
 }
 
+/** A master whose `created` and `updated` are close: a series just made, not an edit to an old one. */
+export function isNewSeries(event: FoundEvent): boolean {
+  const created = epochMsFromRfc3339(firstString(event.created));
+  const updated = epochMsFromRfc3339(firstString(event.updated));
+  if (created === null || updated === null) return false;
+  return Math.abs(updated - created) <= NEW_SERIES_WINDOW_MS;
+}
+
 /**
- * Google Calendar "New Event" delivers three shapes:
- *
- *   - a ONE-OFF meeting: noted now, however far ahead it is, as long as it has
- *     not already ended;
- *   - a recurring MASTER (it carries `recurrence`): the series is expanded with
- *     one bounded search and its first SERIES_FIRST_INSTANCES upcoming
- *     occurrences are noted; the rest roll into the sweep's 7-day window one at
- *     a time, so an endless series never fans out;
- *   - a single OCCURRENCE of a series, delivered on its own (an edited
- *     instance): noted only if it starts within the sweep's horizon, because
- *     anything later is the sweep's job anyway.
- *
- * Everything goes through the same meeting filter, free Table check and
- * get-or-create as the sweep, so the two paths overlap harmlessly.
+ * RESCHEDULE: the event already has a note. Ported from
+ * gcal-event-updated-to-meeting-note: if the start or end moved (compared as
+ * instants, since Google sends `+08:00` and the Table stores `Z`), read the
+ * note and write `Date` plus any title date mention at the old start, in one
+ * PATCH on notion_wf (2 tasks). A deleted note flags its row `Archived`.
  */
-async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record<string, unknown>> {
+async function rescheduleNote(
+  ctx: DurableContext,
+  event: FoundEvent,
+  eventId: string,
+  row: MappingRow,
+  startDateTime: string,
+  endDateTime: string,
+): Promise<Record<string, unknown>> {
+  if (sameInstant(startDateTime, row.start) && sameInstant(endDateTime, row.end)) {
+    return { path: "reschedule", skipped: "times-unchanged", eventId, pageId: row.pageId };
+  }
+
+  // Read and write share a step so a retry re-reads rather than writing a
+  // stale title. A dead page is answered inside the step, not retried.
+  const update = await ctx.step("update-meeting-note-date", async () => {
+    const headers = { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" };
+    const got = await sdk.fetch(`${NOTION_API}/pages/${row.pageId}`, { connection: NOTION_WF_CONNECTION, headers });
+    const gotText = await got.text();
+    // Only an ERROR body is matched: a live page's JSON can contain any of
+    // these words in its own title.
+    if (got.status === 404 || (!got.ok && PAGE_GONE_PATTERN.test(gotText))) {
+      return { pageGone: true, titleMentionsMoved: 0 };
+    }
+    if (!got.ok) throw new Error(`Notion get page ${row.pageId} failed (${got.status}): ${gotText.slice(0, 300)}`);
+    const page = JSON.parse(gotText) as { in_trash?: boolean; archived?: boolean; properties?: Record<string, any> };
+    if (page.in_trash || page.archived) return { pageGone: true, titleMentionsMoved: 0 };
+
+    const properties: Record<string, unknown> = { [DATE_PROP]: { date: { start: startDateTime, end: endDateTime } } };
+    const titleEntry = Object.entries(page.properties ?? {}).find(([, prop]) => prop?.type === "title");
+    const rewrite = titleEntry
+      ? rewriteTitleDateMentions(titleEntry[1].title, { start: row.start, end: row.end }, { start: startDateTime, end: endDateTime })
+      : null;
+    if (titleEntry && rewrite) properties[titleEntry[0]] = { title: rewrite.richText };
+
+    const patched = await sdk.fetch(`${NOTION_API}/pages/${row.pageId}`, {
+      connection: NOTION_WF_CONNECTION,
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ properties }),
+    });
+    if (!patched.ok) {
+      const text = await patched.text();
+      if (PAGE_GONE_PATTERN.test(text)) return { pageGone: true, titleMentionsMoved: 0 };
+      throw new Error(`Notion update page ${row.pageId} failed (${patched.status}): ${text.slice(0, 300)}`);
+    }
+    return { pageGone: false, titleMentionsMoved: rewrite?.moved ?? 0 };
+  });
+
+  if (update.pageGone) {
+    await ctx.step("flag-mapping-row-archived", async () =>
+      sdk.runAction({
+        appKey: "TableCLIAPI",
+        actionType: "write",
+        actionKey: "update_record",
+        inputs: { table_id: MEETING_NOTE_IDS_TABLE, record_id: row.recordId, new__data__f7: true },
+      }),
+    );
+    return { path: "reschedule", skipped: "meeting-note-page-gone", eventId, pageId: row.pageId };
+  }
+
+  // Keep the row's Start/End current so the times-unchanged guard stays right
+  // on the next edit. Free.
+  const summary = firstString(event.summary);
+  const iCalUID = firstString(event.iCalUID);
+  await ctx.step("refresh-mapping-row", async () =>
+    sdk.runAction({
+      appKey: "TableCLIAPI",
+      actionType: "write",
+      actionKey: "update_record",
+      inputs: {
+        table_id: MEETING_NOTE_IDS_TABLE,
+        record_id: row.recordId,
+        new__data__f5: startDateTime,
+        new__data__f6: endDateTime,
+        ...(summary ? { new__data__f8: summary } : {}),
+        ...(iCalUID ? { new__data__f9: iCalUID } : {}),
+      },
+    }),
+  );
+  return {
+    path: "reschedule",
+    updated: true,
+    titleMentionsMoved: update.titleMentionsMoved,
+    eventId,
+    pageId: row.pageId,
+    previous: { start: row.start, end: row.end },
+    current: { start: startDateTime, end: endDateTime },
+  };
+}
+
+/**
+ * One raw Google event from "New or Updated Event" (`expand_recurring: false`,
+ * so a whole-series change arrives as the series master).
+ *
+ *   1. Cancelled or all-day: skip.
+ *   2. One free Table lookup on the occurrence id.
+ *   3. A row exists: RESCHEDULE (rescheduleNote). This runs for any event with
+ *      a note, meeting filter or not, exactly as the retired Zap did.
+ *   4. No row: CREATE, for events that pass the meeting filter:
+ *        - a one-off: noted if it has not ended, however far ahead;
+ *        - a single occurrence: noted only within the sweep's 7-day horizon;
+ *        - a series master: only when the series is new (isNewSeries), its
+ *          first SERIES_FIRST_INSTANCES upcoming occurrences, found with one
+ *          bounded search. The sweep reaches the rest one day at a time.
+ *
+ * `replay` (the manual `{event_id}` input) lifts the new-series guard, so a
+ * missed series can be noted by hand.
+ */
+async function handleCalendarEvent(ctx: DurableContext, raw: unknown, replay: boolean): Promise<Record<string, unknown>> {
   const parsed = FoundEventSchema.safeParse(raw);
   const eventId = parsed.success ? firstString(parsed.data.id) : null;
   if (!parsed.success || !eventId) {
@@ -537,8 +759,25 @@ async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record
   }
   const event = parsed.data;
 
+  if (firstString(event.status) === "cancelled") return { path: "event", skipped: "event-cancelled", eventId };
+  const startDateTime = firstString(event.start?.dateTime);
+  const endDateTime = firstString(event.end?.dateTime);
+  if (!startDateTime || !endDateTime) return { path: "event", skipped: "not-a-timed-event", eventId };
+
+  const row = await findMeetingNoteRow(ctx, "find-meeting-note-row", eventId);
+  if (row) return rescheduleNote(ctx, event, eventId, row, startDateTime, endDateTime);
+
+  // --- CREATE: the event has no note yet ---
   const skip = classifySkip(event);
-  if (skip) return { path: "event", skipped: skip, eventId };
+  if (skip) return { path: "create", skipped: skip, eventId };
+
+  const isMaster = (event.recurrence ?? []).length > 0;
+  if (isMaster && !replay && !isNewSeries(event)) {
+    // An RSVP, a guest added, an edit to an old series: the sweep notes its
+    // occurrences as they come within 7 days. Skipping here avoids a search
+    // task on every series edit.
+    return { path: "create", skipped: "series-edit-not-new", eventId };
+  }
 
   const calendarId = calendarIdFromEvents([event]);
   if (!calendarId) {
@@ -546,12 +785,8 @@ async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record
   }
 
   const nowMs = await ctx.step("read-clock", async () => Date.now());
-  const startMs = epochMsFromRfc3339(firstString(event.start?.dateTime));
-  const endMs = epochMsFromRfc3339(firstString(event.end?.dateTime));
-  if (startMs === null || endMs === null) return { path: "event", skipped: "not-timed", eventId };
-
-  const isMaster = (event.recurrence ?? []).length > 0;
-  const isOccurrence = !isMaster && firstString(event.recurringEventId) !== null;
+  const startMs = epochMsFromRfc3339(startDateTime)!;
+  const endMs = epochMsFromRfc3339(endDateTime)!;
 
   if (isMaster) {
     // The master's start is the series' first occurrence. Search from
@@ -568,13 +803,15 @@ async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record
     return { path: "series", seriesId: eventId, summary: firstString(event.summary), alreadyHaveNote, notes };
   }
 
-  if (endMs <= nowMs) return { path: "event", skipped: "already-over", eventId };
+  if (endMs <= nowMs) return { path: "create", skipped: "already-over", eventId };
+  const isOccurrence = firstString(event.recurringEventId) !== null;
   if (isOccurrence && startMs > nowMs + HORIZON_DAYS * DAY_MS) {
     return { path: "occurrence", skipped: "beyond-horizon-left-to-sweep", eventId };
   }
 
-  const { alreadyHaveNote, notes } = await noteEach(ctx, isOccurrence ? "occurrence" : "one-off", calendarId, [event]);
-  return { path: isOccurrence ? "occurrence" : "one-off", alreadyHaveNote, notes };
+  // The Table lookup above already found no row, so straight to the create.
+  const note = await noteForEvent(ctx, isOccurrence ? "occurrence" : "one-off", calendarId, event);
+  return { path: isOccurrence ? "occurrence" : "one-off", note };
 }
 
 // --- Workflow ----------------------------------------------------------------
@@ -582,7 +819,7 @@ async function handleNewEvent(ctx: DurableContext, raw: unknown): Promise<Record
 const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: DurableContext, rawInput: Input) => {
   const normalized = normalizeInput(rawInput);
   if (isGoogleEventPayload(normalized)) {
-    const result = await handleNewEvent(ctx, normalized);
+    const result = await handleCalendarEvent(ctx, normalized, false);
     console.log(JSON.stringify(result));
     return result;
   }
@@ -605,7 +842,7 @@ const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: Dur
     );
     const event = ((fetched as { data?: unknown[] }).data ?? [])[0];
     if (!event) throw new Error(`event ${replayId} not found on the primary calendar`);
-    const result = { replay: true, ...(await handleNewEvent(ctx, event)) };
+    const result = { replay: true, ...(await handleCalendarEvent(ctx, event, true)) };
     console.log(JSON.stringify(result));
     return result;
   }
@@ -658,7 +895,7 @@ const workflow = defineDurable("gcal-meetings-to-meeting-notes", async (ctx: Dur
   const alreadyHaveNote: string[] = [];
   const toCreate: FoundEvent[] = [];
   for (let i = 0; i < candidates.length; i++) {
-    if (await hasMeetingNoteRow(ctx, `lookup-${i}`, firstString(candidates[i].id)!)) {
+    if (await findMeetingNoteRow(ctx, `lookup-${i}`, firstString(candidates[i].id)!)) {
       alreadyHaveNote.push(firstString(candidates[i].id)!);
     } else {
       toCreate.push(candidates[i]);
