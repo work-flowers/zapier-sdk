@@ -4,10 +4,10 @@
   "deployments": [
     {
       "name": "sweep",
-      "workflow_id": null,
-      "current_version_id": null,
-      "trigger_url": null,
-      "enabled": false,
+      "workflow_id": "01a1e771-27c3-7dbf-9d8a-bf8b000b610f",
+      "current_version_id": "01a1e771-69f6-79f0-af1f-c1d77f0b4dd5",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AtDCau9HyvMhwRTx_5QyFbU",
+      "enabled": true,
       "trigger": {
         "selected_api": "ScheduleCLIAPI@1.7.0",
         "action": "everyDay",
@@ -23,7 +23,7 @@
       },
       "description": "Daily sweep of the next 7 days: notes every meeting not already in the Table, capped at 40 per run.",
       "deploy": {
-        "state": "pending-create",
+        "state": "published",
         "workflow_name": "gcal-meetings-to-meeting-notes · daily sweep",
         "description": "Daily sweep: read the next 7 days of Dennis's work Google Calendar (recurring events expanded), keep the meetings (timed, busy, not declined or unanswered, with another guest or mirrored from SCW), skip any occurrence already in [Table] Meeting Note IDs, and get-or-create a Notion full-page meeting note linked to each remaining event via POST /v1/meeting_notes with calendar_event (PAT through an API by Zapier connection, since Zapier's Notion connection is refused). Records each note's page id in the Table so later runs skip it for free. At most 40 notes per run; past that the run fails loudly. One of two deployments of gcal-meetings-to-meeting-notes (source of truth: github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes).",
         "enable_on_publish": true
@@ -31,10 +31,10 @@
     },
     {
       "name": "calendar-event",
-      "workflow_id": null,
-      "current_version_id": null,
-      "trigger_url": null,
-      "enabled": false,
+      "workflow_id": "01a1e771-7b79-792a-b8e8-fb57ea4430fc",
+      "current_version_id": "01a1e771-939b-72f5-82f7-ed9825141566",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AjswR9pGq_7ndsTBE5V8uiw",
+      "enabled": true,
       "trigger": {
         "selected_api": "GoogleCalendarCLIAPI@1.16.0",
         "action": "event_updated",
@@ -49,7 +49,7 @@
       },
       "description": "Google Calendar New or Updated Event → move an existing note on a reschedule, or create one for a new one-off meeting (any distance ahead) or the first 3 occurrences of a new recurring series.",
       "deploy": {
-        "state": "pending-create",
+        "state": "published",
         "workflow_name": "gcal-meetings-to-meeting-notes · calendar event",
         "description": "Google Calendar New or Updated Event on the work calendar → if the event has a Notion meeting note and its time moved, update the note's Date and title date mention; if it has none, get-or-create a linked note for a new one-off meeting (however far ahead) or for the first 3 upcoming occurrences of a new recurring series. Replaces gcal-event-updated-to-meeting-note. One of two deployments of gcal-meetings-to-meeting-notes (source of truth: github.com/work-flowers/zapier-sdk/tree/main/gcal-meetings-to-meeting-notes).",
         "enable_on_publish": true
