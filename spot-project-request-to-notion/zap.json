@@ -1,7 +1,7 @@
 {
   "name": "spot-project-request-to-notion",
   "workflow_id": "019fb61c-c04e-7783-90ba-37a70bc3415c",
-  "current_version_id": "01a09ec2-3e02-74e8-866f-8fe513e5f554",
+  "current_version_id": "01a1e6fb-17af-7b17-a6e9-a11d52a0c1c3",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVQztSWpPmcqN6-IJU8wfQ",
   "enabled": true,
   "is_private": false,
@@ -40,7 +40,7 @@
     "note": "Solution Partner Operations Tool (SPOT; private, invite-only). Sibling triggers referral_lead_status_change (used by zapier-partner-lead-status-to-notion) and new_project_request (this Zap's ORIGINAL trigger, abandoned 2026-08-18 — it fires once per request at Pending, before identity is revealed, and never again; see stage_change_trigger). Also exposes a find_project_request SEARCH action: filter by id or email, or leave both blank to return every project request. That call is the cheapest way to see the account's real state and answered why this Zap sat at zero runs."
   },
   "created_at": "2026-07-31T02:59:25.394Z",
-  "version_created_at": "2026-08-25T00:20:00.159Z",
+  "version_created_at": "2026-11-17T00:49:39.027Z",
   "description": "Zapier Solution Partner project request ACCEPTED (stage-change trigger, gated to Accepted — Pending arrives identity-withheld, Declined/Expired are deliberately not filed) -> upsert a Notion Contact, Company and Deal. Company resolves via the companies mirror Table by domain, then the contact's existing Related Company, then a live Notion query by Website, then create. An existing Contact is only filled in, never overwritten. The Deal opens at Lead from the Deals default template; Type, Value and Expected Close are left for whoever scopes it, and Status is never written on an existing Deal so a human's Declined cannot be undone. Raw payload preserved on the Deal page, in the request Table and in the run output.",
   "durable_version_note": "Pinned to 0.10.1, matching both sibling partner Zaps. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a 24-hour minimum release age. The same guard applies to @zapier/zapier-sdk and zod; check a version's publish date before bumping any of the three. FLAG NAMING (2026-08-07, CLI 0.71.1): publishing with `--zapier_durable_version` emits 'DEPRECATION WARNING - `zapier_durable_version` is deprecated and may be removed in a future release'. That is a RENAME, not a removal of version pinning — the canonical CLI flag is kebab-case `--zapier-durable-version` (likewise `--app-versions`), and the MCP publish tool takes camelCase `zapierDurableVersion`. Use those spellings and the warning goes away. The vendored workflow skills documented the snake_case forms until 2026-08-07, which is why a publish here went out with a deprecated flag; `npx skills update` on the bundle moved them to sdk_cli_min 0.67.4 / sdk_cli_validated 0.67.5 and the kebab-case spellings.",
   "first_run": {
