@@ -1,0 +1,52 @@
+{
+  "name": "gcal-meetings-to-meeting-notes",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "gcal-meetings-to-meeting-notes",
+    "description": "Daily sweep: read the next 7 days of Dennis's work Google Calendar (recurring events expanded), keep the meetings (timed, busy, not declined or unanswered, with another guest or mirrored from SCW), skip any occurrence already in [Table] Meeting Note IDs, and get-or-create a Notion full-page meeting note linked to each remaining event via POST /v1/meeting_notes with calendar_event (PAT through an API by Zapier connection, since Zapier's Notion connection is refused). Records each note's page id in the Table so later runs skip it for free. At most 40 notes per run; past that the run fails loudly.",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "ScheduleCLIAPI@1.7.0",
+    "action": "everyDay",
+    "authentication_id": null,
+    "params": {
+      "hod": "6:00 AM",
+      "weekends": "yes"
+    },
+    "authentication_note": "Schedule by Zapier needs no connection. Both credentials are connection aliases because the workflow body calls them.",
+    "trigger_note": "Daily at 6:00 AM account time, weekends included, so a meeting booked for later today normally has its note before it starts if it was booked before 6:00. The tick payload's `id` is the fire time as RFC 3339 and is the workflow's deterministic clock.",
+    "params_note": "`everyDay` params: `hod` (required) + optional `weekends`/`timezone_override`; NOT `moh` (that is everyHour's). Same shape as gcal-block-sweep.",
+    "manual_run_note": "trigger-workflow <id> --input '{\"dryRun\":true}' lists what it would create. Overrides: from_days/to_days (window in days from now, fractions allowed, max 31), max_creates (1..200, default 40), now (RFC 3339 anchor)."
+  },
+  "connections": {
+    "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5",
+    "notion_pat": "020e5f35-d301-811a-ade5-db41827c330c"
+  },
+  "connections_note": "gcal_wf is the work.flowers Google Calendar connection (the one gcal-block-sweep and gcal-event-updated-to-meeting-note use); the search passes calendarid `primary`, so the address never appears in source. notion_pat is an API by Zapier connection (created 2026-11-17) holding Dennis's Notion personal access token as a Bearer token, called with sdk.fetch. It is NOT the NotionCLIAPI connection: POST /v1/meeting_notes answers that one 403 restricted_resource, \"This tool is not available to user_owned_guest_bot actors\" (probed 2026-11-17 through the Notion app's API Request (Beta) action, for both the create and the link endpoint).",
+  "zapier_durable_version": "0.17.0",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.126.0"
+  },
+  "version_pinning_note": "@zapier/zapier-durable 0.17.0 (2026-11-06) and @zapier/zapier-sdk 0.126.0 (2026-11-15) were the newest releases at least 24h old at build time; zod 4.4.3 matches the rest of the repo.",
+  "tables": {
+    "01JZCVG73MBWWB0357CEPS4903": "[Table] Meeting Note IDs, SHARED. Read to skip occurrences that already have a note (Event ID f3 exact AND Page ID f2 not null, free), and upserted with Page ID f2, Event ID f3, Start f5, End f6, Archived f7=false, Event Title f8, iCal UID f9 after each note. Event ID is the Google OCCURRENCE id. The meeting-note-db-updates Worker upserts the same row when it enriches the note, so whichever runs second updates rather than adds."
+  },
+  "notion": {
+    "calendar_account_id": "9c2abc99-fa17-424f-8b9f-e427591bc44e",
+    "calendar_account_note": "Notion Calendar's id for the work Google account, from calendar.accountId in Notion MCP notion-calendar-list-events. calendar_id is the Google calendar id, read at run time from the events' `self` attendee/organizer. event_id is the plain Google occurrence id.",
+    "filed_in": "Notion files a new note like the event's other notes; with none, in the Meeting Notes data source (collection 19891b07-11ac-8137-9d62-000b75fab86e), titled `<summary> @<start>`. Verified 2026-11-17."
+  },
+  "verification": {
+    "dry_run": "2026-11-17, run 01a1e74b-a86f-7dbc-b772-0ead255458d3: 24 events in the next 7 days, 15 meetings, 2 already with notes, 13 would be created; skipped 4 declined and 5 with no other guests.",
+    "live_create": "2026-11-17, run 01a1e74f-a3c1-7fe4-bce0-b2ac8a9890eb (window 0..0.1 days, max_creates 1): created the note for AI COE - Weekly Long Sync (page 41b91b07-11ac-81ac-8528-dc20bf5c8c63) in Meeting Notes; the Worker enriched it within ~13s (Event ID, Description, Internal Attendees, Type=Client); one Table row (01M7KMZKC7DWWY0JGEVQDW8FFW), no duplicate.",
+    "get_or_create_probe": "2026-11-17: POST with calendar_event for an event that already had a note returned 200, created:false, the existing page id."
+  },
+  "cost": "~1 task per daily run (the calendar search) + 1 task per meeting note created. Table reads/writes are free. About 30 + (meetings per month) tasks; a note that already existed but had no Table row costs 1 task once (created:false) and is skipped after."
+}
