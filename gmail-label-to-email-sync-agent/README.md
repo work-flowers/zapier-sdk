@@ -50,7 +50,7 @@ One **Send Message to Agent** call (`App245513CLIAPI@1.4.0`, connection `zapier-
 | Input | Value | Why |
 |---|---|---|
 | `agent_id` | `38991b07-11ac-8046-a76d-0092353ee522` | Dennis' Email Sync Agent |
-| `message` | [`gmail-label-to-email-sync-agent-prompt.md`](gmail-label-to-email-sync-agent-prompt.md) with subject, sender, thread id, message id and link filled in | the agent reads the thread itself, so no email text is in the prompt |
+| `message` | [`gmail-label-to-email-sync-agent-prompt.md`](gmail-label-to-email-sync-agent-prompt.md) with the thread id filled in | ~530 characters. The agent's Instructions do the rest, and it has no tool to send email, so the prompt carries no safety rules or email details |
 | `metadata` | `gmail_thread_id`, `gmail_message_id` | trace a session back to its email |
 | `model_mode` | `unchanged` | the model is an agent setting, so anything else would rewrite the Custom Agent's model on every run |
 | `wait_seconds` | `20` | the action's maximum; most sessions need the polling loop |
