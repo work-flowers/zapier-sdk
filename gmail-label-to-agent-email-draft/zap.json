@@ -16,10 +16,10 @@
     "action": "label_message_v2",
     "authentication_id": "02dc1dc2-a395-8c45-8534-f6372752bb8c",
     "params": {
-      "label_ids": "Label_4453408798701039753"
+      "label_ids": "Label_30"
     },
     "authentication_note": "Gmail dennis@work.flowers, the account-wide connection on 2.14.0 (also bound as gmail_wf for the draft and label writes).",
-    "trigger_note": "Polling 'New Labeled Email': fires when the label is added, and ALSO on every later reply in a thread that still carries it. The workflow removes the label at the end so each tag is one request; on failure the label stays on as a marker. Deduped on message id, so re-tagging a thread with no new message since the last run does not fire again."
+    "trigger_note": "Polling 'New Labeled Email' on triage/draft-reply (Label_30): fires when the label is added, and ALSO on every later reply in a thread that still carries it. The agent moves the thread to triage/resolved when it is done, so each tag is one request; on failure the label stays on as a marker. Deduped on message id, so re-tagging a thread with no new message since the last run does not fire again."
   },
   "connections": {
     "notion_agents": "02587715-aaf7-8577-a712-37f53d57b4bb",
