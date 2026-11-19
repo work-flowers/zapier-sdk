@@ -1,10 +1,10 @@
 # gmail-label-to-agent-email-draft
 
-Tag a Gmail thread with **triage/draft-reply** and this Zap hands it to Dennis's **personal Notion agent** (Notion AI). The agent does the rest itself: it drafts the reply in the thread, books the meeting if a time is already agreed, and moves the thread to **triage/resolved**.
+Tag a Gmail thread with **triage/draft-reply** and this Zap hands it to Dennis's **personal Notion agent** (Notion AI). The agent drafts the reply in the thread and books the meeting if a time is already agreed. The Zap then removes the label.
 
 It replaces the **Dennis' Email Reply Drafter** Custom Agent, which listened to the same label ([Instructions](https://app.notion.com/p/3b591b0711ac80a3a52ddfc726686986)). The personal agent works with Dennis's full context: his memories, his skills (`dennis-email-writing`, `meeting-scheduling-dennis`), his calendar and his mail. A Custom Agent has only what it is given.
 
-**A one-way hand-off.** Until Notion fixed it (verified 2026-11-19), a message sent to the agent through the API got no connector tools, so the agent could only return text and this Zap wrote the draft itself (see the history below). Now the agent has the **Mail connector** and calendar tools in API turns, so it does every write and the Zap only checks its report.
+**A one-way hand-off.** Until Notion fixed it (verified 2026-11-19), a message sent to the agent through the API got no connector tools, so the agent could only return text and this Zap wrote the draft itself (see the history below). Now the agent has the **Mail connector** and calendar tools in API turns, so it drafts and books itself. The Zap checks its report and removes the trigger label.
 
 ```mermaid
 flowchart TD
@@ -16,24 +16,24 @@ flowchart TD
   T --> N{Newest labelled<br/>message?}
   N -- no --> Z2[skip: not-latest-message<br/>or label-removed]
   N -- yes --> D[hand-off-to-agent<br/>Notion Agents 1.4.0 send_message<br/>notion_ai, wait 20s, 1 attempt]
-  D --> AG[[Agent: read thread → Mail draft<br/>→ invite if time agreed<br/>→ triage/draft-reply ⇒ triage/resolved]]
+  D --> AG[[Agent: read thread → Mail draft<br/>→ invite if time agreed<br/>→ Send to Notion label]]
   AG --> E{Finished?}
   E -- no --> W[ctx.wait 30s → get_agent_reply<br/>up to 20 polls, ~17 min]
   W --> E
   E -- error / needs approval / timeout --> X2[throw]
   E -- yes --> P{RESULT block?}
   P -- none, or failed --> X3[throw: label stays on]
-  P -- drafted / invited / no_reply --> OK[done]
+  P -- drafted / invited / no_reply --> R[remove-trigger-label<br/>triage/draft-reply]
 ```
 
 ## Trigger
 
-Gmail **New Labeled Email** (`label_message_v2`) on dennis@work.flowers, label **triage/draft-reply** (`Label_30`). That trigger also fires on every later reply in a thread that still carries the label, so the agent removes it when it's done. Each tag is then exactly one request.
+Gmail **New Labeled Email** (`label_message_v2`) on dennis@work.flowers, label **triage/draft-reply** (`Label_30`). That trigger also fires on every later reply in a thread that still carries the label, so the Zap removes it after a successful run. Each tag is then exactly one request.
 
-- **One hand-off per tag, not one per message.** Tagging a thread labels every message in it, and the trigger fires once per labelled message. So each run first reads the thread (`threads.get`, `format=minimal`, through `sdk.fetch` on `gmail_wf`) and goes on only if its message is the **newest message still carrying the label**, ignoring drafts, trash and spam (`latestLabelledMessageId()`). The other runs return `skipped: "not-latest-message"`, or `"label-removed"` once the agent has moved the thread on. A tag's runs all start within seconds, long before the agent finishes, so they agree on which one proceeds.
-- **On failure the label stays on**, so an unhandled thread is easy to find. The agent is told to leave `triage/draft-reply` in place when it can't finish.
+- **One hand-off per tag, not one per message.** Tagging a thread labels every message in it, and the trigger fires once per labelled message. So each run first reads the thread (`threads.get`, `format=minimal`, through `sdk.fetch` on `gmail_wf`) and goes on only if its message is the **newest message still carrying the label**, ignoring drafts, trash and spam (`latestLabelledMessageId()`). The other runs return `skipped: "not-latest-message"`, or `"label-removed"` once the winning run has un-tagged the thread. A tag's runs all start within seconds, long before the agent finishes, so they agree on which one proceeds.
+- **On failure the label stays on**, so an unhandled thread is easy to find.
 - **Re-tagging** a thread fires again once a new message has arrived. Re-tagging with no new message since the last run does not fire, because the trigger deduplicates on message id.
-- The label id lives in two places: `trigger.params.label_ids` in `zap.json` and `TRIGGER_LABEL_ID` in `workflow.ts`. The prompt names it (and `triage/resolved`) by name. Keep all three in step.
+- The label id lives in two places: `trigger.params.label_ids` in `zap.json` and `TRIGGER_LABEL_ID` in `workflow.ts`. Keep the two in step.
 
 ## The agent call
 
@@ -57,7 +57,7 @@ The prompt tells it to:
 
 - **Draft** the reply in the thread with the **Mail connector (Notion Mail)**, named explicitly because it otherwise reaches for the read-only Gmail search connector. It never sends email.
 - **Schedule**: check the calendar first. If the thread already shows a specific time the other side proposed or accepted, and it's free, **create the event and invite the people from the thread**, then draft a short confirmation. Otherwise offer two or three open slots in the draft. It never changes or cancels an existing event. **An invite is sent as soon as the event is created**, unlike a draft, so this is the one write that leaves without Dennis reviewing it.
-- **Label**: remove `triage/draft-reply` and add `triage/resolved` when done. It no longer adds **Send to Notion**, which the old Custom Agent did.
+- **Labels**: after drafting, apply **Send to Notion** to the thread, as the old Custom Agent did. It leaves `triage/draft-reply` alone: the Zap removes that after a successful run (Dennis's choice, 2026-11-19).
 - **Report**: end with a block the Zap parses (`parseAgentResult()`, the last block wins):
 
 ```
@@ -89,4 +89,4 @@ History: enabled 2026-11-10 on the old `nosey-reply` label (now deleted), with t
 
 ## Costs
 
-Tasks per run on the main path: 1 for the thread read, 1 for the hand-off, 1 per poll (usually 1–3). The agent's own drafting, calendar and label work happens in Notion, not through Zapier, so it uses Notion AI credits rather than tasks. Each skipped run for a thread's other messages costs 1 task, for the thread read. An empty ping costs nothing. Expect a few dozen tagged threads a month.
+Tasks per run on the main path: 1 for the thread read, 1 for the hand-off, 1 per poll (usually 1–3), 1 for the label removal. The agent's own drafting and calendar work happens in Notion, not through Zapier, so it uses Notion AI credits rather than tasks. Each skipped run for a thread's other messages costs 1 task, for the thread read. An empty ping costs nothing. Expect a few dozen tagged threads a month.
