@@ -19,7 +19,7 @@
       "labelId": "Label_10"
     },
     "authentication_note": "Gmail dennis@work.flowers, the account-wide connection on 2.14.0 (the one gmail-label-to-agent-email-draft's trigger uses).",
-    "trigger_note": "Polling 'New Labeled Conversation' on Send to Notion (Label_10): fires the first time the label is added to a thread, and not again for replies. Chosen over 'New Labeled Email' (label_message_v2), which fires once per labelled message. The record's shape was not observable before the first live run (a read of the trigger returned no items), so workflow.ts logs which field the thread id came from."
+    "trigger_note": "Polling 'New Labeled Conversation' on Send to Notion (Label_10): fires the first time the label is added to a thread, and not again for replies. Chosen over 'New Labeled Email' (label_message_v2), which fires once per labelled message. The record is just {\"id\": <thread id>} (first live run, 2026-11-19)."
   },
   "connections": {
     "notion_agents": "02587715-aaf7-8577-a712-37f53d57b4bb"

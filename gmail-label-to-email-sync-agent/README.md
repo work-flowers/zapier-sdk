@@ -24,7 +24,7 @@ flowchart TD
 
 Gmail **New Labeled Conversation** (`labeled_conversation`) on dennis@work.flowers, label **Send to Notion** (`Label_10`). Zapier describes it as firing "the first time a label is added to a conversation", and not for later replies. That's the difference from **New Labeled Email** (`label_message_v2`), which fires for every labelled message and is what [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/) has to work around.
 
-- **Not yet seen live.** Read as an action before the first publish, the trigger returned no items, so its record shape is unconfirmed. `extractThread()` accepts `thread_id`, `threadId`, `raw.threadId` and `raw__threadId`, falling back to a bare `id`, and logs which one it used. **Check the first run's log.** If the id came from `id` and that turns out to be a message id, the Table and the agent get a message id instead of a thread id. That still works for a single-message thread, since Gmail gives a thread the id of its first message, but not for longer threads.
+- **The record is just `{"id": "<thread id>"}`** (first live run, 2026-11-19). `extractThread()` takes the thread id from its `id` fallback, and the run's Message ID is empty. The id is the real thread id: it matched a two-message thread, and Gmail gives a thread the id of its first message.
 - The label stays on. The agent never touches labels, and [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/) applies it to threads it drafts in, so those get saved too.
 - The label id (`Label_10`) lives only in `trigger.params.labelId` in `zap.json`. The workflow doesn't need it.
 
@@ -80,8 +80,8 @@ RESULT>>>
 | 2026-11-19 | `zapier-personal-agent` connection, `agent_id` choices | lists Dennis' Email Sync Agent |
 | 2026-11-19 | Table lookup on a backfilled thread id (exact match) | 1 hit |
 | 2026-11-19 | Helper unit tests (empty pings, payload shapes, `$` in subjects, RESULT parsing) | pass |
+| 2026-11-19 | First live run: a two-message thread tagged Send to Notion | **One run, one page.** Outcome `created`. The page has a Mail block holding both messages and Gmail Thread ID `1a1ee74490639481` (the real thread id), and the thread is in the Table. So the Custom Agent does get the Mail connector through the API. |
 
-**Not yet verified:** that the Custom Agent, messaged through the API, has the Mail connector and creates the Mail block. API messages to the *personal* agent got connector tools only from Notion's 2026-11 fix (see [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/#verified-behaviour)). A Custom Agent may differ. A `no_mail_block` outcome on the first run would mean it doesn't.
 
 ## Cutover (done 2026-11-19)
 
