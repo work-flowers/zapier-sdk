@@ -182,6 +182,24 @@ function firstString(...vals: unknown[]): string | null {
   return null;
 }
 
+/**
+ * Xero's EmailAddress field is scalar, while invoice extraction can return
+ * several addresses in one string (for example, separated by semicolons).
+ * Keep the first syntactically valid address and omit unusable values so a
+ * malformed or multi-address invoice cannot exhaust the contact-create step.
+ */
+export function normalizeVendorEmail(value: unknown): string | null {
+  const raw = firstString(value);
+  if (!raw) return null;
+  const candidates = raw
+    .split(/[;,\n]+/)
+    .map((candidate) => candidate.trim())
+    .filter(Boolean);
+  return (
+    candidates.find((candidate) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate)) ?? null
+  );
+}
+
 /** First item of a runAction result ({ data: [...] } or a bare array). */
 function firstResult(res: any): any {
   if (!res) return null;
@@ -449,7 +467,7 @@ type ContactResolution =
 
 function extractVendorDetails(raw: Record<string, unknown>): VendorDetails {
   return {
-    email: firstString(raw["Vendor Email Address"]),
+    email: normalizeVendorEmail(raw["Vendor Email Address"]),
     addressLine1: firstString(raw["Vendor Address Line 1"]),
     addressLine2: firstString(raw["Vendor Address Line 2"]),
     city: firstString(raw["Vendor City"]),
@@ -1649,7 +1667,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       total: toNumber(raw["Total Amount"]),
       taxApplied: raw["Tax Applied"] === true || firstString(raw["Tax Applied"])?.toLowerCase() === "true",
       lineBasis: basis === "Inclusive" || basis === "Exclusive" ? basis : "NoTax",
-      vendorEmail: firstString(raw["Vendor Email Address"]),
+      vendorEmail: normalizeVendorEmail(raw["Vendor Email Address"]),
     };
 
     // 2. Rename the Drive file to "<invoice date> <vendor>", as the classic Zap
