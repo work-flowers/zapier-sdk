@@ -1,12 +1,12 @@
 {
   "name": "gmail-label-to-email-sync-agent",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": null,
+  "workflow_id": "01a1f34d-8f5f-711a-aa59-8279385dd755",
+  "current_version_id": "01a1f34d-c75d-73b9-bf2e-1e8660ed55d5",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AlsoeI-FC6CMCRiTyzb0uM4",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "gmail-label-to-email-sync-agent",
     "description": "Gmail thread tagged Send to Notion (New Labeled Conversation: once per thread, not per message) -> skip if the thread is already in [Table] Gmail Threads Saved in Notion -> hand off to the Dennis' Email Sync Agent Custom Agent via Notion Agents (Unofficial) 1.4.0, which saves the thread to the Emails database with a Mail block -> record the thread in the Table. Replaces the agent's native mail-label trigger. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/gmail-label-to-email-sync-agent",
     "enable_on_publish": true
@@ -29,9 +29,11 @@
     "01JYG45PATFFM737HK63ZBC2D1": "[Table] Gmail Threads Saved in Notion — Thread ID (f2), Message ID (f5), Sent (f6). Read as the dedupe check, written after a successful hand-off. Rows to 2026-03-11 came from a retired classic Zap (one per message); 319 thread ids backfilled 2026-11-19 from Gmail's Send to Notion label."
   },
   "dependencies": {
+    "zod": "4.6.7",
     "@zapier/zapier-sdk": "0.115.1"
   },
   "zapier_durable_version": "0.14.1",
   "app_versions": null,
-  "app_versions_note": "Versions are pinned in the workflow's app id (App245513CLIAPI@1.4.0), not here."
+  "app_versions_note": "Versions are pinned in the workflow's app id (App245513CLIAPI@1.4.0), not here.",
+  "first_publish_note": "First published 2026-11-19 by Publish Zaps run 44503846002, which then failed at the zap.json sync-back (this file said \"enabled\": null; the sync-back only rewrites true/false). Ids, enabled, deploy.state and the runtime-resolved zod dependency were hand-synced from get-workflow / list-workflow-versions."
 }
