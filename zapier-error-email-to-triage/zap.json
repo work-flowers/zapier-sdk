@@ -16,10 +16,10 @@
     "action": "search",
     "authentication_id": "02a57b11-742e-8601-a7d4-99004bd654c7",
     "params": {
-      "query": "from:notifications@mail.zapier.com subject:(\"had an error\" OR \"couldn't run\") -subject:\"zapier-error-email-to-triage\""
+      "query": "from:notifications@mail.zapier.com subject:(\"had an error\" OR \"couldn't run\" OR \"Needs review\") -subject:\"zapier-error-email-to-triage\""
     },
     "authentication_note": "Gmail dennis@work.flowers (the non-shared connection, same as gmail-attachments-to-drive-by-type). Zapier sends Code Zap failure alerts to the Zap owner, which is this inbox for every work.flowers durable.",
-    "trigger_note": "Polling 'New Email Matching Search', one run per alert email. The query only narrows what Gmail polls; the authoritative checks (exact sender, exact subject shape) are in extractAlert() in workflow.ts. Polling triggers on durables never re-fire for an id they already delivered (W6ZE93-VMEWP), which is harmless here: every alert is a new message. The query excludes this Zap's own alerts: on 2026-10-26 Zapier's daily compute-spend limit stopped runs starting, each unstarted run emailed a 'couldn't run' alert, and each alert triggered another unstarted run (~16 runs/min) until the Zap was disabled. An unstarted run never reaches the code guard in extractAlert(), so the exclusion must live here."
+    "trigger_note": "Polling 'New Email Matching Search', one run per alert email. The query only narrows what Gmail polls; the authoritative checks (exact sender, exact subject shape) are in extractAlert() in workflow.ts. Polling triggers on durables never re-fire for an id they already delivered (W6ZE93-VMEWP), which is harmless here: every alert is a new message. The query excludes this Zap's own alerts: on 2026-10-26 Zapier's daily compute-spend limit stopped runs starting, each unstarted run emailed a 'couldn't run' alert, and each alert triggered another unstarted run (~16 runs/min) until the Zap was disabled. An unstarted run never reaches the code guard in extractAlert(), so the exclusion must live here. \"Needs review\" (Zapier's automatic-diagnosis alert, first seen 2026-11-19) was added because it replaced the \"had an error\" email for a drive-invoice-to-xero failure; the self-exclusion covers it too, since its subject is \"Needs review: <zap name>\"."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"

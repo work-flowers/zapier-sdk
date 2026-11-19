@@ -9,19 +9,35 @@ It replaces the `errorsDelta` sync in the notion-workers `zapier-durables-docs` 
 Gmail **New Email Matching Search** on dennis@work.flowers:
 
 ```
-from:notifications@mail.zapier.com subject:("had an error" OR "couldn't run") -subject:"zapier-error-email-to-triage"
+from:notifications@mail.zapier.com subject:("had an error" OR "couldn't run" OR "Needs review") -subject:"zapier-error-email-to-triage"
 ```
 
 **This Zap never processes its own alerts.** On 2026-10-26 Zapier's platform-wide daily compute-spend limit (`compute_spend_global_exceeded`) stopped runs from starting. Each unstarted run sent a `couldn't run` email, and each email triggered another unstarted run, about 16 runs a minute until the Zap was disabled. An unstarted run never reaches the code, so the exclusion has to be in the Gmail query. `extractAlert()` also skips an alert naming this Zap or its workflow id (`skipped: self-alert`), which covers a run that starts and fails the same way every time. Zapier's email to the owner remains the alert for this Zap's own failures.
 
-Zapier sends two alert subjects for Code Zaps, and both are ticketed:
+Zapier sends three alert subjects for Code Zaps, and all are ticketed:
 
 | Subject | Meaning |
 |---|---|
 | `Your Zap "<name>" had an error` | the run failed in our code |
 | `Your Zap "<name>" couldn't run` | a Zapier-side failure (the 2026-09-15 outage, `upstream_rejected`) |
+| `Needs review: <name>` | Zapier's automatic diagnosis looked at a failed run and wants a fix approved in the editor |
 
 The search only narrows what Gmail polls. `extractAlert()` re-checks the exact sender and subject shape.
+
+### `Needs review` alerts (since 2026-11-19)
+
+**This email can replace the `had an error` one.** On 2026-11-19 a drive-invoice-to-xero run failed (`StepExhaustedError`, Xero `Email address must be valid`). Its only alert was `Needs review: drive-invoice-to-xero`, three minutes later, so no ticket was made until the subject was added here.
+
+The email names no error. It has no `Workflow:` line and no `Error` block, only a "Review workflow" link, `zapier.com/workflow/<id>/v/<version>?…&source=agma_approval_request`. So:
+
+- The workflow id comes from that link, and the Zap name from the subject.
+- The template check is the `agma_approval_request` marker. Without it the email throws, like any other alert that no longer parses.
+- The error comes from the run lookup, as for the other alerts. A found run gives the same signature a `had an error` email would, so both kinds land on one ticket.
+- When the run can't be found, the message is a fixed `Zapier diagnosed a failed run and wants a fix approved in the editor`, with Error Type `Needs review`. Every such alert for a Zap then shares one ticket.
+
+**One run, two alerts, one count.** If Zapier sends both emails for a run, the second finds a ticket whose `Last Seen` is in the same minute as the run's start and changes nothing (`action: duplicate-alert`). That check is by minute because Notion stores `Last Seen` to the minute. It applies only when the run was found, since otherwise `Last Seen` is the email's time and says nothing about which run. Two different runs of one fault starting in the same minute therefore also count once.
+
+The diagnosis itself, and approving a fix, stay in Zapier. The ticket doesn't link to the conversation.
 
 ## Flow
 
@@ -44,6 +60,7 @@ flowchart TD
   S --> L[find-links:<br/>Zaps row, Runs row]
   S2 --> L
   L --> F[find-ticket:<br/>Triage by Signature]
+  F -- exists, same run<br/>already counted --> Z5[duplicate-alert:<br/>no change]
   F -- exists --> G[update-ticket:<br/>Occurrences +1, Last Seen,<br/>reopen if Resolved, add links]
   F -- new --> H[create-ticket:<br/>Untriaged, Occurrences 1]
 ```
@@ -94,8 +111,9 @@ Two alerts for the same new signature arriving within seconds of each other can 
 ## Testing
 
 ```shell
-npm test        # offline, 13 checks: both real alert emails in fixtures/, the self-alert skip, run matching,
-                # journal parsing, and signature/title parity with worker tickets ZAP-54 and ZAP-57
+npm test        # offline, 16 checks: the three real alert emails in fixtures/, the self-alert skip, run matching,
+                # journal parsing, the one-run-two-alerts guard, and signature/title parity with worker
+                # tickets ZAP-54 and ZAP-57
 ```
 
 Verified live with `run-durable` on 2026-10-03, against the production Notion databases:
@@ -111,4 +129,6 @@ Verified live with `run-durable` on 2026-10-03, against the production Notion da
 
 ZAP-58 was a test ticket and was moved to the Notion trash. ZAP-57 was restored by hand afterwards (`Occurrences 1`, `Resolved`, and its original `Resolved on`, which the status automation re-stamps when `Status` moves back to `Resolved`).
 
-`fixtures/` holds the real `had an error` (2026-09-30, `slack-thread-to-notion-discussion`) and `couldn't run` (2026-09-30, `gcal-event-updated-to-meeting-note`) emails, reshaped to the Gmail trigger's field names.
+`fixtures/` holds the real `had an error` (2026-09-30, `slack-thread-to-notion-discussion`), `couldn't run` (2026-09-30, `gcal-event-updated-to-meeting-note`) and `Needs review` (2026-11-19, `drive-invoice-to-xero`, invisible filler lines dropped) emails, reshaped to the Gmail trigger's field names.
+
+The `Needs review` path has been tested offline only, not with `run-durable`. A live run would write to the production triage database.
