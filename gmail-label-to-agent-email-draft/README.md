@@ -16,7 +16,7 @@ flowchart TD
   T --> N{Newest labelled<br/>message?}
   N -- no --> Z2[skip: not-latest-message<br/>or label-removed]
   N -- yes --> D[hand-off-to-agent<br/>Notion Agents 1.4.0 send_message<br/>notion_ai, wait 20s, 1 attempt]
-  D --> AG[[Agent: read thread → Mail draft<br/>→ invite if time agreed]]
+  D --> AG[[Agent: read thread → Mail draft<br/>→ invite if time agreed<br/>→ Send to Notion label]]
   AG --> E{Finished?}
   E -- no --> W[ctx.wait 30s → get_agent_reply<br/>up to 20 polls, ~17 min]
   W --> E
@@ -57,7 +57,7 @@ The prompt tells it to:
 
 - **Draft** the reply in the thread with the **Mail connector (Notion Mail)**, named explicitly because it otherwise reaches for the read-only Gmail search connector. It never sends email.
 - **Schedule**: check the calendar first. If the thread already shows a specific time the other side proposed or accepted, and it's free, **create the event and invite the people from the thread**, then draft a short confirmation. Otherwise offer two or three open slots in the draft. It never changes or cancels an existing event. **An invite is sent as soon as the event is created**, unlike a draft, so this is the one write that leaves without Dennis reviewing it.
-- **Labels**: leave them alone. The Zap removes `triage/draft-reply` after a successful run (Dennis's choice, 2026-11-19). Nothing adds **Send to Notion** any more, which the old Custom Agent did.
+- **Labels**: after drafting, apply **Send to Notion** to the thread, as the old Custom Agent did. It leaves `triage/draft-reply` alone: the Zap removes that after a successful run (Dennis's choice, 2026-11-19).
 - **Report**: end with a block the Zap parses (`parseAgentResult()`, the last block wins):
 
 ```
