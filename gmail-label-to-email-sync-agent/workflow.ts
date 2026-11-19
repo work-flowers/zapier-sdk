@@ -18,7 +18,6 @@ const EMAIL_SYNC_AGENT_ID = "38991b07-11ac-8046-a76d-0092353ee522"; // Dennis' E
 // free, so this is the dedupe check, ahead of any paid call.
 const SYNCED_THREADS_TABLE = "01JYG45PATFFM737HK63ZBC2D1";
 const THREAD_ID_FIELD = "Thread ID";
-const MESSAGE_ID_FIELD = "Message ID";
 
 // Waiting for the agent. The send step waits up to 20s server-side; after that
 // each poll is a free 30s ctx.wait plus a Get Agent Reply that waits up to 20s,
@@ -81,59 +80,21 @@ function clip(s: string, max: number): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-export interface LabeledThread {
-  threadId: string;
-  /** Where the thread id came from, logged so the first live run shows the
-   *  trigger's real shape. */
-  threadIdSource: string;
-  messageId: string;
-  subject: string;
-  from: string;
-  messageUrl: string;
-}
-
-/** Reads the Gmail "New Labeled Conversation" record. Its shape was not
- *  observable before the first live run (the trigger returned no sample), so
- *  this accepts the Gmail v2 shapes seen elsewhere: `thread_id`, `raw.threadId`
- *  or a flattened `raw__threadId`, and only then a bare `id`. Null when there
- *  is no usable id — the caller throws, because a non-empty record without one
- *  means the trigger's shape is not what this code expects. */
-export function extractThread(raw: unknown): LabeledThread | null {
+/** The thread id from a Gmail "New Labeled Conversation" record, which is
+ *  just `{ "id": "<thread id>" }` (first live run, 2026-11-19). `thread_id` and
+ *  `threadId` are read first in case a later version names it explicitly. The
+ *  agent reads everything else (subject, sender, messages) from Gmail itself.
+ *  Null when there is no id — the caller throws, because a non-empty record
+ *  without one means the trigger's shape changed. */
+export function extractThreadId(raw: unknown): string | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const o = raw as Record<string, any>;
-  const rawPart = o.raw && typeof o.raw === "object" ? o.raw : {};
-
-  const candidates: Array<[string, string]> = [
-    ["thread_id", str(o.thread_id)],
-    ["threadId", str(o.threadId)],
-    ["raw.threadId", str(rawPart.threadId)],
-    ["raw__threadId", str(o.raw__threadId)],
-    ["id", str(o.id)],
-  ];
-  const hit = candidates.find(([, v]) => v !== "");
-  if (!hit) return null;
-  const [threadIdSource, threadId] = hit;
-
-  const messageId = str(o.message_id) || str(rawPart.id) || str(o.raw__id) || (threadIdSource === "id" ? "" : str(o.id));
-
-  const fromObj = o.from && typeof o.from === "object" ? o.from : {};
-  const fromName = str(fromObj.name) || str(o.from__name);
-  const fromEmail = str(fromObj.email) || str(o.from__email) || str(o.from);
-  const from = fromName && fromEmail ? `${fromName} <${fromEmail}>` : fromEmail || fromName || "(unknown sender)";
-
-  return {
-    threadId,
-    threadIdSource,
-    messageId,
-    subject: str(o.subject) || "(no subject)",
-    from,
-    messageUrl: str(o.message_url) || str(o.thread_url) || `https://mail.google.com/mail/u/0/#all/${threadId}`,
-  };
+  const o = raw as Record<string, unknown>;
+  return str(o.thread_id) || str(o.threadId) || str(o.id) || null;
 }
 
-export function buildHandoffMessage(t: LabeledThread): string {
+export function buildHandoffMessage(threadId: string): string {
   // A function replacement, so nothing in the id is read as a pattern.
-  return HANDOFF_PROMPT.replaceAll("{{THREAD_ID}}", () => t.threadId);
+  return HANDOFF_PROMPT.replaceAll("{{THREAD_ID}}", () => threadId);
 }
 
 export type AgentOutcome = "created" | "no_mail_block" | "failed";
@@ -219,13 +180,12 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
     return { skipped: "empty-payload" };
   }
 
-  const thread = extractThread(payload);
-  if (!thread) {
+  const threadId = extractThreadId(payload);
+  if (!threadId) {
     throw new Error(
       `Unrecognised trigger payload: no Gmail thread id. Keys: ${Object.keys(payload as object).join(", ")}`,
     );
   }
-  console.log(`thread ${thread.threadId} (id from ${thread.threadIdSource}), message ${thread.messageId || "(none)"}`);
 
   // 1. Already synced? A free Table read, before any paid call. Catches a
   //    re-fire of the trigger, a thread re-tagged after its label was removed,
@@ -234,14 +194,14 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
     const res = await sdk.listTableRecords({
       table: SYNCED_THREADS_TABLE,
       keyMode: "names",
-      filters: [{ fieldKey: THREAD_ID_FIELD, operator: "exact", value: thread.threadId }],
+      filters: [{ fieldKey: THREAD_ID_FIELD, operator: "exact", value: threadId }],
       pageSize: 1,
     });
     return (res.data ?? []).length;
   });
   if (existing > 0) {
-    console.log(`thread ${thread.threadId} is already in Gmail Threads Saved in Notion; skipping`);
-    return { skipped: "already-synced", thread_id: thread.threadId };
+    console.log(`thread ${threadId} is already in Gmail Threads Saved in Notion; skipping`);
+    return { skipped: "already-synced", thread_id: threadId };
   }
 
   // 2. Hand off. ONE attempt: a retry after an ambiguous failure could open a
@@ -259,11 +219,10 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
         connection: AGENTS_CONNECTION,
         inputs: {
           agent_id: EMAIL_SYNC_AGENT_ID,
-          message: buildHandoffMessage(thread),
+          message: buildHandoffMessage(threadId),
           metadata: {
             trigger: "gmail-label",
-            gmail_thread_id: thread.threadId,
-            gmail_message_id: thread.messageId,
+            gmail_thread_id: threadId,
           },
           model_mode: "unchanged",
           wait_seconds: SEND_WAIT_SECONDS,
@@ -274,10 +233,10 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
   const first = (sent.data?.[0] ?? {}) as AgentResult;
   const sessionId = str(first.session_id);
   if (!sessionId) {
-    throw new Error(`Send Message to Agent returned no session id for thread ${thread.threadId}`);
+    throw new Error(`Send Message to Agent returned no session id for thread ${threadId}`);
   }
   assertAgentOk(first, sessionId);
-  console.log(`thread ${thread.threadId} handed to the Email Sync Agent: session ${sessionId}`);
+  console.log(`thread ${threadId} handed to the Email Sync Agent: session ${sessionId}`);
 
   // 3. Wait for the agent to finish, unless it already did inside the send.
   const settled = first.is_settled
@@ -287,11 +246,11 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
   const result = parseAgentResult(str(settled.reply_text));
   if (!result) {
     throw new Error(
-      `Agent session ${sessionId} finished without a valid <<<RESULT>>> block for thread ${thread.threadId}. Reply starts: ${clip(str(settled.reply_text), 300)}`,
+      `Agent session ${sessionId} finished without a valid <<<RESULT>>> block for thread ${threadId}. Reply starts: ${clip(str(settled.reply_text), 300)}`,
     );
   }
   if (result.outcome === "failed") {
-    throw new Error(`Agent session ${sessionId} could not save thread ${thread.threadId}: ${result.note}`);
+    throw new Error(`Agent session ${sessionId} could not save thread ${threadId}: ${result.note}`);
   }
 
   // 4. Record the thread as synced. Also on no_mail_block: a page exists, so a
@@ -301,18 +260,18 @@ const workflow = defineDurable("gmail-label-to-email-sync-agent", async (ctx, ra
     sdk.createTableRecords({
       table: SYNCED_THREADS_TABLE,
       keyMode: "names",
-      records: [{ data: { [THREAD_ID_FIELD]: thread.threadId, [MESSAGE_ID_FIELD]: thread.messageId } }],
+      records: [{ data: { [THREAD_ID_FIELD]: threadId } }],
     }),
   );
 
   if (result.outcome === "no_mail_block") {
     throw new Error(
-      `Agent session ${sessionId} created ${result.page || "a page"} for thread ${thread.threadId} but no Mail block: ${result.note}`,
+      `Agent session ${sessionId} created ${result.page || "a page"} for thread ${threadId} but no Mail block: ${result.note}`,
     );
   }
 
-  console.log(`thread ${thread.threadId}: created ${result.page || "(no url)"} (session ${sessionId}): ${result.note}`);
-  return { outcome: result.outcome, page: result.page, note: result.note, thread_id: thread.threadId, session_id: sessionId };
+  console.log(`thread ${threadId}: created ${result.page || "(no url)"} (session ${sessionId}): ${result.note}`);
+  return { outcome: result.outcome, page: result.page, note: result.note, thread_id: threadId, session_id: sessionId };
 });
 
 export default workflow;

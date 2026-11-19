@@ -26,7 +26,7 @@
   },
   "connections_note": "notion_agents is the 'zapier-personal-agent' connection on the Notion Agents (Unofficial) custom integration (made on 1.1.0; the workflow calls App245513CLIAPI@1.4.0 explicitly). It lists every Custom Agent in the workspace, including Dennis' Email Sync Agent (38991b07-11ac-8046-a76d-0092353ee522). The Gmail connection is bound to the trigger only. Zapier Tables need no connection.",
   "tables": {
-    "01JYG45PATFFM737HK63ZBC2D1": "[Table] Gmail Threads Saved in Notion — Thread ID (f2), Message ID (f5), Sent (f6). Read as the dedupe check, written after a successful hand-off. Rows to 2026-03-11 came from a retired classic Zap (one per message); 319 thread ids backfilled 2026-11-19 from Gmail's Send to Notion label."
+    "01JYG45PATFFM737HK63ZBC2D1": "[Table] Gmail Threads Saved in Notion — Thread ID (f2), Message ID (f5), Sent (f6). Read as the dedupe check; Thread ID alone is written after a successful hand-off (the trigger record has no message id). Rows to 2026-03-11 came from a retired classic Zap (one per message); 319 thread ids backfilled 2026-11-19 from Gmail's Send to Notion label."
   },
   "dependencies": {
     "zod": "4.6.7",

@@ -24,7 +24,7 @@ flowchart TD
 
 Gmail **New Labeled Conversation** (`labeled_conversation`) on dennis@work.flowers, label **Send to Notion** (`Label_10`). Zapier describes it as firing "the first time a label is added to a conversation", and not for later replies. That's the difference from **New Labeled Email** (`label_message_v2`), which fires for every labelled message and is what [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/) has to work around.
 
-- **The record is just `{"id": "<thread id>"}`** (first live run, 2026-11-19). `extractThread()` takes the thread id from its `id` fallback, and the run's Message ID is empty. The id is the real thread id: it matched a two-message thread, and Gmail gives a thread the id of its first message.
+- **The record is just `{"id": "<thread id>"}`** (first live run, 2026-11-19). The id is the real thread id: it matched a two-message thread, and Gmail gives a thread the id of its first message. `extractThreadId()` reads `thread_id`, `threadId`, then `id`. The Zap passes only that id, and the agent reads subject, sender and messages from Gmail itself. Earlier versions also parsed subject and sender, which the record doesn't have, so the hand-off showed `(no subject)` and the agent titled the page `Email thread`.
 - The label stays on. The agent never touches labels, and [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/) applies it to threads it drafts in, so those get saved too.
 - The label id (`Label_10`) lives only in `trigger.params.labelId` in `zap.json`. The workflow doesn't need it.
 
@@ -51,7 +51,7 @@ One **Send Message to Agent** call (`App245513CLIAPI@1.4.0`, connection `zapier-
 |---|---|---|
 | `agent_id` | `38991b07-11ac-8046-a76d-0092353ee522` | Dennis' Email Sync Agent |
 | `message` | [`gmail-label-to-email-sync-agent-prompt.md`](gmail-label-to-email-sync-agent-prompt.md) with the thread id filled in | ~530 characters. The agent's Instructions do the rest, and it has no tool to send email, so the prompt carries no safety rules or email details |
-| `metadata` | `gmail_thread_id`, `gmail_message_id` | trace a session back to its email |
+| `metadata` | `gmail_thread_id` | trace a session back to its email |
 | `model_mode` | `unchanged` | the model is an agent setting, so anything else would rewrite the Custom Agent's model on every run |
 | `wait_seconds` | `20` | the action's maximum; most sessions need the polling loop |
 
