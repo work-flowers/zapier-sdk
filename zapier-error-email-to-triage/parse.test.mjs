@@ -26,7 +26,7 @@ src = src
     "const createExperimentalSdk = () => ({}); const createZapierApi = (_: unknown) => ({}); const ZAPIER_BASE_URL = '';",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { extractAlert, signatureOf, titleOf, failureFromAlert, failureFromRun, pickRun, failingOperation, isEmptyPing, normalizeInput, normaliseMessage };\n";
+src += "\nexport const __test = { extractAlert, signatureOf, titleOf, failureFromAlert, failureFromRun, pickRun, failingOperation, isEmptyPing, normalizeInput, normaliseMessage, alreadyCounted };\n";
 
 const tmp = join(dir, ".parse-under-test.ts");
 writeFileSync(tmp, src);
@@ -67,6 +67,36 @@ check("couldn't-run alert parses, hard-wrapped message re-joined", () => {
     "We couldn't confirm the outcome of your Zap run -- this is a Zapier-side issue, not a problem with your code.",
   );
   assert.ok(t.titleOf(alert.zapName, t.failureFromAlert(alert)).startsWith("gcal-event-updated-to-meeting-note · Couldn't run: We couldn't"));
+});
+
+check("needs-review alert parses: id from the approval link, name from the subject", () => {
+  const { alert } = t.extractAlert(fixture("needs-review.json"));
+  assert.equal(alert.kind, "needs_review");
+  assert.equal(alert.zapName, "drive-invoice-to-xero");
+  assert.equal(alert.workflowId, "019fa877-c2c2-72aa-962d-525aa58ebf0e");
+  assert.equal(
+    t.titleOf(alert.zapName, t.failureFromAlert(alert)),
+    "drive-invoice-to-xero · Needs review: Zapier diagnosed a failed run and wants a fix approved in the editor",
+  );
+  assert.ok(t.signatureOf(alert.workflowId, t.failureFromAlert(alert)).startsWith("019fa877-c2c2-72aa-962d-525aa58ebf0e · Needs review · "));
+});
+
+check("needs-review: own alert skipped; changed template throws", () => {
+  const self = fixture("needs-review.json");
+  self.subject = "Needs review: zapier-error-email-to-triage";
+  self.body_plain = "nothing parseable";
+  assert.deepEqual(t.extractAlert(self), { skip: "self-alert" });
+  const drift = fixture("needs-review.json");
+  drift.body_plain = drift.body_plain.replace(/agma_approval_request/g, "something_else");
+  assert.throws(() => t.extractAlert(drift), /did not parse/);
+});
+
+check("alreadyCounted: same run start minute only, and only when the run was found", () => {
+  // Notion hands Last Seen back truncated to the minute.
+  assert.equal(t.alreadyCounted("2026-11-19T06:49:00.000+00:00", "2026-11-19T06:49:29.308Z", true), true);
+  assert.equal(t.alreadyCounted("2026-11-19T06:48:00.000+00:00", "2026-11-19T06:49:29.308Z", true), false);
+  assert.equal(t.alreadyCounted("2026-11-19T06:49:00.000+00:00", "2026-11-19T06:49:29.308Z", false), false);
+  assert.equal(t.alreadyCounted(null, "2026-11-19T06:49:29.308Z", true), false);
 });
 
 check("double-encoded payload is unwrapped", () => {

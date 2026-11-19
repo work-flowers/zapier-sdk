@@ -145,20 +145,39 @@ function normaliseMessage(message: string): string {
   return text.trim();
 }
 
-type AlertKind = "error" | "couldnt_run";
+type AlertKind = "error" | "couldnt_run" | "needs_review";
 
-/** Subject → kind. Zapier sends exactly these two subjects for Code Zaps:
+/** Subject → kind. Zapier sends these subjects for Code Zaps:
  *  "had an error" for a failure in our code, "couldn't run" for a Zapier-side
- *  one (the 2026-09-15 platform outage, `upstream_rejected`). */
+ *  one (the 2026-09-15 platform outage, `upstream_rejected`), and, first seen
+ *  2026-11-19, "Needs review: <zap>" when Zapier's automatic diagnosis has
+ *  looked at a failed run and wants a fix approved. That email REPLACED the
+ *  "had an error" one for its run (drive-invoice-to-xero, 2026-11-19), so it is
+ *  the only alert some failures get. */
 const SUBJECT_PATTERNS: Array<[RegExp, AlertKind]> = [
   [/^Your Zap "(.+)" had an error$/, "error"],
   [/^Your Zap "(.+)" couldn['’]t run$/, "couldnt_run"],
+  [/^Needs review: (.+)$/, "needs_review"],
 ];
 
 const ERROR_TYPE_LABEL: Record<AlertKind, string> = {
   error: "Zap error",
   couldnt_run: "Couldn't run",
+  needs_review: "Needs review",
 };
+
+/** A "Needs review" email names no error, only that one was diagnosed. When its
+ *  run can't be found, the ticket gets this fixed message, so every such alert
+ *  for a Zap lands on one ticket rather than scattering. */
+const NEEDS_REVIEW_MESSAGE = "Zapier diagnosed a failed run and wants a fix approved in the editor";
+
+/** Two alerts for one run (Zapier may send both "had an error" and "Needs
+ *  review") must count once. Notion stores `Last Seen` to the minute
+ *  (`…T00:42:00.000Z`, checked 2026-11-19), so a ticket whose Last Seen falls
+ *  in the same minute as the matched run's start already counted it. Two
+ *  distinct runs of one fault starting in the same minute also count once,
+ *  which is an acceptable undercount. */
+const LAST_SEEN_RESOLUTION_MS = 60 * 1000;
 
 interface Alert {
   kind: AlertKind;
@@ -183,6 +202,11 @@ interface Alert {
  * The message is hard-wrapped at ~60 columns, so the lines between `Error` and
  * `Open in workflow manager` are re-joined into one. The workflow id is read
  * off the editor link — it is the only id the email carries.
+ *
+ * A "Needs review" email (2026-11-19) has no `Workflow:` line and no `Error`
+ * block. Its id is in the "Review workflow" link,
+ * `zapier.com/workflow/<id>/v/<version>?…&source=agma_approval_request…`,
+ * which the same pattern reads.
  */
 function parseAlertBody(body: string): { zapName: string | null; workflowId: string | null; message: string | null } {
   const text = body.replace(/\r\n?/g, "\n");
@@ -230,6 +254,12 @@ function extractAlert(raw: unknown): { alert: Alert } | { skip: string } {
 
   const body = firstString(m.body_plain, m.text_body, m.body) ?? "";
   const parsed = parseAlertBody(body);
+  if (kind === "needs_review") {
+    // No error text to read, so check the template another way: the approval
+    // link is what makes this the diagnosis email.
+    if (!/agma_approval_request/.test(body)) parsed.workflowId = null;
+    parsed.message = NEEDS_REVIEW_MESSAGE;
+  }
   if (!parsed.workflowId || !parsed.message) {
     throw new Error(
       `Zapier alert email "${subject}" did not parse (workflowId=${parsed.workflowId ?? "missing"}, ` +
@@ -337,6 +367,16 @@ function failingOperation(ops: any[]): { step: string | null; cause: string | nu
   if (!last) return { step: null, cause: null };
   const parts = [last.error?.name, last.error?.message].filter(Boolean);
   return { step: firstString(last.name), cause: parts.length ? parts.join(": ") : null };
+}
+
+/** True when a ticket already counted this run: only decidable when the run was
+ *  found, since then `occurredAt` is the run's own start, not the email's time. */
+function alreadyCounted(lastSeen: string | null, occurredAt: string, runFound: boolean): boolean {
+  if (!runFound || !lastSeen) return false;
+  const a = Date.parse(lastSeen);
+  const b = Date.parse(occurredAt);
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  return Math.floor(a / LAST_SEEN_RESOLUTION_MS) === Math.floor(b / LAST_SEEN_RESOLUTION_MS);
 }
 
 function richText(text: string): Array<Record<string, unknown>> {
@@ -531,8 +571,14 @@ const workflow = defineDurable("zapier-error-email-to-triage", async (ctx, rawIn
       status: statusProp(page, "Status"),
       zapLinked: relationIds(page, "Zap").length > 0,
       runIds: relationIds(page, "Zap Runs"),
+      lastSeen: (page?.properties?.["Last Seen"]?.date?.start as string | undefined) ?? null,
     };
   });
+
+  if (existing && alreadyCounted(existing.lastSeen, occurredAt, Boolean(run))) {
+    console.log(`ticket ${existing.id} already counted run ${failure.runId}; second alert for the same run, no change`);
+    return { action: "duplicate-alert", ticketId: existing.id, signature, runFound: true };
+  }
 
   if (existing) {
     const reopen = existing.status !== null && STATUS_REOPENABLE.has(existing.status);
