@@ -1,7 +1,7 @@
 {
   "name": "gmail-label-to-email-sync-agent",
   "workflow_id": "01a1f34d-8f5f-711a-aa59-8279385dd755",
-  "current_version_id": "01a1f34d-c75d-73b9-bf2e-1e8660ed55d5",
+  "current_version_id": "01a1f358-2993-7275-9a3e-9cefb885537c",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AlsoeI-FC6CMCRiTyzb0uM4",
   "enabled": true,
   "is_private": false,
