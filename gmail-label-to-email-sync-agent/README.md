@@ -83,11 +83,11 @@ RESULT>>>
 
 **Not yet verified:** that the Custom Agent, messaged through the API, has the Mail connector and creates the Mail block. API messages to the *personal* agent got connector tools only from Notion's 2026-11 fix (see [`gmail-label-to-agent-email-draft`](../gmail-label-to-agent-email-draft/#verified-behaviour)). A Custom Agent may differ. A `no_mail_block` outcome on the first run would mean it doesn't.
 
-## Cutover
+## Cutover (done 2026-11-19)
 
 1. Update the agent's [Instructions](https://app.notion.com/p/38991b0711ac80c4b5a3c354530ce02b) so step 1 ("Confirm the trigger is a mail label event…") also accepts a message from this automation. The prompt already says the message stands in for the label event, but instructions that contradict it are a risk.
 2. Turn off the agent's native mail-label trigger, so the two never handle the same thread.
-3. Merge. The Zap is created and enabled on publish.
+3. Merge. The Zap is created and enabled on publish. (PR #310. The publish job created and enabled it, then failed writing ids back to `zap.json`, which were hand-synced afterwards.)
 4. Tag a test thread with several messages. Check that exactly one Emails page appears, with a Mail block and the real thread id in Gmail Thread ID, and that the thread is in the Table. Check the run log for which field the thread id came from.
 
 ## Costs
