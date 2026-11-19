@@ -1,7 +1,7 @@
 {
   "name": "gmail-label-to-agent-email-draft",
   "workflow_id": "01a1c391-6df2-72e7-96d4-3d4deaddd701",
-  "current_version_id": "01a1f2ed-cde9-74b5-ad45-79ad3a54f24c",
+  "current_version_id": "01a1f2f6-c5f2-75cf-bd60-814fb1fd92fc",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ad_5DOMbYD_eH-Iycq2TnA",
   "enabled": true,
   "is_private": false,
