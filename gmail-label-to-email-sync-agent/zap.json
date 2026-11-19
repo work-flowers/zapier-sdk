@@ -1,0 +1,37 @@
+{
+  "name": "gmail-label-to-email-sync-agent",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": null,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "gmail-label-to-email-sync-agent",
+    "description": "Gmail thread tagged Send to Notion (New Labeled Conversation: once per thread, not per message) -> skip if the thread is already in [Table] Gmail Threads Saved in Notion -> hand off to the Dennis' Email Sync Agent Custom Agent via Notion Agents (Unofficial) 1.4.0, which saves the thread to the Emails database with a Mail block -> record the thread in the Table. Replaces the agent's native mail-label trigger. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/gmail-label-to-email-sync-agent",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "GoogleMailV2CLIAPI@2.14.0",
+    "action": "labeled_conversation",
+    "authentication_id": "02dc1dc2-a395-8c45-8534-f6372752bb8c",
+    "params": {
+      "labelId": "Label_10"
+    },
+    "authentication_note": "Gmail dennis@work.flowers, the account-wide connection on 2.14.0 (the one gmail-label-to-agent-email-draft's trigger uses).",
+    "trigger_note": "Polling 'New Labeled Conversation' on Send to Notion (Label_10): fires the first time the label is added to a thread, and not again for replies. Chosen over 'New Labeled Email' (label_message_v2), which fires once per labelled message. The record's shape was not observable before the first live run (a read of the trigger returned no items), so workflow.ts logs which field the thread id came from."
+  },
+  "connections": {
+    "notion_agents": "02587715-aaf7-8577-a712-37f53d57b4bb"
+  },
+  "connections_note": "notion_agents is the 'zapier-personal-agent' connection on the Notion Agents (Unofficial) custom integration (made on 1.1.0; the workflow calls App245513CLIAPI@1.4.0 explicitly). It lists every Custom Agent in the workspace, including Dennis' Email Sync Agent (38991b07-11ac-8046-a76d-0092353ee522). The Gmail connection is bound to the trigger only. Zapier Tables need no connection.",
+  "tables": {
+    "01JYG45PATFFM737HK63ZBC2D1": "[Table] Gmail Threads Saved in Notion — Thread ID (f2), Message ID (f5), Sent (f6). Read as the dedupe check, written after a successful hand-off. Rows to 2026-03-11 came from a retired classic Zap (one per message); 319 thread ids backfilled 2026-11-19 from Gmail's Send to Notion label."
+  },
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "zapier_durable_version": "0.14.1",
+  "app_versions": null,
+  "app_versions_note": "Versions are pinned in the workflow's app id (App245513CLIAPI@1.4.0), not here."
+}
