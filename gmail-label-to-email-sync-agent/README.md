@@ -39,6 +39,8 @@ That covers a re-fire of the trigger, a thread re-tagged after its label was rem
 
 The Emails database's own **Gmail Thread ID** property isn't reliable for this: [`email-db-updates`](../email-db-updates/) fills it with the message id when it's empty, which it usually was. The prompt now asks the agent to set it to the real thread id.
 
+**The agent does no duplicate check of its own.** The prompt tells it the check is done, and its Instructions should not ask for one: searching Emails on every run would cost Notion AI credits for a question the Table already answers for free (Dennis, 2026-11-19).
+
 **Concurrency:** two runs for the same thread at the same moment would both find nothing and both hand off. With a once-per-thread trigger that should not happen. If it does, the cleanup is the same as for today's duplicates.
 
 ## The agent call

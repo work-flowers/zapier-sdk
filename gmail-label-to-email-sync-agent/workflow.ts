@@ -35,7 +35,9 @@ const MAX_POLLS = 20;
 
 // Embedded copy of gmail-label-to-email-sync-agent-prompt.md (the source of
 // truth). Edit the markdown, then run `node scripts/check-prompts.mjs --fix`.
-const HANDOFF_PROMPT = `A Gmail thread on dennis@work.flowers has just been tagged Send to Notion. This message stands in for your mail-label trigger: treat it exactly as that label event and follow your instructions to save the thread to Emails.
+const HANDOFF_PROMPT = `A Gmail thread on dennis@work.flowers has just been tagged Send to Notion. This message comes from the automation that replaced your mail-label trigger. Follow your instructions to file the thread in Emails.
+
+The automation has already checked that this thread is not yet in Emails, so do not search Emails for an existing record. Go straight to creating the page.
 
 - Subject: {{SUBJECT}}
 - From: {{FROM}}
