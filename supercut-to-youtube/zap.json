@@ -1,7 +1,7 @@
 {
   "name": "supercut-to-youtube",
   "workflow_id": "01a1f6dd-198a-722f-96e6-e11cecdaea47",
-  "current_version_id": "01a1f6dd-57e4-72df-b9f8-834ea21e7092",
+  "current_version_id": "01a1f72f-b6e8-7839-bd52-fc7adeb4bd2c",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AmndzWRNVvieWsLHdkhzkOI",
   "enabled": true,
   "is_private": false,
