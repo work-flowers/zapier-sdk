@@ -16,8 +16,8 @@
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
-    "trigger_note": "Catch hook. A Notion database automation on Supercut Recordings (When YouTube Status is set to Ready for YouTube or Public -> Send webhook) POSTs { source, data: <page> } to webhook_url. The automation must be created by hand in Notion after the first publish; until then nothing fires."
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/LY4BVo4YwqgHkKKS/",
+    "trigger_note": "Catch hook. A Notion database automation on Supercut Recordings (When YouTube Status is set to Ready for YouTube or Public -> Send webhook) POSTs { source, data: <page> } to webhook_url. The automation must be created by hand in Notion after the first publish; until then nothing fires. webhook_url hand-synced from get-workflow on 2026-11-20: the first publish read the workflow back before Zapier filled in details.webhook_url, so the sync-back wrote nothing."
   },
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
