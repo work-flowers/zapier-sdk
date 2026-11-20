@@ -49,13 +49,15 @@ The **supercut-sync** worker manages this database and every property it declare
 
 | Property | Type | Written by |
 | --- | --- | --- |
-| YouTube Status | select: Ready for YouTube, Uploading, Uploaded (unlisted), Public, Needs review, Failed | you (Ready, Public) and the Zap (the rest) |
+| YouTube Status | Status. To-do: **Not on YouTube** (default), Ready for YouTube. In progress: Uploading, Needs review, Failed. Complete: Uploaded (unlisted), Public | you (Ready, Public) and the Zap (the rest) |
 | YouTube Video ID | text | the Zap. The match key the YouTube Videos sync uses to link back |
 | YouTube URL | url | the Zap |
 | YouTube Error | text | the Zap: why the last attempt failed or needs review |
 | YouTube Clients OK | checkbox | you, after reviewing a Needs review flag |
 
 The six videos uploaded by hand on 2026-11-20 were backfilled with their IDs and URLs.
+
+YouTube Status started as a select and became a Status property on 2026-11-20. The Zap reads the property's type from each row and writes the same type, so it works with either. The default option has to stay **Not on YouTube**: the supercut-sync worker creates rows, and a default of Ready for YouTube would publish every new recording.
 
 ## Things to know before touching it
 

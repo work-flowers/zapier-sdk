@@ -113,6 +113,9 @@ interface RowState {
   recordingId: string;
   durationSeconds: number | null;
   status: string;
+  /** YouTube Status was a select until 2026-11-20 and a Status property after;
+   *  writes follow whichever type the row read reports. */
+  statusKind: "status" | "select";
   videoId: string;
   clientsOk: boolean;
   dataSourceId: string;
@@ -186,12 +189,21 @@ export function statusFromPayload(payload: unknown): string {
   const o = (payload ?? {}) as Record<string, any>;
   const props = o?.data?.properties ?? o?.body?.data?.properties;
   if (!props || typeof props !== "object") return "";
-  return str(props?.[PROP_STATUS]?.select?.name);
+  return statusName(props?.[PROP_STATUS]);
 }
 
 function previewOnlyFlag(payload: unknown): boolean {
   const o = (payload ?? {}) as Record<string, any>;
   return o.previewOnly === true || o.previewOnly === "true";
+}
+
+/** YouTube Status's option name, whether the property is a Status or a select. */
+function statusName(prop: any): string {
+  return str(prop?.status?.name) || str(prop?.select?.name);
+}
+
+function statusValue(kind: "status" | "select", name: string): Record<string, { name: string }> {
+  return { [kind]: { name } };
 }
 
 function plainText(prop: any): string {
@@ -396,7 +408,8 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       title: plainText(p[PROP_NAME]),
       recordingId: plainText(p[PROP_RECORDING_ID]),
       durationSeconds: typeof duration === "number" ? duration : null,
-      status: str(p[PROP_STATUS]?.select?.name),
+      status: statusName(p[PROP_STATUS]),
+      statusKind: p[PROP_STATUS]?.type === "select" ? ("select" as const) : ("status" as const),
       videoId: plainText(p[PROP_VIDEO_ID]),
       clientsOk: p[PROP_CLIENTS_OK]?.checkbox === true,
       dataSourceId: dashUuid(str(page?.parent?.data_source_id)),
@@ -412,7 +425,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     if (!row.videoId) {
       await ctx.step("mark-public-failed", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
           [PROP_ERROR]: richText("Set to Public, but the row has no YouTube Video ID. Publish it first (Ready for YouTube)."),
         }),
       );
@@ -457,7 +470,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       const message = errorMessage(e);
       await ctx.step("mark-public-error", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
           [PROP_ERROR]: richText(`Making ${row.videoId} public failed: ${message}`),
         }),
       );
@@ -485,7 +498,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
   if (!previewOnly) {
     await ctx.step("mark-uploading", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_UPLOADING } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_UPLOADING),
         [PROP_ERROR]: richText(""),
       }),
     );
@@ -598,7 +611,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       const names = meta.clientsMentioned.join(", ");
       await ctx.step("mark-needs-review", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_NEEDS_REVIEW } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_NEEDS_REVIEW),
           [PROP_ERROR]: richText(
             `Transcript appears to mention client(s): ${names}. Not uploaded. If that's fine, tick YouTube Clients OK and set Ready for YouTube again.`,
           ),
@@ -654,7 +667,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     const youtubeUrl = `https://www.youtube.com/watch?v=${uploaded.id}`;
     await ctx.step("write-back", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_UPLOADED } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_UPLOADED),
         [PROP_VIDEO_ID]: richText(uploaded.id),
         [PROP_URL]: { url: youtubeUrl },
         [PROP_ERROR]: richText(""),
@@ -668,7 +681,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     const message = errorMessage(e);
     await ctx.step("mark-failed", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
         [PROP_ERROR]: richText(message),
       }),
     );
