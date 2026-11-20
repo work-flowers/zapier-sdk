@@ -67,7 +67,7 @@ YouTube Status started as a select and became a Status property on 2026-11-20. T
 - **Download.** `skip_outro=true` drops Supercut's branded outro; it needs Supercut's download-options plan feature, and the run fails with a clear error if the plan loses it. The render is asynchronous: the Zap polls every 30 seconds for up to 10 minutes. The signed URL expires within hours, so it's used in the same run and never stored in Notion.
 - **Recordings with no speech.** When Supercut reports the transcript as `unavailable` (a silent or music-only cut), the Zap still publishes: the AI step writes the title, description and tags from the working title alone, and there are no chapters. Expect a thin description and edit it in YouTube Studio before going Public. A transcript that is still `pending` or `processing` stops the run with Failed; set Ready for YouTube again a few minutes later. Music-only cuts with sung vocals risk Content ID claims (TKT-1069), so keep those off YouTube unless the track is licensed.
 - **Edits.** Supercut's `/download` serves the default edit if one is set, while the transcript is the original recording's. If an edit cuts a lot, chapter times can drift; check them before going public.
-- **Making it public** resends every `status` field, because `videos.update` resets any field you leave out.
+- **Making it public** resends every `status` field, because `videos.update` resets any field you leave out. It goes through the YouTube app's **API Request** action with `part` in the `querystring` field: with `?part=status` in the URL the action fails with the bare error `'status'` (the first live Public run, 2026-11-20). The reply's JSON is in `response.body`.
 - **Connections.** `supercut` is an *API by Zapier* connection holding Dennis's personal Supercut token (`sk_u_…`); `/download` requires a personal token. `youtube` is the workFlowers channel.
 - **Preview mode.** `run-durable` with `{"pageId": "<row id>", "previewOnly": true}` runs the read, transcript, client list and AI steps and returns the metadata. It writes nothing and uploads nothing, whatever the row's status.
 
@@ -90,7 +90,7 @@ The no-speech row was added after its first live run failed on the missing trans
 | Database Page Layout Cleanup Skill for Notion AI (28 s, no speech) | Notion AI Database Page Layout Cleanup Skill | none (no transcript) ✅ | none ✅ |
 | Knoxx Innovations Custom App Demo | Custom R&D App Demo: Projects, Formulations, Materials & Vendors | n/a | Knoxx Innovations Pty Ltd ✅ |
 
-Not yet exercised live: the upload, write-back, Needs review write, Failed write and Public paths. The first real Ready for YouTube after merge is that test.
+Live on 2026-11-20: Website Metrics Dashboard with Claude Data uploaded unlisted (`TVmO5MWzu3c`) and wrote back correctly. Its first Public run failed (see Making it public above); the video was made public by hand with the corrected request. Not yet exercised live: the Needs review write.
 
 ## Expected cost
 
