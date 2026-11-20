@@ -5,7 +5,7 @@ Publishes a Supercut recording to the workFlowers YouTube channel from Notion (T
 - Set a **Supercut Recordings** row's **YouTube Status** to **Ready for YouTube**. The Zap uploads the video **unlisted**, with an AI-written title, description, tags and chapters, then writes the **YouTube Video ID** and **YouTube URL** back and sets the status to **Uploaded (unlisted)**.
 - Review the video on YouTube, then set **YouTube Status** to **Public**. The Zap makes it public.
 
-**Status:** not yet published. It ships on merge; the Notion automation then has to be set up by hand (below).
+**Status:** enabled on Zapier since 2026-11-20 (workflow `01a1f6dd-198a-722f-96e6-e11cecdaea47`). Nothing fires until the Notion automation below is set up. Catch URL: `https://hooks.zapier.com/hooks/catch/20495893/LY4BVo4YwqgHkKKS/`.
 
 ## Workflow
 

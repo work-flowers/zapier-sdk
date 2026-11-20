@@ -626,6 +626,25 @@ function createAndPublish(dir, dep, execute) {
     after = unwrap(sdk(["get-workflow", workflowId]));
     afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
   }
+  // A catch hook's external URL (details.webhook_url) can appear a few
+  // seconds AFTER the trigger itself: supercut-to-youtube's first publish
+  // (2026-11-20) read triggers[0] with details still null, so the sync-back
+  // silently wrote no webhook_url. Keep polling until the URL is there.
+  for (
+    let attempt = 0;
+    afterTriggers.length > 0 && isCatchHookTrigger(afterTriggers[0]) && !afterTriggers[0]?.details?.webhook_url && attempt < 10;
+    attempt++
+  ) {
+    sleepSync(3000);
+    after = unwrap(sdk(["get-workflow", workflowId]));
+    afterTriggers = Array.isArray(after?.triggers) ? after.triggers : [];
+  }
+  if (afterTriggers.length > 0 && isCatchHookTrigger(afterTriggers[0]) && !afterTriggers[0]?.details?.webhook_url) {
+    log(
+      `- ⚠️ ${dir}: Zapier has not reported a catch URL after ~30s, so none is synced into zap.json. ` +
+        `Read it with \`get-workflow ${workflowId}\` (.data.triggers[0].details.webhook_url) and add it to the trigger block by hand.`,
+    );
+  }
   if (startMode === "trigger" && afterTriggers.length === 0) {
     fail(
       `${dir}: CREATED and PUBLISHED but the trigger was never claimed (triggers[] still empty after ~15s) — ` +
