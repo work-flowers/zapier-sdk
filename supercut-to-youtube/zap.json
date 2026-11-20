@@ -1,0 +1,47 @@
+{
+  "name": "supercut-to-youtube",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "supercut-to-youtube",
+    "description": "Supercut Recordings row's YouTube Status set to Ready for YouTube (Notion database automation -> catch hook) -> Supercut transcript -> AI by Zapier writes title, description, tags and chapters, and checks for client names against the company-ID Table -> Supercut render + signed download URL -> YouTube Upload Video, unlisted -> YouTube Video ID, URL and status written back. YouTube Status set to Public -> videos.update makes it public. TKT-1069. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/supercut-to-youtube",
+    "enable_on_publish": true
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.1.1",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. A Notion database automation on Supercut Recordings (When YouTube Status is set to Ready for YouTube or Public -> Send webhook) POSTs { source, data: <page> } to webhook_url. The automation must be created by hand in Notion after the first publish; until then nothing fires."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "supercut": "021ae280-5af3-881e-a573-751b11506c17",
+    "youtube": "028b7213-819e-87ed-91df-0d04103840dc"
+  },
+  "connections_note": "supercut is an API by Zapier connection holding Dennis's personal Supercut token (sk_u_..., the one the supercut-sync worker uses); /download needs a personal token. youtube is the workFlowers channel (UCbrz9V64Z2x5OBveDo5ee4w), the default YouTube connection since 2026-11-20. AI by Zapier and Zapier Tables need no connection.",
+  "notion": {
+    "data_source": "0f3fea21-11be-4158-ba98-9bb26936db89",
+    "hand_added_properties": ["YouTube Status", "YouTube Video ID", "YouTube URL", "YouTube Error", "YouTube Clients OK"],
+    "note": "Supercut Recordings is managed by the supercut-sync Notion Worker. The five YouTube properties were added by hand on 2026-11-20 and are not declared by the worker, so they stay writable. No create_database_item call here, so repo rule 5 does not apply."
+  },
+  "tables": {
+    "01JM8PH8YM93A482M8BFZ6WKW6": "Company IDs Table. Rows with a Harvest Client ID (258 on 2026-11-20) are the client list the AI step checks transcripts against. Read only, free."
+  },
+  "ai_model": {
+    "app": "AICLIAPI get_completion (built-in credentials, authentication_id \"0\")",
+    "tier": "standard/auto",
+    "why": "Metadata writing plus a client-mention check over a short transcript; no tool calls. TKT-1069 said Claude, and Dennis chose the repo default on 2026-11-20. Verified 2026-11-20 on seven real recordings (README table): all six already-uploaded demos produced usable metadata and no false client flags, and the Knoxx demo was flagged."
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "zod": "4.6.7",
+    "@zapier/zapier-sdk": "0.115.1"
+  },
+  "app_versions": null
+}
