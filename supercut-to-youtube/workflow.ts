@@ -445,7 +445,11 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
         inputs: {
           fail_on_errors: true,
           method: "PUT",
-          url: "https://www.googleapis.com/youtube/v3/videos?part=status",
+          // `part` must go in querystring: with `?part=status` in the URL the
+          // API Request action fails with the bare error "'status'" (first
+          // live Public run, 2026-11-20). Verified working in this form.
+          url: "https://www.googleapis.com/youtube/v3/videos",
+          querystring: { part: "status" },
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id: row.videoId,
@@ -459,9 +463,11 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
           }),
         },
       });
+      // The action returns { request, response: { status, body: <JSON string> } }.
       const r: any = (res as any)?.data?.[0] ?? {};
-      const body = typeof r.body === "string" ? safeJson(r.body) : r.body ?? r.response?.body ?? r;
-      return { privacyStatus: str(body?.status?.privacyStatus), raw: JSON.stringify(r).slice(0, 300) };
+      const rawBody = r.response?.body ?? r.body;
+      const body = typeof rawBody === "string" ? safeJson(rawBody) : rawBody;
+      return { privacyStatus: str(body?.status?.privacyStatus), raw: JSON.stringify(r.response ?? r).slice(0, 300) };
       });
       if (updated.privacyStatus !== "public") {
         throw new Error(`YouTube did not confirm ${row.videoId} as public: ${updated.raw}`);
