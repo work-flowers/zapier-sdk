@@ -1,12 +1,12 @@
 {
   "name": "supercut-to-youtube",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
-  "enabled": false,
+  "workflow_id": "01a1f6dd-198a-722f-96e6-e11cecdaea47",
+  "current_version_id": "01a1f6dd-57e4-72df-b9f8-834ea21e7092",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AmndzWRNVvieWsLHdkhzkOI",
+  "enabled": true,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "supercut-to-youtube",
     "description": "Supercut Recordings row's YouTube Status set to Ready for YouTube (Notion database automation -> catch hook) -> Supercut transcript -> AI by Zapier writes title, description, tags and chapters, and checks for client names against the company-ID Table -> Supercut render + signed download URL -> YouTube Upload Video, unlisted -> YouTube Video ID, URL and status written back. YouTube Status set to Public -> videos.update makes it public. TKT-1069. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/supercut-to-youtube",
     "enable_on_publish": true
