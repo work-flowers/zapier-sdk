@@ -75,6 +75,8 @@ const DESCRIPTION_FOOTER =
   "workFlowers helps mid-market teams with workflow automation, analytics and AI agent systems: https://work.flowers";
 const MIN_CHAPTER_GAP_SECONDS = 10;
 const MIN_CHAPTERS = 3;
+/** What the AI step gets in place of a transcript for a recording with no speech. */
+const NO_SPEECH_TRANSCRIPT = "(none: this recording has no speech)";
 
 // PROMPT SOURCE OF TRUTH: ./supercut-to-youtube-prompt.md
 // Edit the markdown, then `node scripts/check-prompts.mjs --fix`.
@@ -89,6 +91,8 @@ Description: two or three short paragraphs in Dennis's own first-person voice ("
 Tags: 5 to 12 search tags, one per line, most specific first (for example "Notion custom agent", "Zapier automation", "Notion API"). Lowercase is fine. No hashtags.
 
 Chapters: 3 to 8 chapters that follow the transcript's real topic changes, one per line, formatted exactly as "m:ss Chapter title" (or "h:mm:ss Chapter title" past an hour). Take the times from the transcript's timestamps; never invent a time later than the duration. The first chapter must be at 0:00. Space chapters at least 30 seconds apart. Keep each title under 50 characters. If the video is too short for three distinct chapters, still return three that split it sensibly.
+
+If the transcript says the recording has no speech, it is a short silent or music-only demo. Write the title, description and tags from the working title alone: keep the description to two or three sentences that say only what the working title supports, still in Dennis's first-person voice, and invent no details of what the video shows. Return "0:00 Overview" as the only chapter.
 
 Clients Mentioned: every name from the client list that the transcript or working title mentions as a client, customer, or the organisation whose work or data is being shown, one per line, spelled exactly as it appears in the client list. Ignore a company named only as a software product or tool being used (for example Notion, Zapier, LinkedIn, Zoom, Microsoft), and ignore workFlowers itself. If none is mentioned, return the single word "none".`;
 
@@ -501,11 +505,20 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
         text: Array.isArray(d.sentences) ? transcriptLines(d.sentences) : "",
       };
     });
-    if (transcript.status !== "completed" || !transcript.text) {
+    // "unavailable" is final: the recording has no speech (a silent or
+    // music-only cut). Dennis chose on 2026-11-20 to publish those anyway, with
+    // metadata written from the working title alone and no chapters.
+    // "pending"/"processing" are not final, so those still stop the run.
+    const noSpeech = transcript.status === "unavailable" || (transcript.status === "completed" && !transcript.text);
+    if (transcript.status === "pending" || transcript.status === "processing") {
       throw new Error(
-        `Supercut transcript is "${transcript.status || "empty"}"; set Ready for YouTube again once Supercut has transcribed it.`,
+        `Supercut is still transcribing this recording ("${transcript.status}"); set Ready for YouTube again in a few minutes.`,
       );
     }
+    if (!noSpeech && transcript.status !== "completed") {
+      throw new Error(`Supercut could not transcribe this recording ("${transcript.status || "no status"}").`);
+    }
+    if (noSpeech) console.log(`"${row.title}" has no speech: writing metadata from the working title only, no chapters`);
     const durationSeconds = row.durationSeconds ?? (transcript.durationMs ? transcript.durationMs / 1000 : null);
 
     // 3. Client list: free Zapier Table read.
@@ -543,7 +556,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
           inputFields: {
             "Working Title": row.title,
             Duration: durationSeconds ? formatTimestamp(durationSeconds) : "unknown",
-            Transcript: transcript.text,
+            Transcript: noSpeech ? NO_SPEECH_TRANSCRIPT : transcript.text,
             "Client List": clients.join("\n"),
           },
           outputFields: OUTPUT_FIELDS,
@@ -564,7 +577,8 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       throw new Error(`AI step returned no title or description: ${JSON.stringify(ai).slice(0, 300)}`);
     }
 
-    const chapters = buildChapters(ai.chapters, durationSeconds);
+    // No transcript means no timestamps to hang chapters on, whatever the model returned.
+    const chapters = noSpeech ? [] : buildChapters(ai.chapters, durationSeconds);
     const meta: Metadata = {
       title: cleanText(ai.title).replace(/^["']|["']$/g, "").slice(0, YT_TITLE_MAX),
       description: buildDescription(ai.description, chapters),
