@@ -49,7 +49,7 @@ The **supercut-sync** worker manages this database and every property it declare
 
 | Property | Type | Written by |
 | --- | --- | --- |
-| YouTube Status | select: Ready for YouTube, Uploading, Uploaded (unlisted), Public, Needs review, Failed | you (Ready, Public) and the Zap (the rest) |
+| YouTube Status | Status. To-do: **Not on YouTube** (default), Ready for YouTube. In progress: Uploading, Needs review, Failed. Complete: Uploaded (unlisted), Public | you (Ready, Public) and the Zap (the rest) |
 | YouTube Video ID | text | the Zap. The match key the YouTube Videos sync uses to link back |
 | YouTube URL | url | the Zap |
 | YouTube Error | text | the Zap: why the last attempt failed or needs review |
@@ -57,12 +57,15 @@ The **supercut-sync** worker manages this database and every property it declare
 
 The six videos uploaded by hand on 2026-11-20 were backfilled with their IDs and URLs.
 
+YouTube Status started as a select and became a Status property on 2026-11-20. The Zap reads the property's type from each row and writes the same type, so it works with either. The default option has to stay **Not on YouTube**: the supercut-sync worker creates rows, and a default of Ready for YouTube would publish every new recording.
+
 ## Things to know before touching it
 
 - **Never uploads twice.** A row that already has a YouTube Video ID is skipped. The upload step runs once with no retry, because a retry after an ambiguous failure could put a second copy on the channel. If the upload fails, the row says Failed; check YouTube Studio before setting Ready again.
 - **Client check.** The AI step gets the names of every company with a Harvest Client ID and reports any the transcript names as a client (not as a tool, such as Notion or LinkedIn). Code keeps only names that are on the list. A hit stops the run before rendering, sets **Needs review**, and writes the names into YouTube Error. If it's fine, tick **YouTube Clients OK** and set Ready for YouTube again.
 - **Code enforces the format; the prompt asks for content.** The footer line, removing "quietly" and "silently", stripping `<` and `>`, the chapter rules (first at 0:00, at least three, at least 10 seconds apart, inside the duration; otherwise no chapters at all), and YouTube's title, description and tag limits are all applied in `workflow.ts`, so the model can't break them.
 - **Download.** `skip_outro=true` drops Supercut's branded outro; it needs Supercut's download-options plan feature, and the run fails with a clear error if the plan loses it. The render is asynchronous: the Zap polls every 30 seconds for up to 10 minutes. The signed URL expires within hours, so it's used in the same run and never stored in Notion.
+- **Recordings with no speech.** When Supercut reports the transcript as `unavailable` (a silent or music-only cut), the Zap still publishes: the AI step writes the title, description and tags from the working title alone, and there are no chapters. Expect a thin description and edit it in YouTube Studio before going Public. A transcript that is still `pending` or `processing` stops the run with Failed; set Ready for YouTube again a few minutes later. Music-only cuts with sung vocals risk Content ID claims (TKT-1069), so keep those off YouTube unless the track is licensed.
 - **Edits.** Supercut's `/download` serves the default edit if one is set, while the transcript is the original recording's. If an edit cuts a lot, chapter times can drift; check them before going public.
 - **Making it public** resends every `status` field, because `videos.update` resets any field you leave out.
 - **Connections.** `supercut` is an *API by Zapier* connection holding Dennis's personal Supercut token (`sk_u_…`); `/download` requires a personal token. `youtube` is the workFlowers channel.
@@ -74,6 +77,8 @@ AI by Zapier, `standard/auto`. The prompt lives in [`supercut-to-youtube-prompt.
 
 ### Verified cases (preview runs, 2026-11-20)
 
+The no-speech row was added after its first live run failed on the missing transcript; a second preview of the personal-agent recording confirmed the normal path didn't change.
+
 | Recording | Title produced | Chapters | Clients flagged |
 | --- | --- | --- | --- |
 | Calling your Notion Personal Agent from a Zap! | Call Your Notion Personal Agent from a Zapier Automation | 4 | none ✅ |
@@ -82,6 +87,7 @@ AI by Zapier, `standard/auto`. The prompt lives in [`supercut-to-youtube-prompt.
 | ZapMap: Interactive Zapier Flows | Map Connected Zapier Workflows with a Coding Agent | 5 | none ✅ |
 | Notion Custom Agent Widget | Build a Notion Custom Agent Chat Widget with Lovable | 3 | none ✅ |
 | Custom Block Dashboard (~50 s) | Notion Custom Block Analytics Dashboard for Email Newsletters | none (too short for three) ✅ | none ✅ |
+| Database Page Layout Cleanup Skill for Notion AI (28 s, no speech) | Notion AI Database Page Layout Cleanup Skill | none (no transcript) ✅ | none ✅ |
 | Knoxx Innovations Custom App Demo | Custom R&D App Demo: Projects, Formulations, Materials & Vendors | n/a | Knoxx Innovations Pty Ltd ✅ |
 
 Not yet exercised live: the upload, write-back, Needs review write, Failed write and Public paths. The first real Ready for YouTube after merge is that test.

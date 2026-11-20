@@ -75,6 +75,8 @@ const DESCRIPTION_FOOTER =
   "workFlowers helps mid-market teams with workflow automation, analytics and AI agent systems: https://work.flowers";
 const MIN_CHAPTER_GAP_SECONDS = 10;
 const MIN_CHAPTERS = 3;
+/** What the AI step gets in place of a transcript for a recording with no speech. */
+const NO_SPEECH_TRANSCRIPT = "(none: this recording has no speech)";
 
 // PROMPT SOURCE OF TRUTH: ./supercut-to-youtube-prompt.md
 // Edit the markdown, then `node scripts/check-prompts.mjs --fix`.
@@ -89,6 +91,8 @@ Description: two or three short paragraphs in Dennis's own first-person voice ("
 Tags: 5 to 12 search tags, one per line, most specific first (for example "Notion custom agent", "Zapier automation", "Notion API"). Lowercase is fine. No hashtags.
 
 Chapters: 3 to 8 chapters that follow the transcript's real topic changes, one per line, formatted exactly as "m:ss Chapter title" (or "h:mm:ss Chapter title" past an hour). Take the times from the transcript's timestamps; never invent a time later than the duration. The first chapter must be at 0:00. Space chapters at least 30 seconds apart. Keep each title under 50 characters. If the video is too short for three distinct chapters, still return three that split it sensibly.
+
+If the transcript says the recording has no speech, it is a short silent or music-only demo. Write the title, description and tags from the working title alone: keep the description to two or three sentences that say only what the working title supports, still in Dennis's first-person voice, and invent no details of what the video shows. Return "0:00 Overview" as the only chapter.
 
 Clients Mentioned: every name from the client list that the transcript or working title mentions as a client, customer, or the organisation whose work or data is being shown, one per line, spelled exactly as it appears in the client list. Ignore a company named only as a software product or tool being used (for example Notion, Zapier, LinkedIn, Zoom, Microsoft), and ignore workFlowers itself. If none is mentioned, return the single word "none".`;
 
@@ -109,6 +113,9 @@ interface RowState {
   recordingId: string;
   durationSeconds: number | null;
   status: string;
+  /** YouTube Status was a select until 2026-11-20 and a Status property after;
+   *  writes follow whichever type the row read reports. */
+  statusKind: "status" | "select";
   videoId: string;
   clientsOk: boolean;
   dataSourceId: string;
@@ -182,12 +189,21 @@ export function statusFromPayload(payload: unknown): string {
   const o = (payload ?? {}) as Record<string, any>;
   const props = o?.data?.properties ?? o?.body?.data?.properties;
   if (!props || typeof props !== "object") return "";
-  return str(props?.[PROP_STATUS]?.select?.name);
+  return statusName(props?.[PROP_STATUS]);
 }
 
 function previewOnlyFlag(payload: unknown): boolean {
   const o = (payload ?? {}) as Record<string, any>;
   return o.previewOnly === true || o.previewOnly === "true";
+}
+
+/** YouTube Status's option name, whether the property is a Status or a select. */
+function statusName(prop: any): string {
+  return str(prop?.status?.name) || str(prop?.select?.name);
+}
+
+function statusValue(kind: "status" | "select", name: string): Record<string, { name: string }> {
+  return { [kind]: { name } };
 }
 
 function plainText(prop: any): string {
@@ -392,7 +408,8 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       title: plainText(p[PROP_NAME]),
       recordingId: plainText(p[PROP_RECORDING_ID]),
       durationSeconds: typeof duration === "number" ? duration : null,
-      status: str(p[PROP_STATUS]?.select?.name),
+      status: statusName(p[PROP_STATUS]),
+      statusKind: p[PROP_STATUS]?.type === "select" ? ("select" as const) : ("status" as const),
       videoId: plainText(p[PROP_VIDEO_ID]),
       clientsOk: p[PROP_CLIENTS_OK]?.checkbox === true,
       dataSourceId: dashUuid(str(page?.parent?.data_source_id)),
@@ -408,7 +425,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     if (!row.videoId) {
       await ctx.step("mark-public-failed", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
           [PROP_ERROR]: richText("Set to Public, but the row has no YouTube Video ID. Publish it first (Ready for YouTube)."),
         }),
       );
@@ -453,7 +470,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       const message = errorMessage(e);
       await ctx.step("mark-public-error", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
           [PROP_ERROR]: richText(`Making ${row.videoId} public failed: ${message}`),
         }),
       );
@@ -481,7 +498,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
   if (!previewOnly) {
     await ctx.step("mark-uploading", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_UPLOADING } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_UPLOADING),
         [PROP_ERROR]: richText(""),
       }),
     );
@@ -501,11 +518,20 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
         text: Array.isArray(d.sentences) ? transcriptLines(d.sentences) : "",
       };
     });
-    if (transcript.status !== "completed" || !transcript.text) {
+    // "unavailable" is final: the recording has no speech (a silent or
+    // music-only cut). Dennis chose on 2026-11-20 to publish those anyway, with
+    // metadata written from the working title alone and no chapters.
+    // "pending"/"processing" are not final, so those still stop the run.
+    const noSpeech = transcript.status === "unavailable" || (transcript.status === "completed" && !transcript.text);
+    if (transcript.status === "pending" || transcript.status === "processing") {
       throw new Error(
-        `Supercut transcript is "${transcript.status || "empty"}"; set Ready for YouTube again once Supercut has transcribed it.`,
+        `Supercut is still transcribing this recording ("${transcript.status}"); set Ready for YouTube again in a few minutes.`,
       );
     }
+    if (!noSpeech && transcript.status !== "completed") {
+      throw new Error(`Supercut could not transcribe this recording ("${transcript.status || "no status"}").`);
+    }
+    if (noSpeech) console.log(`"${row.title}" has no speech: writing metadata from the working title only, no chapters`);
     const durationSeconds = row.durationSeconds ?? (transcript.durationMs ? transcript.durationMs / 1000 : null);
 
     // 3. Client list: free Zapier Table read.
@@ -543,7 +569,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
           inputFields: {
             "Working Title": row.title,
             Duration: durationSeconds ? formatTimestamp(durationSeconds) : "unknown",
-            Transcript: transcript.text,
+            Transcript: noSpeech ? NO_SPEECH_TRANSCRIPT : transcript.text,
             "Client List": clients.join("\n"),
           },
           outputFields: OUTPUT_FIELDS,
@@ -564,7 +590,8 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       throw new Error(`AI step returned no title or description: ${JSON.stringify(ai).slice(0, 300)}`);
     }
 
-    const chapters = buildChapters(ai.chapters, durationSeconds);
+    // No transcript means no timestamps to hang chapters on, whatever the model returned.
+    const chapters = noSpeech ? [] : buildChapters(ai.chapters, durationSeconds);
     const meta: Metadata = {
       title: cleanText(ai.title).replace(/^["']|["']$/g, "").slice(0, YT_TITLE_MAX),
       description: buildDescription(ai.description, chapters),
@@ -584,7 +611,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
       const names = meta.clientsMentioned.join(", ");
       await ctx.step("mark-needs-review", async () =>
         notionPatch(pageId, {
-          [PROP_STATUS]: { select: { name: STATUS_NEEDS_REVIEW } },
+          [PROP_STATUS]: statusValue(row.statusKind, STATUS_NEEDS_REVIEW),
           [PROP_ERROR]: richText(
             `Transcript appears to mention client(s): ${names}. Not uploaded. If that's fine, tick YouTube Clients OK and set Ready for YouTube again.`,
           ),
@@ -640,7 +667,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     const youtubeUrl = `https://www.youtube.com/watch?v=${uploaded.id}`;
     await ctx.step("write-back", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_UPLOADED } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_UPLOADED),
         [PROP_VIDEO_ID]: richText(uploaded.id),
         [PROP_URL]: { url: youtubeUrl },
         [PROP_ERROR]: richText(""),
@@ -654,7 +681,7 @@ const workflow = defineDurable("supercut-to-youtube", async (ctx, rawInput) => {
     const message = errorMessage(e);
     await ctx.step("mark-failed", async () =>
       notionPatch(pageId, {
-        [PROP_STATUS]: { select: { name: STATUS_FAILED } },
+        [PROP_STATUS]: statusValue(row.statusKind, STATUS_FAILED),
         [PROP_ERROR]: richText(message),
       }),
     );
