@@ -3,7 +3,7 @@
   "workflow_id": "01a1f34d-8f5f-711a-aa59-8279385dd755",
   "current_version_id": "01a1f35d-e0e3-7eb2-a533-b490081fbe2b",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AlsoeI-FC6CMCRiTyzb0uM4",
-  "enabled": true,
+  "enabled": false,
   "is_private": false,
   "deploy": {
     "state": "published",
@@ -35,5 +35,6 @@
   "zapier_durable_version": "0.14.1",
   "app_versions": null,
   "app_versions_note": "Versions are pinned in the workflow's app id (App245513CLIAPI@1.4.0), not here.",
-  "first_publish_note": "First published 2026-11-19 by Publish Zaps run 44503846002, which then failed at the zap.json sync-back (this file said \"enabled\": null; the sync-back only rewrites true/false). Ids, enabled, deploy.state and the runtime-resolved zod dependency were hand-synced from get-workflow / list-workflow-versions."
+  "first_publish_note": "First published 2026-11-19 by Publish Zaps run 44503846002, which then failed at the zap.json sync-back (this file said \"enabled\": null; the sync-back only rewrites true/false). Ids, enabled, deploy.state and the runtime-resolved zod dependency were hand-synced from get-workflow / list-workflow-versions.",
+  "disabled_note": "Disabled 2026-11-21 via Zapier MCP (the SDK CLI was signed in to another account). The duplicate Emails pages it was built to stop were not caused by the agent's trigger: another process was removing and re-adding the Send to Notion label, and each re-add fired the agent again."
 }

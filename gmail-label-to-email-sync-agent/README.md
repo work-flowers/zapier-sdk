@@ -2,7 +2,9 @@
 
 Tag a Gmail thread with **Send to Notion** and this Zap hands it to the **Dennis' Email Sync Agent** Custom Agent ([Instructions](https://app.notion.com/p/38991b0711ac80c4b5a3c354530ce02b)). The agent saves the thread to the **Emails** database (`1e491b07-11ac-80ce-8b86-000b29ba4f68`): a page from the default template, with the whole thread embedded as a Mail block. Mail blocks aren't in the public Notion API, so the agent still does the writing. This Zap only decides **when**.
 
-**Why:** the agent's own mail-label trigger used to fire once per labelled thread. In November 2026 it started firing once per **message**, so a thread with several messages got several Emails pages. This Zap replaces that trigger.
+> **Disabled 2026-11-21.** The premise below turned out to be wrong. The agent's trigger never changed behaviour: another process was removing and re-adding the **Send to Notion** label on threads, and each re-add fired the agent again. The Zap stays in the repo, switched off, in case a once-per-thread hand-off is wanted later. Before re-enabling it, turn the agent's native trigger off again and check its Instructions still expect to be invoked with a thread id.
+
+**Why it was built:** the agent's own mail-label trigger seemed to have started firing once per **message** rather than once per thread, so a thread with several messages got several Emails pages. This Zap was meant to replace that trigger.
 
 ```mermaid
 flowchart TD
