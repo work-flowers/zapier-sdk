@@ -8,18 +8,15 @@
   "deploy": {
     "state": "published",
     "workflow_name": "Log Book Reviews in Notion",
-    "description": "Goodreads 'read' shelf RSS (new item) -> create a 'Book Review' idea in the Notion Social Content data source (a finished book becomes a LinkedIn content idea). Migrated from the classic two-step Zap 'Log Book Reviews in Notion'.",
+    "description": "Readwise Books 'Book Finished' (Readwise (Unofficial) private app) -> create a 'Book Review' idea in the Notion Social Content data source (a finished book becomes a LinkedIn content idea). Originally the classic Zap 'Log Book Reviews in Notion' on a Goodreads RSS feed.",
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "RSSCLIAPI@1.1.0",
-    "action": "new_feed",
-    "authentication_id": null,
-    "params": {
-      "url": "https://www.goodreads.com/review/list_rss/2937402?key=tXnZa0qGplVpU55rWcXOaECdFJVsMDABuLTHkX5dCvGPmSk9&shelf=read",
-      "trigger_style": "smart"
-    },
-    "trigger_note": "RSS by Zapier 'New Item in Feed' — a polling (read) trigger, no auth. `url` is Dennis's Goodreads read-shelf RSS feed; `trigger_style: smart` is the classic Zap's setting. The feed guid dedups new items at the trigger, so the workflow needs no dedup ledger.",
+    "selected_api": "App233252CLIAPI@2.0.0",
+    "action": "book_finished",
+    "authentication_id": "02228e72-1a09-80e6-992e-6e26759d4b1c",
+    "params": {},
+    "trigger_note": "Readwise (Unofficial) 'Book Finished' — work.flowers' private CLI integration (source: github.com/work-flowers/zapier-readwise). A polling trigger on GET readwise.io/books/api/v1/books; dedupes on `<book id>-finished`, so each book fires once. Replaced the Goodreads read-shelf RSS trigger (RSSCLIAPI@1.1.0 new_feed) on 2026-11-23. Polls at the durable default (~1/min): one GET /books per poll against Readwise's 20/min limit, and polls cost no tasks.",
     "no_webhook_available": true
   },
   "connections": {
