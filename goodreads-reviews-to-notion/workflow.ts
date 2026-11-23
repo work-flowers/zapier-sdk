@@ -11,15 +11,15 @@ const NOTION_APP_KEY = "NotionCLIAPI";
 const NOTION_CONNECTION = "notion_wf";
 
 // The "Social Content" data source in the work.flowers Notion workspace — the
-// same one save-tagged-docs-to-notion writes to. A finished Goodreads read
-// becomes a "Book Review" content idea.
+// same one save-tagged-docs-to-notion writes to. A book finished in Readwise
+// Books becomes a "Book Review" content idea.
 const SOCIAL_CONTENT_DS = "14591b07-11ac-8187-934a-000b1a3a474d";
 
 // Dennis, as the `Author` people property (a Notion user id).
 const AUTHOR_PERSON_ID = "121d872b-594c-810b-ba5a-000206eeef1e";
 
-// The RSS "New Item in Feed" trigger delivers one feed item; accept anything
-// and extract defensively.
+// The Readwise (Unofficial) "Book Finished" trigger delivers one book; accept
+// anything and extract defensively.
 const InputSchema = z.unknown();
 
 // --- Pure helpers ----------------------------------------------------------
@@ -83,52 +83,54 @@ function isEmptyish(payload: unknown): boolean {
 }
 
 interface Review {
-  /** The book title, from the Goodreads feed item title. */
+  /** The book title. */
   title: string;
-  /** The book's author, when the feed carries it. */
+  /** The book's author, when the payload carries it. */
   author: string | null;
-  /** The review/book link, used only to identify the item when a title is
+  /** The book's Readwise page, used only to identify the item when a title is
    *  somehow absent. */
   link: string | null;
+  /** The Readwise Books book id. */
+  bookId: string | null;
 }
 
-/** Pull the fields we need out of an RSS feed item. Goodreads' read-shelf feed
- *  puts the book title in `title` and the author in `raw.author_name` (with a
- *  flattened `author_name` sometimes present too). Returns null when there is
- *  no usable identity — the caller decides skip vs. throw. */
+/** Pull the fields we need out of a Readwise (Unofficial) "Book Finished" item:
+ *  `title`/`author` on the book, falling back to the matched catalog `product`
+ *  (nested, or flattened as `product__title` etc.). `book_id` is the Readwise
+ *  book id; the item's own `id` is `<book id>-finished`, the trigger's dedupe
+ *  key. Returns null when there is no usable identity — the caller decides
+ *  skip vs. throw. */
 function extractReview(raw: unknown): Review | null {
   const o = (raw ?? {}) as Record<string, any>;
   // Unwrap a Zapier wrapper if the real item is nested.
   const d = (o.body ?? o.data ?? o) as Record<string, any>;
-  const nested = (d.raw ?? {}) as Record<string, any>;
-  const title = firstString(d.title, nested.title);
-  const link = firstString(d.link, d.url, nested.link, d.guid, d.id);
+  const product = (d.product ?? {}) as Record<string, any>;
+  const title = firstString(d.title, product.title, d.product__title);
+  const link = firstString(product.store_url, d.product__store_url);
+  const bookId = firstString(d.book_id);
   if (!title && !link) return null;
   return {
     title: title ?? (link as string),
-    author: firstString(
-      nested.author_name,
-      d.author_name,
-      d.author,
-      nested.author,
-    ),
+    author: firstString(d.author, product.author, d.product__author),
     link,
+    bookId,
   };
 }
 
 // --- Workflow --------------------------------------------------------------
-// Goodreads "read" shelf RSS -> create a Social Content "Book Review" idea in
-// Notion, one per finished book.
+// Readwise Books "Book Finished" -> create a Social Content "Book Review" idea
+// in Notion, one per finished book.
 //
-// No dedup ledger: the RSS "New Item in Feed" trigger delivers each feed item
-// (by guid) exactly once, which is precisely the dedup this needs — a finished
-// book fires once and never re-fires. That leaves the repo's default posture of
-// "idempotent writes, accept rare duplicates": a whole-run replay could create
-// a second page, which for a low-volume personal feed is an acceptable trade.
+// No dedup ledger: the trigger dedupes on `<book id>-finished`, so a finished
+// book fires once and never re-fires (a re-read moved back to Finished doesn't
+// fire either). That leaves the repo's default posture of "idempotent writes,
+// accept rare duplicates": a whole-run replay could create a second page,
+// which for a low-volume personal trigger is an acceptable trade.
 //
-// A payload with real content but no book title or link IS an error — a feed
-// schema change — and throws, per the repo's default unrecognized-payload
-// posture (see .claude/rules/durables.md). An empty/test tick skips.
+// A payload with real content but no book title or link IS an error — a
+// trigger schema change — and throws, per the repo's default
+// unrecognized-payload posture (see .claude/rules/durables.md). An empty/test
+// tick skips.
 const workflow = defineDurable(
   "goodreads-reviews-to-notion",
   async (ctx, rawInput: unknown) => {
@@ -141,7 +143,7 @@ const workflow = defineDurable(
         return { skipped: "empty-payload" };
       }
       throw new Error(
-        "Unrecognized RSS payload: no book title or link could be extracted",
+        "Unrecognized Readwise payload: no book title or link could be extracted",
       );
     }
 
@@ -194,6 +196,7 @@ const workflow = defineDurable(
       title: review.title,
       author: review.author,
       link: review.link,
+      readwiseBookId: review.bookId,
       notionPageId: pageId,
       usedTemplate: Boolean(created?.usedTemplate),
     };
