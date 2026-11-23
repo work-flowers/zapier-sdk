@@ -15,10 +15,8 @@
     "selected_api": "App233252CLIAPI@2.0.0",
     "action": "book_finished",
     "authentication_id": "02228e72-1a09-80e6-992e-6e26759d4b1c",
-    "params": {
-      "_zap_polling_interval_minutes": 15
-    },
-    "trigger_note": "Readwise (Unofficial) 'Book Finished' — work.flowers' private CLI integration (source: github.com/work-flowers/zapier-readwise). A polling trigger on GET readwise.io/books/api/v1/books; dedupes on `<book id>-finished`, so each book fires once. Replaced the Goodreads read-shelf RSS trigger (RSSCLIAPI@1.1.0 new_feed) on 2026-11-23. `_zap_polling_interval_minutes: 15` keeps the durable poller off its ~1/min default (Readwise GET /books allows 20/min).",
+    "params": {},
+    "trigger_note": "Readwise (Unofficial) 'Book Finished' — work.flowers' private CLI integration (source: github.com/work-flowers/zapier-readwise). A polling trigger on GET readwise.io/books/api/v1/books; dedupes on `<book id>-finished`, so each book fires once. Replaced the Goodreads read-shelf RSS trigger (RSSCLIAPI@1.1.0 new_feed) on 2026-11-23. Polls at the durable default (~1/min): one GET /books per poll against Readwise's 20/min limit, and polls cost no tasks.",
     "no_webhook_available": true
   },
   "connections": {

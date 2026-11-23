@@ -7,7 +7,7 @@ When Dennis marks a book **Finished** in **Readwise Books**, this durable create
 ## Trigger
 
 - **Readwise (Unofficial) — "Book Finished"** (`App233252CLIAPI@2.0.0` / `book_finished`), work.flowers' private CLI integration. Source: [work-flowers/zapier-readwise](https://github.com/work-flowers/zapier-readwise).
-- A polling trigger (Readwise Books has no webhooks) on `GET readwise.io/books/api/v1/books`, with `_zap_polling_interval_minutes: 15`.
+- A polling trigger (Readwise Books has no webhooks) on `GET readwise.io/books/api/v1/books`, at the durable default (~1/min). That's one request per poll against Readwise's 20/min limit for that endpoint, and polls cost no tasks.
 - **Dedupes on `<book id>-finished`**, so each finished book fires exactly once — no dedup ledger is needed. A re-read moved back to Finished does not fire again.
 - Ignores books whose shelf change is dated more than 30 days back, so a book logged late with an old finish date won't fire.
 - Replaced RSS by Zapier "New Item in Feed" on the Goodreads read-shelf feed (`RSSCLIAPI@1.1.0` / `new_feed`).
