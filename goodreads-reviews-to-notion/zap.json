@@ -1,7 +1,7 @@
 {
   "name": "goodreads-reviews-to-notion",
   "workflow_id": "01a0a8aa-8119-757e-aa13-448cceeb9ef1",
-  "current_version_id": "01a0a8aa-8e0b-7d34-bc59-fbda7e4f3d31",
+  "current_version_id": "01a20763-28fd-7f49-a8ce-2476ce2af0d7",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQbPufp-hUjK0JOaWQz2qw",
   "enabled": true,
   "is_private": false,
