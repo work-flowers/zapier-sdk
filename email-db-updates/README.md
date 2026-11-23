@@ -47,6 +47,8 @@ Notion renders the mail block as enhanced markdown: messages latest-first, separ
 
 `parseMailMetadata` now normalises any `<br>`, `<br/>` or `<br />` to `<br>` once, before splitting, so the separator split, `extractField` and the context unescape all see one form. Verified on five real blocks pulled from run journals: the three `<br>`-era ones (16, 19 and 20 Oct) parse byte-identically to the old code, and both `<br />` ones now resolve their From/To/Cc, MessageId and display names.
 
+**Header lines are un-escaped before any address is read (2026-11-23).** The block escapes markdown characters inside addresses too, so an underscore arrives as `faizal\_kamal@ntuc.org.sg`. The address regex's `\w` doesn't match a backslash, so it read `_kamal@ntuc.org.sg`, missed the email Table, and created a duplicate contact titled `\_kamal@ntuc.org.sg` on the 19 Nov "Catching up, and a couple of questions" email (cleaned up by hand). `unescapeMarkdown` now strips the escapes from the From/To/Cc lines and the AI context before parsing. Checked against that email's real block: To resolves to `faizal_kamal@ntuc.org.sg`.
+
 **A mail block that parses to no `From` and no `MessageId` now throws** instead of finishing. That is the shape of the next format change, and a red run with a Zapier alert is how it should surface (the repo's unrecognized-payload rule), not a green no-op.
 
 ## Naming a new contact

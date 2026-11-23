@@ -213,6 +213,17 @@ function extractField(body: string, fieldName: string): string {
   return match ? match[1].trim() : "";
 }
 
+/**
+ * Undo Notion enhanced-markdown escaping (`\_`, `\<`, `\*`, ...). Header
+ * lines must go through this BEFORE any address regex: `\w` does not match a
+ * backslash, so `faizal\_kamal@ntuc.org.sg` used to parse as
+ * `_kamal@ntuc.org.sg`, miss the email Table, and mint a duplicate contact
+ * (2026-11-19).
+ */
+function unescapeMarkdown(str: string): string {
+  return str.replace(/\\([\\`*_{}\[\]()#+\-.!<>|~])/g, "$1");
+}
+
 function extractEmails(str: string): string[] {
   return (str.match(EMAIL_REGEX) || []).map((s) => s.toLowerCase());
 }
@@ -325,9 +336,9 @@ function parseMailMetadata(text: string): MailMetadata | null {
     .filter(Boolean);
   const latest = messages[0] || mailBody;
 
-  const fromRaw = extractField(latest, "From");
-  const toRaw = extractField(latest, "To");
-  const ccRaw = extractField(latest, "Cc");
+  const fromRaw = unescapeMarkdown(extractField(latest, "From"));
+  const toRaw = unescapeMarkdown(extractField(latest, "To"));
+  const ccRaw = unescapeMarkdown(extractField(latest, "Cc"));
   const subject = extractField(latest, "Subject");
   const messageId = extractField(latest, "MessageId");
 
@@ -377,10 +388,10 @@ function parseMailMetadata(text: string): MailMetadata | null {
     // The whole latest message (headers + Content), unescaped and capped: the
     // fallback name pass needs the body, because a Gmail plus-reply chip puts
     // the person's name there and not always in the header.
-    context: latest
-      .replace(/<br>/g, "\n")
-      .replace(/\\([<>|*])/g, "$1")
-      .slice(0, CONTEXT_CHAR_CAP),
+    context: unescapeMarkdown(latest.replace(/<br>/g, "\n")).slice(
+      0,
+      CONTEXT_CHAR_CAP,
+    ),
   };
 }
 
