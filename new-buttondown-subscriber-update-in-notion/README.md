@@ -32,8 +32,10 @@ flowchart TD
 
 ## Trigger
 
-Buttondown `confirmedSubscriber` (`ButtondownCLIAPI@2.0.4`), authenticated via
+Buttondown `confirmedSubscriber` (`ButtondownCLIAPI@2.0.9`), authenticated via
 Buttondown connection `63486162`. Fires once a subscriber confirms via double opt-in.
+
+**On app 2.0.9 since 2026-11-23** (was 2.0.4). Buttondown support reported that 2.0.4's `confirmedSubscriber` only polled the oldest 100 subscribers, so once the list passed 100 new confirmations could be missed; 2.0.9 polls newest-first. The first polls after the bump may deliver confirmations 2.0.4 never saw. Here that is a harmless backfill: each one ticks `Mailing List` on, or creates, the missing contact.
 
 ## Why the Zapier Table instead of a direct Notion lookup
 
@@ -94,6 +96,6 @@ zapier-sdk --experimental publish-workflow-version 019fa804-6b6d-7890-987a-f3901
   --zapier-durable-version '0.8.0' \
   --connections '{"notioncliapi_connection":{"connection_id":50656433}}' \
   --app-versions '{"NotionCLIAPI":{"implementation_name":"NotionCLIAPI","version":"2.39.1"}}' \
-  --trigger '{"selected_api":"ButtondownCLIAPI@2.0.4","action":"confirmedSubscriber","authentication_id":"63486162","params":{}}' \
+  --trigger '{"selected_api":"ButtondownCLIAPI@2.0.9","action":"confirmedSubscriber","authentication_id":"63486162","params":{}}' \
   --enabled --json
 ```
