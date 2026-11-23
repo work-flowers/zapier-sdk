@@ -6,7 +6,7 @@
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "ButtondownCLIAPI@2.0.4",
+    "selected_api": "ButtondownCLIAPI@2.0.9",
     "action": "confirmedSubscriber",
     "authentication_id": "63486162",
     "params": {}

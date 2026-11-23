@@ -7,7 +7,7 @@
   "is_private": false,
   "replaces_classic_zap": "Newsletter Sent -> Update Status in Notion",
   "trigger": {
-    "selected_api": "ButtondownCLIAPI@2.0.4",
+    "selected_api": "ButtondownCLIAPI@2.0.9",
     "action": "email",
     "authentication_id": "02b2a81f-2fcf-8e3d-9219-826e4ffe4fbe",
     "params": {},

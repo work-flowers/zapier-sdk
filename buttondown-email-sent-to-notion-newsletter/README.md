@@ -14,7 +14,9 @@ Migrated from the classic Zap **"Newsletter Sent -> Update Status in Notion"**.
 
 ## Trigger
 
-Polling trigger `email` on the official Buttondown app (`ButtondownCLIAPI@2.0.4`), connection `workflowers`. Emits `id` and `publish_date`.
+Polling trigger `email` on the official Buttondown app (`ButtondownCLIAPI@2.0.9`), connection `workflowers`. Emits `id` and `publish_date`.
+
+**On app 2.0.9 since 2026-11-23** (was 2.0.4). Buttondown support reported that 2.0.4's `email` trigger, like `confirmedSubscriber`, checked the oldest 100 records rather than the newest; 2.0.9 polls newest-first. The first polls after the bump may re-deliver recent sends. That is harmless here: a mapped issue gets the `Sent` status and `Send Date` it already has, and an unmapped one skips.
 
 > **A durable trigger cannot set a polling interval.** Any custom interval the classic Zap had was silently dropped at migration.
 

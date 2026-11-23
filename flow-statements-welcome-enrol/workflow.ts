@@ -24,6 +24,9 @@ const BUTTONDOWN_API = "https://api.buttondown.com/v1";
 const WELCOME_EMAIL_ID = "em_7xspe63xkp8qf9cx6tzeyg776c";
 const STEP_2_OFFSET_DAYS = 4;
 const DAY_MS = 86400000;
+// A confirmation older than this is a backlog, not a new subscriber: skip it
+// rather than send the welcome. See the staleness guard in the workflow body.
+const MAX_CONFIRMATION_AGE_DAYS = 7;
 
 // Welcome Sequence Table, shared with flow-statements-welcome-sender. Keyed on
 // `email`, lowercased. One row per subscriber, ever.
@@ -100,6 +103,24 @@ export function botReason(sub: Record<string, unknown>): string | null {
   return null;
 }
 
+/**
+ * When Buttondown says this subscriber became `regular` (confirmed): the
+ * latest `transitions[]` entry of type `regular`, or `creation_date` when
+ * there is none (API, import and Zapier signups carry no transition). Empty
+ * when the payload has neither, which is a shape we don't understand.
+ */
+export function confirmedAtIso(sub: Record<string, unknown>): string {
+  let latest = "";
+  const transitions = Array.isArray(sub.transitions) ? sub.transitions : [];
+  for (const t of transitions) {
+    const tr = (t ?? {}) as Record<string, unknown>;
+    const date = str(tr.date);
+    // ISO-8601 UTC strings of one format compare correctly as strings.
+    if (str(tr.type) === "regular" && date > latest) latest = date;
+  }
+  return latest || str(sub.creation_date);
+}
+
 // --- Workflow --------------------------------------------------------------
 export default defineDurable("flow-statements-welcome-enrol", async (ctx, rawInput) => {
   const payload = normalizeInput(rawInput);
@@ -128,6 +149,26 @@ export default defineDurable("flow-statements-welcome-enrol", async (ctx, rawInp
   if (bot) {
     console.log(`skip ${email}: ${bot}`);
     return { skipped: bot, email } satisfies Outcome;
+  }
+
+  // Staleness guard: never welcome someone who confirmed long ago. Buttondown
+  // trigger 2.0.4 only polled the oldest 100 subscribers, so newer ones could
+  // be missed for good; 2.0.9 polls newest-first. Moving to it (2026-11) may
+  // deliver a burst of confirmations the old version never saw, and without
+  // this guard each would get the welcome email at once. A real new
+  // confirmation reaches this Zap within minutes, so the window is generous.
+  const confirmedAt = confirmedAtIso(sub);
+  if (!confirmedAt) {
+    throw new Error(`Confirmed-subscriber payload for ${email} has no creation_date or regular transition`);
+  }
+  const ageDays = await ctx.step("confirmation-age", async () => {
+    const ms = Date.parse(confirmedAt);
+    if (Number.isNaN(ms)) throw new Error(`Unparseable confirmation date ${confirmedAt} for ${email}`);
+    return Math.floor((Date.now() - ms) / DAY_MS);
+  });
+  if (ageDays > MAX_CONFIRMATION_AGE_DAYS) {
+    console.log(`skip ${email}: confirmed ${confirmedAt}, ${ageDays} days ago (limit ${MAX_CONFIRMATION_AGE_DAYS})`);
+    return { skipped: "stale-confirmation", email } satisfies Outcome;
   }
 
   // Upsert by email, insert-only: an existing row is the subscriber's
