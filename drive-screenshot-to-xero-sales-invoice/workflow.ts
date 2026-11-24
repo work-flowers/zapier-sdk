@@ -111,6 +111,66 @@ const CSV_TIMEFRAME_COLUMN = "TIMEFRAME";
 const CSV_TOTAL_COLUMN = "Total Payout";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
+const XERO_API = "https://api.xero.com/api.xro/2.0";
+
+// --- Consultant bills (TKT-1075) ----------------------------------------------
+// The same run that drafts the Notion Labs invoice drafts one Xero BILL per
+// consultant for their share, so the payable lands in the month the sessions
+// happened and the consultant no longer has to invoice us.
+
+const GMAIL_APP_KEY = "GoogleMailV2CLIAPI";
+const GMAIL_CONNECTION = "gmail_wf";
+
+/** Gmail label "Send to Notion" on dennis@work.flowers, applied to each payout draft. */
+const GMAIL_SEND_TO_NOTION_LABEL = "Label_10";
+
+/** "Subcontractors" expense account, as on every past consultant bill (e.g. NIT-19). */
+const BILL_ACCOUNT_CODE = "490";
+
+/** Bills are drafts: Dennis reviews them alongside the invoice. Payment stays manual. */
+const BILL_STATUS = "draft";
+
+interface Consultant {
+  /** Exact Xero contact name — `new_bill` binds by name, there is no contact id input. */
+  xeroContactName: string;
+  /** Checked against the created bill, so a by-name miss that forks a new contact fails loudly. */
+  xeroContactId: string;
+  /** workFlowers' share of the gross, in whole percent. */
+  platformFeePercent: number;
+  email: string;
+  /** Upper-case surname for the bill number SS-YYYY-MM-{SURNAME}. */
+  billSurname: string;
+}
+
+/**
+ * Keyed by the consultant name as it appears after stripPeriodSuffix, lower-cased.
+ * A consultant with billable lines who is neither here nor in BILL_EXEMPT fails the
+ * run after the invoice and the other bills are created, so nobody goes unpaid quietly.
+ */
+const CONSULTANTS: Record<string, Consultant> = {
+  "nasri nasir": {
+    xeroContactName: "Nasri Nasir",
+    xeroContactId: "e2e623af-408b-4d11-941b-a015ef031f0e",
+    platformFeePercent: 10,
+    email: "nasri@work.flowers",
+    billSurname: "NASIR",
+  },
+};
+
+/** Rows that never get a bill: Dennis is the PartnerStack payee, so no bill to himself. */
+const BILL_EXEMPT = new Set(["dennis chiuten"]);
+
+/** Bill line wording per session type, mirroring the consultant's past invoices. */
+const BILL_LINE_LABEL_BY_SESSION_TYPE: Record<string, string> = {
+  "Calls Completed": "Notion Setup Sessions — Completed",
+  "No-Shows": "Notion Setup Sessions — No-shows",
+  "Late Cancellations": "Notion Setup Sessions — Late cancellations",
+  "Workspace Conversions": "Bonuses — Workspace conversions",
+  "Seats Added": "Bonuses — Seat bonuses",
+  "Referral Bonuses": "Bonuses — Referral bonuses",
+};
+
+const MONTH_ABBREV = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // The Google Drive "New File in Folder" trigger delivers a file object.
 // Accept anything and extract defensively.
@@ -363,7 +423,13 @@ function stripPeriodSuffix(name: string): string {
 export function parseSetupSessionCsv(
   text: string,
   fallbackPeriodSource: string,
-): { lines: SessionLine[]; periodsSeen: string[]; totalPayout: number } {
+): {
+  lines: SessionLine[];
+  periodsSeen: string[];
+  totalPayout: number;
+  /** Total Payout per consultant (consultantKey), in cents. Absent when the column is. */
+  payoutCentsByConsultant: Record<string, number>;
+} {
   const [header, ...rows] = parseCsv(text);
   if (!header) throw new Error("CSV is empty");
   const col = new Map(header.map((h, i) => [h.trim(), i]));
@@ -383,6 +449,7 @@ export function parseSetupSessionCsv(
   const lines: SessionLine[] = [];
   const periodsSeen: string[] = [];
   let totalPayout = 0;
+  const payoutCentsByConsultant: Record<string, number> = {};
   for (const r of rows) {
     const consultantName = stripPeriodSuffix(cell(r, CSV_NAME_COLUMN));
     if (!consultantName) continue;
@@ -407,9 +474,337 @@ export function parseSetupSessionCsv(
       if (quantity && quantity > 0) lines.push({ consultantName, sessionType, quantity });
     }
 
-    if (col.has(CSV_TOTAL_COLUMN)) totalPayout += toNumber(cell(r, CSV_TOTAL_COLUMN)) ?? 0;
+    if (col.has(CSV_TOTAL_COLUMN)) {
+      const payout = toNumber(cell(r, CSV_TOTAL_COLUMN)) ?? 0;
+      totalPayout += payout;
+      const key = consultantKey(consultantName);
+      payoutCentsByConsultant[key] = (payoutCentsByConsultant[key] ?? 0) + Math.round(payout * 100);
+    }
   }
-  return { lines, periodsSeen, totalPayout };
+  return { lines, periodsSeen, totalPayout, payoutCentsByConsultant };
+}
+
+// --- Consultant bill helpers -----------------------------------------------------
+
+/** Lower-cased, whitespace-collapsed consultant name, period suffix removed. */
+export function consultantKey(name: string): string {
+  return stripPeriodSuffix(name).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/** The sales-invoice line description; also the key that ties a priced line back to its session. */
+function invoiceLineDescription(l: SessionLine, invoicePeriod: string): string {
+  return `${l.consultantName} - ${l.sessionType} (Month Ending ${invoicePeriod})`;
+}
+
+/** "2026-10-31" -> "Oct 2026". */
+export function monthLabel(isoDate: string): string {
+  const [y, m] = isoDate.split("-").map(Number);
+  return `${MONTH_ABBREV[m - 1]} ${y}`;
+}
+
+/** Last day of the month after `isoDate`'s month, by integer maths (no `Date` — see toIsoDate). */
+export function lastDayOfNextMonth(isoDate: string): string {
+  let [y, m] = isoDate.split("-").map(Number);
+  m += 1;
+  if (m > 12) {
+    m = 1;
+    y += 1;
+  }
+  return `${y}-${String(m).padStart(2, "0")}-${String(daysInMonth(y, m)).padStart(2, "0")}`;
+}
+
+/** "SS-2026-10-NASIR". */
+export function billNumber(invoicePeriod: string, c: Consultant): string {
+  return `SS-${invoicePeriod.slice(0, 7)}-${c.billSurname}`;
+}
+
+/** 90000 -> "US$900.00", -9000 -> "-US$90.00", 106050 -> "US$1,060.50". */
+export function formatUsd(cents: number): string {
+  const sign = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const dollars = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return `${sign}US$${dollars}.${String(abs % 100).padStart(2, "0")}`;
+}
+
+/**
+ * description -> unit price in cents, from a Xero invoice. Accepts both shapes
+ * seen here: the Zapier action's `LineItems.LineItem` (an array, or one object
+ * when there is a single line) and the raw API's `LineItems` array.
+ */
+export function unitCentsByDescription(invoice: any): Map<string, number> {
+  const raw = invoice?.LineItems;
+  const items: any[] = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.LineItem)
+      ? raw.LineItem
+      : raw?.LineItem
+        ? [raw.LineItem]
+        : [];
+  const out = new Map<string, number>();
+  for (const li of items) {
+    const desc = firstString(li?.Description);
+    const unit = toNumber(li?.UnitAmount);
+    if (desc && unit !== null) out.set(desc, Math.round(unit * 100));
+  }
+  return out;
+}
+
+interface BillLine {
+  sessionType: string;
+  label: string;
+  quantity: number;
+  unitCents: number;
+  amountCents: number;
+}
+
+interface ConsultantBill {
+  key: string;
+  consultantName: string;
+  consultant: Consultant;
+  number: string;
+  lines: BillLine[];
+  grossCents: number;
+  feeCents: number;
+  netCents: number;
+}
+
+/** Sessions × rate grouped by consultant, in first-seen order. */
+export function groupPricedLines(
+  lines: SessionLine[],
+  invoicePeriod: string,
+  unitCents: Map<string, number>,
+): { key: string; consultantName: string; lines: BillLine[]; grossCents: number; unpriced: string[] }[] {
+  const groups = new Map<
+    string,
+    { key: string; consultantName: string; lines: BillLine[]; grossCents: number; unpriced: string[] }
+  >();
+  for (const l of lines) {
+    const key = consultantKey(l.consultantName);
+    let g = groups.get(key);
+    if (!g) {
+      g = { key, consultantName: stripPeriodSuffix(l.consultantName), lines: [], grossCents: 0, unpriced: [] };
+      groups.set(key, g);
+    }
+    const desc = invoiceLineDescription(l, invoicePeriod);
+    const unit = unitCents.get(desc);
+    if (unit === undefined) {
+      g.unpriced.push(desc);
+      continue;
+    }
+    const amountCents = Math.round(l.quantity * unit);
+    g.lines.push({
+      sessionType: l.sessionType,
+      label: BILL_LINE_LABEL_BY_SESSION_TYPE[l.sessionType] ?? l.sessionType,
+      quantity: l.quantity,
+      unitCents: unit,
+      amountCents,
+    });
+    g.grossCents += amountCents;
+  }
+  return [...groups.values()];
+}
+
+/** Platform fee rounded to the cent; net is what the consultant is paid. */
+export function feeSplit(grossCents: number, feePercent: number): { feeCents: number; netCents: number } {
+  const feeCents = Math.round((grossCents * feePercent) / 100);
+  return { feeCents, netCents: grossCents - feeCents };
+}
+
+/** Escape text for the HTML email body. Labels and names come from code and the CSV. */
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Payout email, as HTML: a padded plain-text table doesn't survive Gmail
+ * (proportional font, and the first live test came back with its spacing
+ * collapsed). Draft only; Dennis sends it.
+ */
+export function payoutEmail(bill: ConsultantBill, period: string): { subject: string; body: string } {
+  const month = monthLabel(period);
+  const firstName = escapeHtml(bill.consultantName.split(" ")[0]);
+  const cell = "padding:4px 12px;border-bottom:1px solid #e5e5e5";
+  const num = `${cell};text-align:right;white-space:nowrap`;
+  const row = (cells: string[], bold = false) =>
+    `<tr${bold ? ' style="font-weight:bold"' : ""}>` +
+    cells.map((c, i) => `<td style="${i === 0 ? cell : num}">${escapeHtml(c)}</td>`).join("") +
+    "</tr>";
+  const table =
+    '<table style="border-collapse:collapse;font-size:14px">' +
+    `<tr>${["Item", "Qty", "Rate", "Amount"].map((h, i) => `<th style="${i === 0 ? `${cell};text-align:left` : num}">${h}</th>`).join("")}</tr>` +
+    bill.lines.map((l) => row([l.label, String(l.quantity), formatUsd(l.unitCents), formatUsd(l.amountCents)])).join("") +
+    row(["Gross", "", "", formatUsd(bill.grossCents)]) +
+    row([`Platform fee (${bill.consultant.platformFeePercent}%)`, "", "", formatUsd(-bill.feeCents)]) +
+    row(["Net payout", "", "", formatUsd(bill.netCents)], true) +
+    "</table>";
+  return {
+    subject: `Notion Setup Sessions payout — ${month}`,
+    body:
+      `<p>Hi ${firstName},</p>` +
+      `<p>Here's your Notion Setup Sessions payout for ${month}, taken from Notion's payouts report:</p>` +
+      table +
+      `<p>This replaces your monthly invoice for setup sessions, so there's no need to send one. ` +
+      `We've recorded it on our side as ${escapeHtml(bill.number)}, and it's paid once Notion's PartnerStack payout for ${month} lands.</p>` +
+      `<p>Thanks,<br>Dennis</p>`,
+  };
+}
+
+/** Bills Xero already holds under this number, ignoring deleted and voided ones. */
+function liveBills(body: any): { id: string; status: string }[] {
+  const rows: any[] = Array.isArray(body?.Invoices) ? body.Invoices : [];
+  return rows
+    .map((b) => ({ id: firstString(b?.InvoiceID) ?? "", status: (firstString(b?.Status) ?? "").toUpperCase() }))
+    .filter((b) => b.id && b.status !== "DELETED" && b.status !== "VOIDED");
+}
+
+/** Body of a `_zap_raw_request` result, parsed. */
+function rawBody(res: any): any {
+  const body = firstResult(res)?.response?.body;
+  if (typeof body !== "string") return body ?? {};
+  try {
+    return JSON.parse(body);
+  } catch {
+    return {};
+  }
+}
+
+interface BillOutcome {
+  consultant: string;
+  billNumber: string;
+  outcome: "draft-bill-created" | "existing-bill-skipped";
+  billId: string | null;
+  grossUsd: number;
+  feeUsd: number;
+  netUsd: number;
+  emailDraftId: string | null;
+  /** Set when the bill landed on a contact other than the configured one. */
+  contactMismatch?: string;
+}
+
+/**
+ * Find-or-create one consultant's draft bill, then draft their payout email.
+ * Takes `ctx` so its step ids can carry the consultant (the publish-time
+ * analyzer only allows string-literal ids in the workflow body itself).
+ */
+async function raiseConsultantBill(ctx: any, bill: ConsultantBill, period: string): Promise<BillOutcome> {
+  const slug = bill.consultant.billSurname.toLowerCase();
+  const month = monthLabel(period);
+  const base = {
+    consultant: bill.consultantName,
+    billNumber: bill.number,
+    grossUsd: bill.grossCents / 100,
+    feeUsd: bill.feeCents / 100,
+    netUsd: bill.netCents / 100,
+  };
+
+  // Re-uploading a month (a CSV after a screenshot, or a replay) must not
+  // raise a second bill. Skipping also skips the email, which went out with
+  // the first bill.
+  const existing = liveBills(
+    rawBody(
+      await ctx.step(`find-bill-${slug}`, async () =>
+        sdk.runAction({
+          appKey: XERO_APP_KEY,
+          actionType: "write",
+          actionKey: "_zap_raw_request",
+          connection: XERO_CONNECTION,
+          inputs: {
+            method: "GET",
+            url: `${XERO_API}/Invoices`,
+            fail_on_errors: true,
+            headers: { "Xero-Tenant-Id": XERO_ORGANIZATION, Accept: "application/json" },
+            querystring: { where: `Type=="ACCPAY" AND InvoiceNumber=="${bill.number}"` },
+          },
+        }),
+      ),
+    ),
+  );
+  if (existing.length > 0) {
+    console.log(`bill ${bill.number} already exists (${existing[0].status}); not raising another or emailing again`);
+    return { ...base, outcome: "existing-bill-skipped", billId: existing[0].id, emailDraftId: null };
+  }
+
+  const created = firstResult(
+    await ctx.step(`create-bill-${slug}`, async () =>
+      sdk.runAction({
+        appKey: XERO_APP_KEY,
+        actionType: "write",
+        actionKey: "new_bill",
+        connection: XERO_CONNECTION,
+        inputs: {
+          organization: XERO_ORGANIZATION,
+          contact_name: bill.consultant.xeroContactName,
+          status: BILL_STATUS,
+          date: period,
+          due_date: lastDayOfNextMonth(period),
+          currency: XERO_CURRENCY,
+          number: bill.number,
+          line_items_type: XERO_LINE_ITEMS_TYPE,
+          // Spread, deliberately: the publish-time analyzer reads line_items'
+          // children as flat required fields and refuses ("leaves required input
+          // 'Quantity' unset") even though every entry sets line_quantity and
+          // the action takes the array (verified live). A spread in `inputs`
+          // makes it skip that check, as in expense-claim-to-xero-bill.
+          ...{ line_items: [
+            ...bill.lines.map((l) => ({
+              line_description: `${l.label} (${month})`,
+              line_quantity: l.quantity,
+              line_unit_amount: l.unitCents / 100,
+              line_account_code: BILL_ACCOUNT_CODE,
+              line_tax_type: XERO_LINE_TAX_TYPE,
+              line_items_type: XERO_LINE_ITEMS_TYPE,
+            })),
+            {
+              line_description: `Platform fee (${bill.consultant.platformFeePercent}%)`,
+              line_quantity: 1,
+              line_unit_amount: -bill.feeCents / 100,
+              line_account_code: BILL_ACCOUNT_CODE,
+              line_tax_type: XERO_LINE_TAX_TYPE,
+              line_items_type: XERO_LINE_ITEMS_TYPE,
+            },
+          ] },
+        },
+      }),
+    ),
+  );
+  const billId = firstString(created?.InvoiceID, created?.invoice_id, created?.id);
+  const landedOn = firstString(created?.Contact?.ContactID);
+  if (landedOn && landedOn !== bill.consultant.xeroContactId) {
+    // `new_bill` matches the contact by name. A miss creates a new contact;
+    // don't email off a bill on the wrong contact.
+    return {
+      ...base,
+      outcome: "draft-bill-created",
+      billId,
+      emailDraftId: null,
+      contactMismatch: `bill ${bill.number} landed on Xero contact ${landedOn} ("${firstString(created?.Contact?.Name)}"), not ${bill.consultant.xeroContactId} — move it to the right contact, delete the stray contact, and send the payout email by hand`,
+    };
+  }
+
+  const email = payoutEmail(bill, period);
+  const draft = firstResult(
+    await ctx.step(`draft-email-${slug}`, async () =>
+      sdk.runAction({
+        appKey: GMAIL_APP_KEY,
+        actionType: "write",
+        actionKey: "draft_v2",
+        connection: GMAIL_CONNECTION,
+        inputs: {
+          to: [bill.consultant.email],
+          subject: email.subject,
+          body: email.body,
+          body_type: "html",
+          label_ids: [GMAIL_SEND_TO_NOTION_LABEL],
+        },
+      }),
+    ),
+  );
+  return {
+    ...base,
+    outcome: "draft-bill-created",
+    billId,
+    emailDraftId: firstString(draft?.id, draft?.message_id, draft?.threadId),
+  };
 }
 
 // --- Prompt --------------------------------------------------------------------
@@ -451,6 +846,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     let invoicePeriod: string;
     let unanimous: boolean;
     let csvTotalPayout: number | null = null;
+    let csvPayoutCents: Record<string, number> | null = null;
 
     if (source === "csv") {
       const csvText = await ctx.step("download-csv", async () => {
@@ -478,6 +874,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       invoicePeriod = resolved.period;
       unanimous = true;
       csvTotalPayout = parsed.totalPayout;
+      csvPayoutCents = parsed.payoutCentsByConsultant;
     } else {
       const completion = await ctx.step("extract-line-items", async () =>
         sdk.runAction({
@@ -531,15 +928,6 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       unanimous = resolved.unanimous;
     }
 
-    const xeroLineItems = lines.map((l) => ({
-      line_item_code: ITEM_CODE_BY_SESSION_TYPE[l.sessionType],
-      line_description: `${l.consultantName} - ${l.sessionType} (Month Ending ${invoicePeriod})`,
-      line_quantity: l.quantity,
-      line_account_code: XERO_LINE_ACCOUNT_CODE,
-      line_tax_type: XERO_LINE_TAX_TYPE,
-      line_items_type: XERO_LINE_ITEMS_TYPE,
-    }));
-
     const invoice = await ctx.step("create-sales-invoice", async () =>
       sdk.runAction({
         appKey: XERO_APP_KEY,
@@ -556,7 +944,19 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
           branding_theme: XERO_BRANDING_THEME,
           reference: INVOICE_REFERENCE,
           sent_to_contact: false,
-          line_items: xeroLineItems,
+          // Spread, deliberately: the publish-time analyzer reads line_items'
+          // children as flat required fields and refuses ("leaves required input
+          // 'Quantity' unset") even though every entry sets line_quantity and
+          // the action takes the array (verified live). A spread in `inputs`
+          // makes it skip that check, as in expense-claim-to-xero-bill.
+          ...{ line_items: lines.map((l) => ({
+            line_item_code: ITEM_CODE_BY_SESSION_TYPE[l.sessionType],
+            line_description: invoiceLineDescription(l, invoicePeriod),
+            line_quantity: l.quantity,
+            line_account_code: XERO_LINE_ACCOUNT_CODE,
+            line_tax_type: XERO_LINE_TAX_TYPE,
+            line_items_type: XERO_LINE_ITEMS_TYPE,
+          })) },
         },
       }),
     );
@@ -577,19 +977,110 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }),
     );
 
+    const invoiceId = firstString(created?.InvoiceID, created?.invoice_id, created?.id);
     console.log(
-      `created draft sales invoice for ${CONTACT_NAME} from ${source}: ${xeroLineItems.length} line(s), period ${invoicePeriod}, renamed to "${newName}"` +
+      `created draft sales invoice for ${CONTACT_NAME} from ${source}: ${lines.length} line(s), period ${invoicePeriod}, renamed to "${newName}"` +
         (csvTotalPayout !== null ? `; CSV Total Payout US$${csvTotalPayout} — should equal the invoice total` : ""),
     );
-    return {
+
+    // --- Consultant bills ------------------------------------------------------
+    // Priced from the invoice Xero just created, so Xero's items stay the only
+    // rate card and CSV and screenshot runs price identically. The create
+    // response carries the resolved UnitAmount per line; read the invoice back
+    // only if it didn't.
+    let unitCents = unitCentsByDescription(created);
+    const priced = (m: Map<string, number>) =>
+      lines.every((l) => m.has(invoiceLineDescription(l, invoicePeriod)));
+    if (!priced(unitCents)) {
+      if (!invoiceId) throw new Error(`Xero returned no InvoiceID for the ${invoicePeriod} invoice, so the consultant bills can't be priced`);
+      const reread = await ctx.step("read-sales-invoice", async () =>
+        sdk.runAction({
+          appKey: XERO_APP_KEY,
+          actionType: "write",
+          actionKey: "_zap_raw_request",
+          connection: XERO_CONNECTION,
+          inputs: {
+            method: "GET",
+            url: `${XERO_API}/Invoices/${invoiceId}`,
+            fail_on_errors: true,
+            headers: { "Xero-Tenant-Id": XERO_ORGANIZATION, Accept: "application/json" },
+          },
+        }),
+      );
+      const body = rawBody(reread);
+      unitCents = unitCentsByDescription(Array.isArray(body?.Invoices) ? body.Invoices[0] : null);
+    }
+
+    const groups = groupPricedLines(lines, invoicePeriod, unitCents);
+    const unpriced = groups.flatMap((g) => (BILL_EXEMPT.has(g.key) ? [] : g.unpriced));
+    if (unpriced.length > 0) {
+      throw new Error(`invoice ${invoiceId} has no unit price for: ${unpriced.join("; ")} — consultant bills not raised`);
+    }
+
+    // A mismatch means Notion's payout rates and Xero's item prices have
+    // drifted apart. Checked for everyone before any bill is raised.
+    if (csvPayoutCents) {
+      const drift = groups
+        .filter((g) => (csvPayoutCents![g.key] ?? 0) !== g.grossCents)
+        .map((g) => `${g.consultantName}: invoice prices give ${formatUsd(g.grossCents)}, CSV Total Payout is ${formatUsd(csvPayoutCents![g.key] ?? 0)}`);
+      if (drift.length > 0) {
+        throw new Error(
+          `Xero item prices and Notion's payout rates disagree (${drift.join("; ")}). The invoice was created; no consultant bills were raised. Fix the rates, then raise the bills by hand or replay.`,
+        );
+      }
+    }
+
+    const bills: BillOutcome[] = [];
+    const unknown: string[] = [];
+    for (const g of groups) {
+      if (BILL_EXEMPT.has(g.key)) continue;
+      const consultant = CONSULTANTS[g.key];
+      if (!consultant) {
+        unknown.push(`${g.consultantName} (${formatUsd(g.grossCents)})`);
+        continue;
+      }
+      const { feeCents, netCents } = feeSplit(g.grossCents, consultant.platformFeePercent);
+      const bill: ConsultantBill = {
+        key: g.key,
+        consultantName: g.consultantName,
+        consultant,
+        number: billNumber(invoicePeriod, consultant),
+        lines: g.lines,
+        grossCents: g.grossCents,
+        feeCents,
+        netCents,
+      };
+      const outcome = await raiseConsultantBill(ctx, bill, invoicePeriod);
+      bills.push(outcome);
+      console.log(
+        `${outcome.outcome} ${outcome.billNumber} for ${outcome.consultant}: gross ${formatUsd(bill.grossCents)}, ` +
+          `fee ${formatUsd(-bill.feeCents)}, net ${formatUsd(bill.netCents)}, bill ${outcome.billId ?? "?"}` +
+          (outcome.emailDraftId ? `, email draft ${outcome.emailDraftId}` : ""),
+      );
+    }
+
+    const result = {
       source,
-      invoiceId: firstString(created?.InvoiceID, created?.invoice_id, created?.id),
+      invoiceId,
       invoicePeriod,
-      lineItemCount: xeroLineItems.length,
+      lineItemCount: lines.length,
       periodUnanimous: unanimous,
       renamedTo: newName,
       ...(csvTotalPayout !== null ? { csvTotalPayout } : {}),
+      bills,
     };
+
+    // Fail visibly, after everything else is done, rather than leave anyone unpaid.
+    const problems = [
+      ...bills.flatMap((b) => (b.contactMismatch ? [b.contactMismatch] : [])),
+      ...(unknown.length > 0
+        ? [`no bill raised for ${unknown.join(", ")}: not in CONSULTANTS in workflow.ts — add them, then raise the bill by hand or replay`]
+        : []),
+    ];
+    if (problems.length > 0) {
+      throw new Error(`Invoice ${invoiceId} and ${bills.length} bill(s) done (${JSON.stringify(bills)}), but: ${problems.join("; ")}`);
+    }
+    return result;
   },
 );
 

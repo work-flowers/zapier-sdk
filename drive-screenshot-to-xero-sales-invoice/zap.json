@@ -21,8 +21,10 @@
   },
   "connections": {
     "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
-    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
+    "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3",
+    "gmail_wf": "02dc1dc2-a395-8c45-8534-f6372752bb8c"
   },
+  "connections_note": "gmail_wf (added 2026-11-24, TKT-1075) is the shared dennis@work.flowers Gmail connection on GoogleMailV2CLIAPI@2.14.0, the same one xero-overdue-invoice-to-gmail-reminder and expense-claim-to-xero-bill use. Not the other Gmail connection (02a57b11-…, @1.1.12).",
   "connectionless_apps": {
     "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
   },
@@ -72,9 +74,9 @@
     "output_shape_note": "isOutputArray:true; rows live at data[0].result.items. Uses the outputSchema + type_/required_/options_ per-field mechanism (byte-identical to what the classic Zap's exported JSON already used), not the outputFields JSON-array mechanism drive-invoice-to-xero uses — both are valid; this migration kept the classic Zap's original shape since it was already verified live across three real screenshots.",
     "file_input_note": "The screenshot is passed to the model as an image input (inputFieldConfig_Screenshot_isImageUrl), using the Drive trigger's `file` hydrate reference."
   },
-  "determinism_note": "No calendar arithmetic is needed — the AI already returns the reporting month's last day — so unlike drive-invoice-to-xero there's no daysFromCivil/isoDateFromEpochMs pair. toIsoDate + daysInMonth exist purely to validate the AI's date string is a real calendar date via integer math before it reaches Xero. `Date` is not referenced anywhere in workflow.ts.",
+  "determinism_note": "The only calendar arithmetic is the consultant bill's due date (lastDayOfNextMonth, integer maths). The AI already returns the reporting month's last day, so unlike drive-invoice-to-xero there's no daysFromCivil/isoDateFromEpochMs pair. toIsoDate + daysInMonth exist purely to validate the AI's date string is a real calendar date via integer math before it reaches Xero. `Date` is not referenced anywhere in workflow.ts.",
   "rename_gotcha": "update_file_name's `file` input takes the plain Drive file ID (file.id), NOT the AI step's hydrate token (file.fileRef) used for image content. Passing the hydrate token 404s — caught live during pre-publish testing (run 019fd188), fixed before the version that actually published. drive-invoice-to-xero's rename step already used file.id; this migration initially missed that and copied file.fileRef by mistake.",
-  "description": "Monthly 'Notion Setup Sessions' activity report added to the Drive folder, as a screenshot or the Notion CSV export -> a CSV is parsed in code (no AI task); a screenshot goes to AI by Zapier (advanced/auto) -> one line item per consultant/session-type combination -> map session type to Xero item code -> resolve the invoice period (majority value across rows) -> create a DRAFT Xero sales invoice billing Notion Labs, Inc. -> rename the file to '<invoice period> Notion Setup Sessions' (plus '.csv' for a CSV). Migration of the classic Zap 'Generate Setup Session Invoice'. Unlike drive-invoice-to-xero (which raises bills against varying vendor names extracted from documents), this Zap bills one fixed, constant customer, so it carries none of that Zap's vendor-contact-resolution complexity.",
+  "description": "Monthly 'Notion Setup Sessions' activity report added to the Drive folder, as a screenshot or the Notion CSV export -> a CSV is parsed in code (no AI task); a screenshot goes to AI by Zapier (advanced/auto) -> one line item per consultant/session-type combination -> map session type to Xero item code -> resolve the invoice period (majority value across rows) -> create a DRAFT Xero sales invoice billing Notion Labs, Inc. -> rename the file to '<invoice period> Notion Setup Sessions' (plus '.csv' for a CSV) -> one DRAFT Xero bill per consultant for their share (priced from the invoice's own unit prices, less the platform fee), skipped if that month's bill already exists, plus a Gmail DRAFT payout breakdown to the consultant. Migration of the classic Zap 'Generate Setup Session Invoice'.",
   "testing_note": "Tested end-to-end via run-durable against the real, already-processed 2026-06-30 screenshot before publishing (repo rule: never test only the skip path). First attempt hit the rename bug above; the invoice it created (a773938c-5112-4bd4-9ad8-281265a5b504) was deleted from Xero via update_sales_invoice invoice_status=deleted (confirmed via a raw GET afterward). Second attempt, with the fix, completed cleanly (invoiceId 0cda0de5-d87d-45ec-a654-70a19da84311, 10 line items, invoicePeriod 2026-06-30, periodUnanimous true, renamedTo matching the file's existing name) and was likewise deleted from Xero as a test artifact before publishing — production runs start clean.",
   "replaces_classic_zap": {
     "title": "Generate Setup Session Invoice",
@@ -100,5 +102,36 @@
       "Custom Adjustment Amount"
     ],
     "note": "No Xero item code exists for the two throws_on_nonzero columns, so a non-zero value fails the run rather than silently under-billing. Total Payout is logged as a cross-check against Xero's item prices, never billed from."
+  },
+  "consultant_bills": {
+    "added": "2026-11-24 (TKT-1075)",
+    "why": "Replaces the consultant's monthly setup-session invoice (self-billing). The payable is recorded in the month the sessions happened.",
+    "config": "CONSULTANTS in workflow.ts, keyed by the lower-cased consultant name after stripPeriodSuffix. BILL_EXEMPT holds 'dennis chiuten' (the PartnerStack payee; no bill to himself).",
+    "consultants": {
+      "Nasri Nasir": {
+        "xero_contact_id": "e2e623af-408b-4d11-941b-a015ef031f0e",
+        "platform_fee_percent": 10,
+        "email": "nasri@work.flowers",
+        "bill_number": "SS-YYYY-MM-NASIR"
+      }
+    },
+    "pricing": "Unit prices are read off the sales invoice Xero just created (LineItems.LineItem[].UnitAmount in the new_sales_invoice response, matched on the line description); a GET of the invoice is the fallback if the response lacks them. Xero's items stay the only rate card.",
+    "bill": {
+      "action": "XeroCLIAPI write new_bill (binds the contact by name; the created bill's Contact.ContactID is checked against the config)",
+      "status": "draft",
+      "currency": "USD",
+      "date": "invoice period end",
+      "due_date": "last day of the following month",
+      "number": "SS-YYYY-MM-{SURNAME}",
+      "account_code": "490 (as on past consultant bills, e.g. NIT-19)",
+      "tax_type": "NONE, line amounts NoTax",
+      "lines": "one per session type at the invoice's unit price, then 'Platform fee (N%)' = -N% of gross, rounded to the cent. No item codes."
+    },
+    "dedupe": "Before creating, GET Invoices where Type==\"ACCPAY\" AND InvoiceNumber==\"SS-…\"; a live (not DELETED/VOIDED) bill skips both the bill and the email.",
+    "csv_cross_check": "CSV path only: each consultant's gross from the invoice prices must equal their row's Total Payout, or the run throws before any bill is raised.",
+    "email": "GoogleMailV2CLIAPI write draft_v2 to the consultant, an HTML table (body_type html; padded plain text collapsed in the first live test), label_ids ['Label_10'] ('Send to Notion') applied at creation. Draft only, never sent.",
+    "failure_modes": "An unconfigured consultant with billable lines, or a bill that lands on the wrong Xero contact, throws AFTER the invoice and every other bill are done.",
+    "tasks_per_run": "+3 per billed consultant (find bill, create bill, Gmail draft); +1 only if the invoice response lacks unit prices. A month whose bill already exists costs +1 (the find).",
+    "testing": "2026-11-24, run-durable replays of the Oct 2026 CSV: run 01a20ca6 raised invoice INV-0101 (US$1,060) + draft bill SS-2026-10-NASIR (US$900 - US$90 = US$810, contact e2e623af, account 490, due 2026-11-30) + Gmail draft labelled Label_10; run 01a20ca9 skipped the existing bill and email; run 01a20caa re-raised after the bill was deleted, with the HTML email. All test invoices (INV-0101..0103), bills and drafts deleted afterwards. Screenshot path not yet run live."
   }
 }
