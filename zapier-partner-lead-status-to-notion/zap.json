@@ -22,10 +22,11 @@
     },
     {
       "name": "daily-sweep",
-      "workflow_id": null,
-      "current_version_id": null,
-      "trigger_url": null,
-      "enabled": null,
+      "workflow_id": "01a20cf1-4f69-7f23-9c7b-5dec40831032",
+      "current_version_id": "01a20cf1-69f9-7957-9ab8-44fe96c3bdcd",
+      "version_created_at": "2026-11-24T09:44:38.967Z",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AhiF5q5V7bcNCODMlgvJu7Q",
+      "enabled": true,
       "trigger": {
         "selected_api": "ScheduleCLIAPI@1.7.0",
         "action": "everyDay",
@@ -39,7 +40,8 @@
       },
       "description": "Daily: read every SPOT referral lead and project request and upsert whatever changed into Partner Leads (backstop + backfill).",
       "deploy": {
-        "state": "pending-create",
+        "state": "published",
+        "sync_note": "Hand-synced 2026-11-24: Publish Zaps run 45367888324 created and published this deployment, then failed the sync-back because the entry declared \"enabled\": null and the sync-back only matched true/false (fixed in scripts/publish-changed-zaps.mjs the same day).",
         "workflow_name": "zapier-partner-lead-status-to-notion · daily sweep",
         "description": "Daily sweep of every Zapier SPOT referral lead and project request into the Notion Partner Leads database. One of two deployments of zapier-partner-lead-status-to-notion (source of truth: github.com/work-flowers/zapier-sdk/tree/main/zapier-partner-lead-status-to-notion).",
         "enable_on_publish": true
