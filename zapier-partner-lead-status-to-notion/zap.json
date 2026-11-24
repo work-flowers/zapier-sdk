@@ -1,19 +1,54 @@
 {
   "name": "zapier-partner-lead-status-to-notion",
-  "workflow_id": "019fa7a7-8553-722c-b176-049b03cc5227",
-  "current_version_id": "019fa7e7-c8cc-71de-95e3-f10ef6d8a00a",
-  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af8rM_j5kB_jN-LgYBDLaw",
-  "enabled": true,
-  "trigger": {
-    "selected_api": "App227952CLIAPI@1.5.0",
-    "action": "referral_lead_status_change",
-    "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
-    "params": {},
-    "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger \u2014 the workflow code never calls the partner tool, so it is not in --connections.",
-    "trigger_note": "Polling trigger, one run per lead status change, deduped on `<lead_id>_<lead_status_modified_on>`. A poll returns the current state of every lead on the account (247 as at 2026-07-28), so the account's whole lead history is 'available' on the first poll \u2014 Zapier records the first poll as already-seen rather than firing it. Verified quiet after publish; watch `list-workflow-runs` if it is ever disabled and re-enabled."
-  },
+  "is_private": false,
+  "deployments": [
+    {
+      "name": "status-trigger",
+      "workflow_id": "019fa7a7-8553-722c-b176-049b03cc5227",
+      "current_version_id": "019fa7e7-c8cc-71de-95e3-f10ef6d8a00a",
+      "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af8rM_j5kB_jN-LgYBDLaw",
+      "enabled": true,
+      "trigger": {
+        "selected_api": "App227952CLIAPI@1.5.3",
+        "action": "referral_lead_status_change",
+        "authentication_id": "02a5085e-1d27-853d-89b7-115a57fc4d32",
+        "params": {},
+        "authentication_note": "Solution Partner Operations Tool connection 'work.flowers'. The partner-tool credential lives HERE, on the trigger — the workflow code never calls the partner tool, so it is not in --connections.",
+        "trigger_note": "Polling trigger, one run per lead status change. Re-pinned 1.5.0 -> 1.5.3 on 2026-11-24: on 1.5.0 the deployed trigger reported status active with no error but had ZERO runs, while SPOT showed status changes since September (7 of the 9 companies then tracked in Notion were stale). Most likely the same dedupe-on-a-stable-id defect Zapier fixed for project requests in 1.5.2 (ticket 9NPEKP-739EJ). UNVERIFIED until a real status change fires a run; the daily-sweep deployment keeps Notion correct within a day either way."
+      },
+      "created_at": "2026-07-28T07:36:41.043Z",
+      "version_created_at": "2026-07-28T08:27:00.000Z",
+      "description": "SPOT referral lead status change -> upsert that lead's Partner Leads row (near-real-time path)."
+    },
+    {
+      "name": "daily-sweep",
+      "workflow_id": null,
+      "current_version_id": null,
+      "trigger_url": null,
+      "enabled": null,
+      "trigger": {
+        "selected_api": "ScheduleCLIAPI@1.7.0",
+        "action": "everyDay",
+        "authentication_id": null,
+        "params": {
+          "hod": "8:00 AM",
+          "weekends": "yes"
+        },
+        "authentication_note": "Schedule by Zapier needs no connection. SPOT and Notion are bound as connection aliases because both are called from the workflow body.",
+        "params_note": "Daily at 8:00 AM account time (Asia/Singapore), an hour before spot-accepted-sweep-to-notion so a request it files on the same day is linked the next morning. Each fire costs 2 SPOT reads + 1 Notion query + one task per changed record."
+      },
+      "description": "Daily: read every SPOT referral lead and project request and upsert whatever changed into Partner Leads (backstop + backfill).",
+      "deploy": {
+        "state": "pending-create",
+        "workflow_name": "zapier-partner-lead-status-to-notion · daily sweep",
+        "description": "Daily sweep of every Zapier SPOT referral lead and project request into the Notion Partner Leads database. One of two deployments of zapier-partner-lead-status-to-notion (source of truth: github.com/work-flowers/zapier-sdk/tree/main/zapier-partner-lead-status-to-notion).",
+        "enable_on_publish": true
+      }
+    }
+  ],
   "connections": {
-    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "spot": "02a5085e-1d27-853d-89b7-115a57fc4d32"
   },
   "zapier_durable_version": "0.10.1",
   "dependencies": {
@@ -21,14 +56,17 @@
     "@zapier/zapier-sdk": "0.91.0"
   },
   "tables": {
-    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table \u2014 read to resolve client id -> Notion Company page id; Status refreshed on an existing row, and a row created when a fallback path resolved the company.",
-    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> Contact page id, owned by contact-emails-to-zapier-table (read-only here; the third resolution path)."
+    "01M86D6X6RPBV57GGHXYKTQ9P8": "Partner Leads (SPOT sync) — SPOT id -> Partner Leads page id + last-synced Status / Modified On. OWNED here (created 2026-11-24). The change detector: an unchanged record costs nothing.",
+    "01KPZFHX4RP6SER3AEK4YJ62BF": "Register Zapier Lead Table — client id -> Company page id, written by register-zapier-partner-lead. Read when creating a referral lead's row (Company link, Source 'Notion CRM').",
+    "01JYEPSEARXB2Z6BJRCMFGXBC2": "email -> Contact page id, owned by contact-emails-to-zapier-table. Read for the Account Owner link.",
+    "01KYV1R8BWAZ697HQ8P1QV80AF": "SPOT Project Requests — request id -> Deal/Contact/Company page ids, owned by spot-project-request-to-notion. Read to link a project request's row.",
+    "01JM3J9SG5X6S8GBSSC8AS28AT": "User IDs — partner contact id -> Notion user id, for the Owner person property."
   },
   "notion_schema_added": {
     "date": "2026-07-28",
     "data_source": "21991b07-11ac-80b0-b787-000b3d3995f6",
     "select_options": {
-      "Zapier Lead Status": "Added 'Converted' (green) and 'Expired' (orange) \u2014 the trigger emits five statuses (Submitted, Approved, Converted, Rejected, Expired) and only three had options. Legacy 'Accepted' left in place but never written; the API has never emitted it."
+      "Zapier Lead Status": "Added 'Converted' (green) and 'Expired' (orange) — the trigger emits five statuses (Submitted, Approved, Converted, Rejected, Expired) and only three had options. Legacy 'Accepted' left in place but never written; the API has never emitted it."
     },
     "properties": [
       "Zapier Lead Expires (date)",
@@ -39,14 +77,13 @@
       "Zapier Payout Year 2 (date range)"
     ]
   },
-  "created_at": "2026-07-28T07:36:41.043Z",
-  "version_created_at": "2026-07-28T08:27:00.000Z",
-  "description": "Zapier partner tool referral lead status change -> resolve the Notion Companies record (lead Table, then Zapier Client Id, then the lead email via the contact Table) and write status, reason, expiry, converted date, commission and payout windows onto it. Backfills the lead Table so repeat events resolve for free. Migration of the classic 'Capture Zapier Lead Status Change' Zap.",
-  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' \u2014 the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-\u2026 / 019fa7a8-\u2026 are the discarded 0.11.0 publishes.",
-  "adoption_policy": {
-    "adoption_statuses": [
-      "Converted"
-    ],
-    "note": "A lead already TRACKED (a lead Table row, or a company carrying its Zapier Client Id) is written at any status. An UNTRACKED lead is only adopted into the CRM at a status in adoption_statuses \u2014 see ADOPTION_STATUSES in workflow.ts. Rationale: of 45 leads sampled evenly across all 247, 45 carried source 'mdfRequest-\u2026' (one bulk event submission) and 78% reported zapier_account_status 'No Account Found'. Those ~209 Approved leads also share a 90-day expiry, so they will nearly all flip to Expired at once \u2014 without the gate that single wave would adopt the whole attendee list. Widening the list is NOT retroactive; replay via scripts/backfill-zapier-partner-leads.mjs with a matching --adopt-statuses."
-  }
+  "description": "Keeps the Notion Partner Leads database in step with Zapier SPOT: one row per referral lead and project request. Two deployments share this source: the SPOT status-change trigger (one lead, near-real-time) and a daily sweep (everything, idempotent via a free Zapier Table cache; also the backfill).",
+  "durable_version_note": "Pinned to 0.10.1 deliberately. A publish on 0.11.0 failed at run time with 'Dependency installation failed' — the durable runtime's pnpm enforces a minimum release age and 0.11.0 was under a day old (published 2026-07-27T14:58Z). Check the publish date before bumping. Version 019fa7a7-… / 019fa7a8-… are the discarded 0.11.0 publishes.",
+  "connections_note": "spot = Solution Partner Operations Tool connection 'work.flowers'. The sweep calls SPOT from the body (referral_lead_status_change as a read, find_project_request), so it is bound as an alias; the status-trigger deployment's trigger also holds it as authentication_id.",
+  "notion": {
+    "partner_leads_data_source": "42291b07-11ac-8142-af6a-000bf3227cd9",
+    "created": "2026-11-24",
+    "note": "Replaces the Zapier Lead fields on Companies, which this Zap no longer writes."
+  },
+  "write_cap": "MAX_WRITES_PER_RUN = 60 Notion writes per run; the rest are reported as deferred and picked up next run."
 }

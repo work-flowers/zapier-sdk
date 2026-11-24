@@ -251,9 +251,9 @@ is strictly better for the downstream match.
 missing from 2026-07-21..2026-07-26 predate this change and sit outside any current window. They were
 reconciled against their receipts in Xero by hand, so nothing downstream needs those rows, and their
 invoices have already been through the Invoices folder. To recover them deliberately, temporarily
-raise `OVERLAP_DAYS` or run a one-off with a wider window —
-[`scripts/backfill-zapier-partner-leads.mjs`](../scripts/backfill-zapier-partner-leads.mjs) is the
-house pattern for anything bigger (plan-only unless `--commit`).
+raise `OVERLAP_DAYS` or run a one-off with a wider window. For anything bigger, the house pattern
+was a plan-only-unless-`--commit` replay script (`scripts/backfill-zapier-partner-leads.mjs`,
+retired 2026-11-24; see its git history).
 
 The mechanic worth carrying into the next incident has changed. It is no longer *"a pause is silent
 and the gap is permanent"*. It is: **this Zap shares a 5,000-calls/day tenant ceiling with every

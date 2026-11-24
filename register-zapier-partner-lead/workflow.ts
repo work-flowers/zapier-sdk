@@ -14,6 +14,10 @@ const NOTION_CONNECTION = "notion_wf";
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 
+// The Register Lead button lives on Partner Leads rows (data source
+// 42291b07-11ac-8142-af6a-000bf3227cd9) since 2026-11-24; it used to be a
+// button on Companies.
+
 // Zapier Tables (free ops, no connection).
 // client id -> Notion Company page id, plus the submission log.
 const LEAD_TABLE = "01KPZFHX4RP6SER3AEK4YJ62BF";
@@ -138,23 +142,28 @@ function tableDate(ymd: string): string {
   return `${ymd}T00:00:00Z`;
 }
 
-// --- Company data extracted from the Notion webhook payload ----------------
+// --- Lead data extracted from the Notion webhook payload -------------------
 
 interface CompanyData {
+  /** The Partner Leads page the button was clicked on. */
   pageId: string;
   pageUrl: string;
+  /** The related Company page, when the row has one. */
+  companyPageId: string;
   companyName: string;
   clientEmail: string;
   firstName: string;
   lastName: string;
   companySize: string;
-  /** Notion user id of the Deal Owner, via the `Deal Owner` rollup. */
+  /** Notion user id of the lead's Owner (the workFlowers partner contact). */
   dealOwnerUserId: string;
-  /** Non-empty when this company has already been registered. */
+  /** Non-empty when this lead has already been registered. */
   existingClientId: string;
   existingStatus: string;
   /** Notion user id of whoever clicked the button. */
   triggeredById: string | null;
+  /** True when the payload is a Companies page (the retired button). */
+  isCompanyPage: boolean;
 }
 
 /** The first `email`-typed entry of a rollup array. */
@@ -166,20 +175,20 @@ function rollupEmail(prop: any): string {
   return "";
 }
 
-/** The first non-empty `rich_text` entry of a rollup array. */
+/** The first non-empty `rich_text` (or `title`) entry of a rollup array. */
 function rollupText(prop: any): string {
   for (const entry of prop?.rollup?.array ?? []) {
-    const t = plainText(entry?.rich_text);
+    const t = plainText(entry?.rich_text) || plainText(entry?.title);
     if (t) return t;
   }
   return "";
 }
 
-/** The first person id in a `people`-typed rollup array. */
-function rollupPersonId(prop: any): string {
+/** The first select name in a `select`-typed rollup array. */
+function rollupSelect(prop: any): string {
   for (const entry of prop?.rollup?.array ?? []) {
-    const id = firstString(entry?.people?.[0]?.id);
-    if (id) return id;
+    const n = firstString(entry?.select?.name);
+    if (n) return n;
   }
   return "";
 }
@@ -223,31 +232,35 @@ function extractCompanyData(raw: unknown): CompanyData {
     );
   }
 
-  // An `Account Owner Email Override` beats the rollup: the override exists
-  // precisely for companies whose Zapier account owner is not the contact the
-  // rollup reaches.
+  // `Zapier Account Email` beats the rollup: the override exists precisely for
+  // leads whose Zapier account owner email is not the contact's Primary Email.
   const clientEmail =
-    cleanEmail(props["Account Owner Email Override"]?.email) ||
+    cleanEmail(props["Zapier Account Email"]?.email) ||
     rollupEmail(props["Account Owner Email"]);
+
+  const companyRel = props["Company"]?.relation ?? [];
 
   return {
     pageId,
     pageUrl: firstString(data?.url) ?? "",
-    companyName: plainText(props["Company Name"]?.title),
+    companyPageId: firstString(companyRel[0]?.id) ?? "",
+    companyName: rollupText(props["Company Name"]) || plainText(props["Lead Name"]?.title),
     clientEmail,
     firstName: rollupText(props["Account Owner First Name"]),
     lastName: rollupText(props["Account Owner Last Name"]),
-    companySize:
-      COMPANY_SIZE_MAP[firstString(props["Size"]?.select?.name) ?? ""] ?? "",
-    dealOwnerUserId: rollupPersonId(props["Deal Owner"]),
+    companySize: COMPANY_SIZE_MAP[rollupSelect(props["Company Size"])] ?? "",
+    dealOwnerUserId: firstString(props["Owner"]?.people?.[0]?.id) ?? "",
     existingClientId: plainText(props["Zapier Client Id"]?.rich_text),
-    existingStatus: firstString(props["Zapier Lead Status"]?.select?.name) ?? "",
+    existingStatus: firstString(props["Status"]?.select?.name) ?? "",
     // Notion DB automations put the acting user in source.user_id.
     triggeredById: firstString(
       o?.source?.user_id,
       data?.source?.user_id,
       data?.last_edited_by?.id,
     ),
+    // The old Companies button posted here too. A Companies page has a
+    // `Company Name` title; a Partner Leads page has `Lead Name`.
+    isCompanyPage: props["Company Name"]?.type === "title" || Array.isArray(props["Company Name"]?.title),
   };
 }
 
@@ -255,10 +268,11 @@ function extractCompanyData(raw: unknown): CompanyData {
 function missingRequiredFields(company: CompanyData): string[] {
   const missing: string[] = [];
   if (!company.clientEmail) {
-    missing.push("an account owner email (Account Owner Email Override, or the Account Owner Email rollup)");
+    missing.push("an account owner email (Zapier Account Email, or an Account Owner contact with a Primary Email)");
   }
-  if (!company.firstName) missing.push("Account Owner First Name");
-  if (!company.lastName) missing.push("Account Owner Last Name");
+  if (!company.firstName) missing.push("the Account Owner's First Name");
+  if (!company.lastName) missing.push("the Account Owner's Last Name");
+  if (!company.companyName) missing.push("a Company (or a Lead Name to use as the company name)");
   return missing;
 }
 
@@ -435,22 +449,37 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
 
     let company = extractCompanyData(norm);
 
+    // 0. The button moved from Companies to Partner Leads on 2026-11-24. A
+    //    click on the old Companies button (until its automation is removed)
+    //    is a real event we understand: say where the button went, and stop.
+    if (company.isCompanyPage) {
+      await addComment(
+        ctx,
+        "comment-button-moved",
+        company,
+        "Register Lead has moved to the Partner Leads database. Add a Partner " +
+          "Leads row with this company and its Zapier account owner (as Account " +
+          "Owner), then click Register Lead on that row. Nothing was submitted.",
+      );
+      return { pageId: company.pageId, submitted: false, skipped: true, reason: "companies-button-retired" };
+    }
+
     console.log(
       `Register Zapier lead for ${company.companyName || company.pageId}`,
     );
 
     // 1. A Notion automation payload can arrive with a rollup omitted or
-    //    truncated. Before deciding a company is unregisterable, re-read the
-    //    page from the API and extract again — the API always computes rollups.
+    //    truncated. Before deciding a lead is unregisterable, re-read the page
+    //    from the API and extract again — the API always computes rollups.
     if (missingRequiredFields(company).length > 0) {
-      const refetched = await ctx.step("refetch-company-page", async () => {
+      const refetched = await ctx.step("refetch-lead-page", async () => {
         const res = await sdk.fetch(`${NOTION_API}/pages/${company.pageId}`, {
           connection: NOTION_CONNECTION,
           headers: { "Notion-Version": NOTION_VERSION },
         });
         if (!res.ok) {
           console.log(
-            `Could not re-read company page (${res.status}); using webhook payload as-is`,
+            `Could not re-read lead page (${res.status}); using webhook payload as-is`,
           );
           return null;
         }
@@ -463,38 +492,12 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       }
     }
 
-    // 2. Already registered? Don't submit again.
-    //    The partner tool reuses an existing client record but would open a
-    //    second service agreement, and the Table would gain a duplicate row.
-    //    The Notion property is the authority; the Table is checked too so a
-    //    manually cleared property still can't cause a double submission.
-    let alreadyClientId = company.existingClientId;
-    if (!alreadyClientId) {
-      alreadyClientId = await ctx.step("check-table-for-existing", async () => {
-        try {
-          const existing = await sdk.listTableRecords({
-            table: LEAD_TABLE,
-            keyMode: "names",
-            filters: [
-              {
-                fieldKey: "Notion Company Page ID",
-                operator: "exact",
-                value: company.pageId,
-              },
-            ],
-            pageSize: 1,
-          });
-          const row = existing.data?.[0]?.data as Record<string, any> | undefined;
-          return firstString(row?.["Client Id"]) ?? "";
-        } catch (err) {
-          // A Table read failure must not block a first-time registration.
-          console.log(
-            `Lead table lookup failed: ${String((err as Error)?.message ?? err)}`,
-          );
-          return "";
-        }
-      });
-    }
+    // 2. Already registered? Don't submit again. The partner tool reuses an
+    //    existing client record but would open a second service agreement.
+    //    The row's own `Zapier Client Id` is the authority. (Before the
+    //    Partner Leads database, the lead Table was also checked by company
+    //    page id; that would now wrongly block a company's second lead.)
+    const alreadyClientId = company.existingClientId;
 
     if (alreadyClientId) {
       const status = company.existingStatus || "unknown";
@@ -657,7 +660,9 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
         records: [
           {
             data: {
-              "Notion Company Page ID": company.pageId,
+              // The Company, not the lead row: zapier-partner-lead-status-to-notion
+              // reads this to link the lead's SPOT record to its company.
+              "Notion Company Page ID": company.companyPageId,
               "Client Id": lead.clientId,
               "Client Company Name": lead.clientCompanyName,
               ...(company.companySize
@@ -688,11 +693,16 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
     // 8. Stamp the company record. The classic Zap wrote nothing here, so a
     //    company had no client id — and no sign the click had worked — until a
     //    status change happened to arrive later.
-    await patchCompanyPage(ctx, "stamp-company-page", company.pageId, {
+    await patchCompanyPage(ctx, "stamp-lead-page", company.pageId, {
       "Zapier Client Id": {
         rich_text: [{ type: "text", text: { content: lead.clientId } }],
       },
-      "Zapier Lead Status": { select: { name: "Submitted" } },
+      Status: { select: { name: "Submitted" } },
+      Type: { select: { name: "Referral Lead" } },
+      Program: { select: { name: "Zapier" } },
+      Source: { select: { name: LEAD_SOURCE } },
+      "Submitted On": { date: { start: window.startDate } },
+      "Lead Email": { email: company.clientEmail },
     });
 
     // 9. Say so on the page.
@@ -701,7 +711,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       (lead.agreementId ? ` (service agreement \`${lead.agreementId}\`)` : "") +
       `, owned by partner contact \`${partnerContactId}\`, ` +
       `${window.startDate} → ${window.endDate}. ` +
-      `The lead status will update itself as Zapier reviews it.`;
+      `The lead's status will update itself as Zapier reviews it.`;
     await addComment(ctx, "comment-submitted", company, summary);
 
     return {

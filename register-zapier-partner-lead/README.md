@@ -1,37 +1,36 @@
 # register-zapier-partner-lead
 
-Clicking **Register Lead** on a Notion **Companies** record submits that company's Zapier account owner to the **Zapier Solution Partner** program as a managed-revenue client, indexes the resulting client id against the Notion page, and stamps the client id + `Submitted` status back on the record.
+Clicking **Register Lead** on a Notion **Partner Leads** row submits that lead's Zapier account owner to the **Zapier Solution Partner** program as a managed-revenue client. It then indexes the resulting client id against the lead's Company and stamps the client id, `Status: Submitted` and the submission details back on the row.
 
-Migration of the classic Zap **Register Zapier Lead**. Its sibling, [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/), tracks what Zapier then does with the lead.
+Migration of the classic Zap **Register Zapier Lead**. Its sibling, [`zapier-partner-lead-status-to-notion`](../zapier-partner-lead-status-to-notion/), keeps the row's status in step with what Zapier then does with the lead.
 
-**Status:** ✅ Published and enabled, trigger claimed, **cutover complete** as at 2026-08-07 — the Notion button posts here and the classic Zap is off. See [Cutover](#cutover).
+**Status:** ✅ Published and enabled. **2026-11-24: the button moved from Companies to Partner Leads** (PR *(this change)*), so a company can carry more than one lead. Until the old Companies automation is removed, a click there gets a comment pointing at Partner Leads and submits nothing. See [Moving the button](#moving-the-button-2026-11-24). The original Companies cutover (2026-08-07) is recorded under [Cutover](#cutover).
 
 ## What it does
 
 ```mermaid
 flowchart TD
-    A["Notion Companies automation<br/>('Register Lead' clicked)"] --> B{"Required fields<br/>on the payload?"}
+    A["Notion Partner Leads automation<br/>('Register Lead' clicked)"] --> Z{"Companies page?<br/>(old button)"}
+    Z -- yes --> Z2(["skip — comment: the button moved to Partner Leads"])
+    Z -- no --> B{"Required fields<br/>on the payload?"}
     B -- no --> B2["Re-read the page from<br/>the Notion API"] --> C
-    B -- yes --> C{"Already has a<br/>Zapier Client Id?"}
-    C -- "no, but the lead<br/>Table knows it" --> D
+    B -- yes --> C{"Row already has a<br/>Zapier Client Id?"}
     C -- yes --> D(["skip — comment: already registered as &lt;client id&gt;"])
-    C -- no --> E{"Account owner email,<br/>first name, last name<br/>all present?"}
+    C -- no --> E{"Account owner email,<br/>first & last name,<br/>company name present?"}
     E -- no --> F(["skip — comment: naming what's missing"])
-    E -- yes --> G["Deal Owner Notion user id<br/>→ User IDs Table<br/>→ partner contact id<br/>(fallback: Dennis)"]
+    E -- yes --> G["Owner (Notion user)<br/>→ User IDs Table<br/>→ partner contact id<br/>(fallback: Dennis)"]
     G --> H["start = today in SGT<br/>end = start + 1 year − 1 day"]
     H --> I["Partner tool:<br/>submit_client<br/>(as service agreement)"]
     I -- "rejected (permanent)" --> J(["skip — comment: the tool's reason"])
     I -- "transient failure" --> I
-    I -- ok --> K["Write lead Table row<br/>(client id → Notion page id)"]
-    K --> L["PATCH the company:<br/>Zapier Client Id, status Submitted"]
+    I -- ok --> K["Write lead Table row<br/>(client id → Company page id)"]
+    K --> L["PATCH the lead row: Zapier Client Id,<br/>Status Submitted, Type, Program,<br/>Source, Submitted On, Lead Email"]
     L --> M(["comment: client id, agreement id,<br/>owner, window"])
 ```
 
 ## Trigger
 
-Webhooks by Zapier Catch Hook (`hook_v2`). A Notion database automation on the **Companies** data source (`21991b07-11ac-80b0-b787-000b3d3995f6`, in *Core CRM Objects*) posts the page on button click.
-
-The automation must POST to the **catch URL**:
+Webhooks by Zapier Catch Hook (`hook_v2`). The catch URL is unchanged from the Companies era:
 
 ```
 https://hooks.zapier.com/hooks/catch/20495893/Cpw1RVzven0oltapo/
@@ -39,7 +38,29 @@ https://hooks.zapier.com/hooks/catch/20495893/Cpw1RVzven0oltapo/
 
 Not the `code-substrate-workflows.zapier.com` `trigger_url` in `zap.json`, which is Zapier-internal.
 
-The payload is the standard Notion automation shape — `{ data: { id, url, properties }, source: { user_id } }` — and the workflow reads the page id, `Company Name`, `Size`, `Zapier Client Id`, `Zapier Lead Status`, and four rollups: `Account Owner Email` (plus its `Account Owner Email Override`), `Account Owner First Name`, `Account Owner Last Name`, and `Deal Owner`.
+The payload is the standard Notion automation shape — `{ data: { id, url, properties }, source: { user_id } }`. From a Partner Leads row the workflow reads:
+
+- the page id and the `Company` relation
+- `Zapier Client Id` and `Status`
+- `Owner`, the workFlowers partner contact
+- `Zapier Account Email`, which overrides the rollup
+- the rollups `Account Owner Email`, `Account Owner First Name`, `Account Owner Last Name`, `Company Name` and `Company Size`
+
+`Company Name` falls back to `Lead Name` when the row has no Company.
+
+## Moving the button (2026-11-24)
+
+These steps are manual, in Notion. Neither the CLI nor MCP can create buttons or database automations.
+
+1. On **Partner Leads**, add a button property **Register Lead** with one action, *Send webhook*, that POSTs to the catch URL above with all properties included. Put it in the row layout's *Lead* section.
+2. Remove the **Register Lead** button and its automation from **Companies**. A click that still arrives from Companies is answered with a comment and nothing is submitted (`reason: companies-button-retired`), so the overlap is harmless.
+3. To register a company, create a Partner Leads row with `Company`, `Account Owner` (the contact who owns the client's Zapier account), `Owner`, and optionally `Zapier Account Email`. Then click Register Lead.
+
+**What changed in the code:**
+
+- **The repeat-click guard is the row's own `Zapier Client Id`.** The old version also checked the lead Table by company page id. That check would now block a company's legitimate second lead, so it is gone.
+- **`submit_client` is create-or-reuse on (partner account, client email).** A second lead for the same account owner email reuses the client record and opens a new service agreement. Use a different account owner, or register after the first lead has expired.
+- **The lead Table row carries the Company page id, not the lead row's id.** The sync Zap reads it to link a SPOT lead to its company and to mark `Source: Notion CRM`. When SPOT assigns a lead id, the sync finds this row by its `Zapier Client Id` and fills in `SPOT Id` and the rest of the lead's fields.
 
 ## Cutover
 
