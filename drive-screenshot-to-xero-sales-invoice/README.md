@@ -139,11 +139,25 @@ run drafts their bill for them (self-billing).
   created bill's `Contact.ContactID` isn't the configured one, Xero made a new contact. The run then
   skips the email and throws at the end, so the bill can be moved by hand.
 - **The email** is a Gmail **draft** (`draft_v2`, never sent) from dennis@work.flowers to the
-  consultant: subject `Notion Setup Sessions payout — Oct 2026`, a plain-text table of sessions ×
+  consultant: subject `Notion Setup Sessions payout — Oct 2026`, an HTML table of sessions ×
   rate, gross, fee and net, saying it replaces their invoice and is paid when Notion's PartnerStack
   payout lands. It is created with the **Send to Notion** label (`Label_10`), so Notion's email
   sync agent files it in the Emails database.
 - **Paying stays manual** (pay-when-paid, once Notion's PartnerStack payout includes their share).
+
+**Tested live 2026-11-24** with `run-durable`, replaying the real October 2026 CSV (Drive file
+`1Cco8POKHiqtXZ7LsKN1HAy0is7cQN9aj`):
+
+| Run | Result |
+| --- | --- |
+| 1 | Draft invoice US$1,060 (same 7 lines as INV-0099); draft bill `SS-2026-10-NASIR` on Nasri's existing contact `e2e623af…`, 4 session lines + `Platform fee (10%)` −US$90 = **US$810** (matches NIT-19), account 490, due 2026-11-30; one Gmail draft to Nasri labelled Send to Notion; no bill for Dennis or Ernest |
+| 2 | Same file again: `existing-bill-skipped`, no second bill or email (a second draft invoice, as documented) |
+| 3 | After deleting the bill: raised again, with the HTML email (run 1's padded plain-text table had its spacing collapsed, hence the switch) |
+
+No Emails page appeared in Notion from either labelled draft within ~10 minutes, so the email sync
+looks like it picks the thread up once sent, not as a draft. Every test invoice (INV-0101..0103),
+both test bills and both Gmail drafts were deleted afterwards. **Not yet tested: a screenshot
+run.**
 
 ## Cost
 

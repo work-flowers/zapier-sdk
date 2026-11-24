@@ -610,35 +610,42 @@ export function feeSplit(grossCents: number, feePercent: number): { feeCents: nu
   return { feeCents, netCents: grossCents - feeCents };
 }
 
-/** Plain-text payout email. Draft only; Dennis sends it. */
+/** Escape text for the HTML email body. Labels and names come from code and the CSV. */
+function escapeHtml(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/**
+ * Payout email, as HTML: a padded plain-text table doesn't survive Gmail
+ * (proportional font, and the first live test came back with its spacing
+ * collapsed). Draft only; Dennis sends it.
+ */
 export function payoutEmail(bill: ConsultantBill, period: string): { subject: string; body: string } {
   const month = monthLabel(period);
-  const firstName = bill.consultantName.split(" ")[0];
-  const rows: [string, string, string, string][] = [
-    ["Item", "Qty", "Rate", "Amount"],
-    ...bill.lines.map((l): [string, string, string, string] => [
-      l.label,
-      String(l.quantity),
-      formatUsd(l.unitCents),
-      formatUsd(l.amountCents),
-    ]),
-    ["Gross", "", "", formatUsd(bill.grossCents)],
-    [`Platform fee (${bill.consultant.platformFeePercent}%)`, "", "", formatUsd(-bill.feeCents)],
-    ["Net payout", "", "", formatUsd(bill.netCents)],
-  ];
-  const widths = [0, 1, 2, 3].map((i) => Math.max(...rows.map((r) => r[i].length)));
-  const table = rows
-    .map((r) => [r[0].padEnd(widths[0]), r[1].padStart(widths[1]), r[2].padStart(widths[2]), r[3].padStart(widths[3])].join("   ").trimEnd())
-    .join("\n");
+  const firstName = escapeHtml(bill.consultantName.split(" ")[0]);
+  const cell = "padding:4px 12px;border-bottom:1px solid #e5e5e5";
+  const num = `${cell};text-align:right;white-space:nowrap`;
+  const row = (cells: string[], bold = false) =>
+    `<tr${bold ? ' style="font-weight:bold"' : ""}>` +
+    cells.map((c, i) => `<td style="${i === 0 ? cell : num}">${escapeHtml(c)}</td>`).join("") +
+    "</tr>";
+  const table =
+    '<table style="border-collapse:collapse;font-size:14px">' +
+    `<tr>${["Item", "Qty", "Rate", "Amount"].map((h, i) => `<th style="${i === 0 ? `${cell};text-align:left` : num}">${h}</th>`).join("")}</tr>` +
+    bill.lines.map((l) => row([l.label, String(l.quantity), formatUsd(l.unitCents), formatUsd(l.amountCents)])).join("") +
+    row(["Gross", "", "", formatUsd(bill.grossCents)]) +
+    row([`Platform fee (${bill.consultant.platformFeePercent}%)`, "", "", formatUsd(-bill.feeCents)]) +
+    row(["Net payout", "", "", formatUsd(bill.netCents)], true) +
+    "</table>";
   return {
     subject: `Notion Setup Sessions payout — ${month}`,
     body:
-      `Hi ${firstName},\n\n` +
-      `Here's your Notion Setup Sessions payout for ${month}, taken from Notion's payouts report:\n\n` +
-      `${table}\n\n` +
-      `This replaces your monthly invoice for setup sessions, so there's no need to send one. ` +
-      `We've recorded it on our side as ${bill.number}, and it's paid once Notion's PartnerStack payout for ${month} lands.\n\n` +
-      `Thanks,\nDennis`,
+      `<p>Hi ${firstName},</p>` +
+      `<p>Here's your Notion Setup Sessions payout for ${month}, taken from Notion's payouts report:</p>` +
+      table +
+      `<p>This replaces your monthly invoice for setup sessions, so there's no need to send one. ` +
+      `We've recorded it on our side as ${escapeHtml(bill.number)}, and it's paid once Notion's PartnerStack payout for ${month} lands.</p>` +
+      `<p>Thanks,<br>Dennis</p>`,
   };
 }
 
@@ -786,7 +793,7 @@ async function raiseConsultantBill(ctx: any, bill: ConsultantBill, period: strin
           to: [bill.consultant.email],
           subject: email.subject,
           body: email.body,
-          body_type: "plain",
+          body_type: "html",
           label_ids: [GMAIL_SEND_TO_NOTION_LABEL],
         },
       }),

@@ -129,8 +129,9 @@
     },
     "dedupe": "Before creating, GET Invoices where Type==\"ACCPAY\" AND InvoiceNumber==\"SS-…\"; a live (not DELETED/VOIDED) bill skips both the bill and the email.",
     "csv_cross_check": "CSV path only: each consultant's gross from the invoice prices must equal their row's Total Payout, or the run throws before any bill is raised.",
-    "email": "GoogleMailV2CLIAPI write draft_v2 to the consultant, plain text, label_ids ['Label_10'] ('Send to Notion') applied at creation. Draft only, never sent.",
+    "email": "GoogleMailV2CLIAPI write draft_v2 to the consultant, an HTML table (body_type html; padded plain text collapsed in the first live test), label_ids ['Label_10'] ('Send to Notion') applied at creation. Draft only, never sent.",
     "failure_modes": "An unconfigured consultant with billable lines, or a bill that lands on the wrong Xero contact, throws AFTER the invoice and every other bill are done.",
-    "tasks_per_run": "+3 per billed consultant (find bill, create bill, Gmail draft); +1 only if the invoice response lacks unit prices. A month whose bill already exists costs +1 (the find)."
+    "tasks_per_run": "+3 per billed consultant (find bill, create bill, Gmail draft); +1 only if the invoice response lacks unit prices. A month whose bill already exists costs +1 (the find).",
+    "testing": "2026-11-24, run-durable replays of the Oct 2026 CSV: run 01a20ca6 raised invoice INV-0101 (US$1,060) + draft bill SS-2026-10-NASIR (US$900 - US$90 = US$810, contact e2e623af, account 490, due 2026-11-30) + Gmail draft labelled Label_10; run 01a20ca9 skipped the existing bill and email; run 01a20caa re-raised after the bill was deleted, with the HTML email. All test invoices (INV-0101..0103), bills and drafts deleted afterwards. Screenshot path not yet run live."
   }
 }
