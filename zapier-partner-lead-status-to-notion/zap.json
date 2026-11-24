@@ -5,7 +5,7 @@
     {
       "name": "status-trigger",
       "workflow_id": "019fa7a7-8553-722c-b176-049b03cc5227",
-      "current_version_id": "019fa7e7-c8cc-71de-95e3-f10ef6d8a00a",
+      "current_version_id": "01a20cf1-3127-76ef-ad7b-af9ba3ae54a8",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af8rM_j5kB_jN-LgYBDLaw",
       "enabled": true,
       "trigger": {
@@ -17,7 +17,7 @@
         "trigger_note": "Polling trigger, one run per lead status change. Re-pinned 1.5.0 -> 1.5.3 on 2026-11-24: on 1.5.0 the deployed trigger reported status active with no error but had ZERO runs, while SPOT showed status changes since September (7 of the 9 companies then tracked in Notion were stale). Most likely the same dedupe-on-a-stable-id defect Zapier fixed for project requests in 1.5.2 (ticket 9NPEKP-739EJ). UNVERIFIED until a real status change fires a run; the daily-sweep deployment keeps Notion correct within a day either way."
       },
       "created_at": "2026-07-28T07:36:41.043Z",
-      "version_created_at": "2026-07-28T08:27:00.000Z",
+      "version_created_at": "2026-11-24T09:44:24.698Z",
       "description": "SPOT referral lead status change -> upsert that lead's Partner Leads row (near-real-time path)."
     },
     {
