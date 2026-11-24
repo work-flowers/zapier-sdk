@@ -1092,7 +1092,10 @@ export function syncBackFirstPublish(dir, { workflowId, newVersionId, triggerUrl
   // somewhere in the metadata can never be hit instead.
   if (typeof enabled === "boolean") {
     // A deployments[] entry's own keys sit at six spaces; the top level's at two.
-    const re = depName ? /^(      "enabled":\s*)(?:true|false)/m : /^(  "enabled":\s*)(?:true|false)/m;
+    // `null` too: a pending-create entry may declare "enabled": null (unknown
+    // until Zapier reports it). Matching only true/false failed the sync-back of
+    // a deployment that had already published (run 45367888324, 2026-11-24).
+    const re = depName ? /^(      "enabled":\s*)(?:true|false|null)/m : /^(  "enabled":\s*)(?:true|false|null)/m;
     if (!re.test(raw)) fail(`${dir}: could not find a top-level "enabled" in zap.json to sync back`);
     raw = raw.replace(re, "$1" + String(enabled));
   }
