@@ -2,12 +2,13 @@
 
 Durable workflow (trigger **`read`** — "New File in Folder" — `GoogleDriveCLIAPI@1.22.0`) that turns
 a monthly "Notion Setup Sessions" activity report — **a screenshot or the Notion CSV export** — into
-a **draft sales invoice** billing Notion Labs, Inc. Migrated from the classic Zap *"Generate Setup
+a **draft sales invoice** billing Notion Labs, Inc., then one **draft bill per consultant** for their
+share, with a **Gmail draft** telling them what they'll be paid. Migrated from the classic Zap *"Generate Setup
 Session Invoice"*. (The directory name predates CSV support; it is kept because renaming a deployed
 Zap's directory buys nothing.)
 
-> **Invoices are always created as `draft`.** Nothing here approves, sends, or emails anything.
-> Every invoice is meant to be reviewed in Xero before it goes anywhere near Notion.
+> **Invoices, bills and emails are always drafts.** Nothing here approves, sends, or pays anything.
+> Dennis reviews the invoice and the bills together in Xero, and sends each payout email himself.
 
 ## What it does
 
@@ -32,6 +33,9 @@ Zap's directory buys nothing.)
    line per consultant/session-type row.
 7. **Rename** — the screenshot becomes `<invoice period> Notion Setup Sessions`; a CSV becomes
    `<invoice period> Notion Setup Sessions.csv`.
+8. **Consultant bills** — one draft Xero bill per configured consultant, priced from the invoice
+   just created, less the platform fee, plus a Gmail draft with the breakdown. See
+   [Consultant bills](#consultant-bills).
 
 ```mermaid
 flowchart TD
@@ -49,6 +53,17 @@ flowchart TD
     M --> D["resolve Invoice Period<br/><i>majority value across rows</i>"]
     D --> INV["🧾 Xero · new_sales_invoice (draft)<br/>bill: Notion Labs, Inc.<br/>one line per row"]
     INV --> R["Google Drive<br/>rename → '&lt;invoice period&gt; Notion Setup Sessions'"]
+    R --> PR["price each line from the invoice<br/><i>UnitAmount in the create response;<br/>GET the invoice only if missing</i>"]
+    PR --> XC{"CSV: each consultant's gross<br/>= Total Payout?"}
+    XC -- no --> ERR2["🛑 throw — rates drifted;<br/>no bills raised"]
+    XC -- "yes / screenshot" --> EACH["for each consultant with lines"]
+    EACH --> EX{"who?"}
+    EX -- "Dennis (exempt)" --> NB["no bill"]
+    EX -- "not in CONSULTANTS" --> UNK["remember → 🛑 throw at the end"]
+    EX -- configured --> FB{"bill SS-YYYY-MM-SURNAME<br/>already in Xero?"}
+    FB -- yes --> SK["skip bill + email"]
+    FB -- no --> BILL["🧾 Xero · new_bill (draft)<br/>account 490 · one line per type<br/>+ 'Platform fee (N%)' negative line"]
+    BILL --> GM["✉️ Gmail · draft_v2 (never sent)<br/>payout table · label 'Send to Notion'"]
 ```
 
 ## CSV input
@@ -82,6 +97,68 @@ The CSV is Notion's export of the monthly payouts view (file name like
   A mismatch on review means the item prices and Notion's payout rates have drifted apart.
 - **Upload one or the other, not both.** A CSV and a screenshot for the same month are two files,
   so they produce two runs and two draft invoices.
+
+## Consultant bills
+
+Added 2026-11-24 (TKT-1075). Consultants who run setup sessions under workFlowers' PartnerStack
+account no longer invoice us each month: the payouts report already says what they did, so this
+run drafts their bill for them (self-billing).
+
+- **Who gets a bill** is `CONSULTANTS` in `workflow.ts`, keyed by the lower-cased name as it
+  appears after `stripPeriodSuffix`. Each entry holds the Xero contact name and id, the platform
+  fee in whole percent, the email, and the surname for the bill number.
+
+  | Consultant | Xero contact | Fee | Email | Bill number |
+  | --- | --- | --- | --- | --- |
+  | Nasri Nasir | `e2e623af-408b-4d11-941b-a015ef031f0e` | 10% | nasri@work.flowers | `SS-YYYY-MM-NASIR` |
+
+- **Dennis Chiuten is exempt** (`BILL_EXEMPT`): he is the PartnerStack payee. Rows with no
+  non-zero sessions (e.g. `Ernest Choo (WF)`, a former consultant) produce no lines, so no bill.
+- **A consultant with billable lines who is in neither list fails the run**, but only after the
+  invoice and every other bill are done, so nothing else is held up and nobody goes unpaid quietly.
+  Add them to `CONSULTANTS`, then raise that bill by hand or replay.
+- **Rates come from Xero's items, via the invoice.** The `new_sales_invoice` response carries each
+  line's resolved `UnitAmount` (`LineItems.LineItem[]`), matched back on the line description
+  `{name} - {type} (Month Ending …)`. If a price is missing the run GETs the invoice; if it's still
+  missing it throws. There is no second rate card to drift.
+- **CSV cross-check:** on the CSV path, each consultant's gross must equal their row's
+  `Total Payout`, or the run throws before raising any bill (Notion's rates and Xero's item prices
+  have drifted apart). The screenshot path has no payout figure to check against.
+- **The bill:** draft, USD, dated the period end, due the last day of the following month, account
+  **490** on every line, tax `NONE` / `NoTax`, `unit_amount` passed explicitly and no item codes.
+  One line per session type, worded like the consultant's past invoices
+  (`Notion Setup Sessions — Completed (Oct 2026)`, `Bonuses — Seat bonuses (Oct 2026)`), then
+  `Platform fee (10%)` at −10% of gross, rounded to the cent. October 2026: US$900 gross −
+  US$90 = **US$810**, the same as Nasri's own NIT-19.
+- **No duplicates:** before creating, the run searches Xero for a bill with that number
+  (`Type=="ACCPAY" AND InvoiceNumber=="SS-…"`, ignoring deleted and voided ones). If one exists it
+  skips the bill **and** the email. Deleting a bill in Xero therefore lets a replay raise it again.
+  The sales invoice has no such check: a second file for the same month still creates a second
+  draft invoice (see [CSV input](#csv-input)).
+- **Wrong contact guard:** `new_bill` binds the contact by name (it has no contact id input). If the
+  created bill's `Contact.ContactID` isn't the configured one, Xero made a new contact. The run then
+  skips the email and throws at the end, so the bill can be moved by hand.
+- **The email** is a Gmail **draft** (`draft_v2`, never sent) from dennis@work.flowers to the
+  consultant: subject `Notion Setup Sessions payout — Oct 2026`, a plain-text table of sessions ×
+  rate, gross, fee and net, saying it replaces their invoice and is paid when Notion's PartnerStack
+  payout lands. It is created with the **Send to Notion** label (`Label_10`), so Notion's email
+  sync agent files it in the Emails database.
+- **Paying stays manual** (pay-when-paid, once Notion's PartnerStack payout includes their share).
+
+## Cost
+
+About one run a month (one report per month; two if both a screenshot and a CSV go in).
+
+| Path | Tasks |
+| --- | --- |
+| CSV, invoice + rename | 3 (Drive download, invoice, rename) |
+| Screenshot, invoice + rename | 2 + AI by Zapier at `advanced/auto` (3×) |
+| Per billed consultant | +3 (find bill, create bill, Gmail draft) |
+| Per consultant whose bill already exists | +1 (find bill) |
+| Invoice response without unit prices | +1 (read the invoice back) |
+| Skip (wrong file type, trashed, empty) | 0 |
+
+With Nasri as the only consultant, a CSV month costs 6 tasks.
 
 ## Item codes
 
@@ -141,9 +218,10 @@ durable) before ever considering a downgrade.
 
 ## Determinism
 
-No calendar arithmetic happens here at all — the AI already returns the reporting month's last day
-— so unlike [`drive-invoice-to-xero`](../drive-invoice-to-xero/) there's no `daysFromCivil` /
-`isoDateFromEpochMs` pair needed. `toIsoDate` still exists, purely to validate the AI's date string
+The only calendar arithmetic is the consultant bill's due date (`lastDayOfNextMonth`: next
+month, wrapping the year, then `daysInMonth`), done in integers. The AI already returns the
+reporting month's last day, so unlike [`drive-invoice-to-xero`](../drive-invoice-to-xero/) there's
+no `daysFromCivil` / `isoDateFromEpochMs` pair needed. `toIsoDate` still exists, purely to validate the AI's date string
 is a real calendar date via integer math (`daysInMonth`) before it reaches Xero — because the
 durable runtime's `Date` guard rejects even a deterministic `new Date(Date.UTC(...))` in the
 workflow body (see that Zap's README for the production incident this caused). `Date` is not
@@ -178,6 +256,16 @@ zapier-sdk --experimental publish-workflow-version 019fd190-ba8f-73be-a6c0-555cc
   `is_private: false`.
 
 ## Maintainer notes
+
+- **The publish-time analyzer misreads `line_items`.** It treats the fieldset's children as flat
+  required inputs and refuses `new_sales_invoice` / `new_bill` with "leaves required input
+  'Quantity' (`line_quantity`) unset" even when every entry sets it (seen 2026-11-24; a literal
+  one-element array fails too). Both calls therefore pass `line_items` through a spread
+  (`...{ line_items: … }`), which makes the analyzer skip the required-field check, as it does for
+  `expense-claim-to-xero-bill`. Don't "tidy" the spread away. The same refusal would hit
+  [`drive-invoice-to-xero`](../drive-invoice-to-xero/) on its next republish.
+- **Two consultants with the same `billSurname` would collide** on step ids and bill numbers. Give
+  the second one a distinct surname string (e.g. `NASIR-A`).
 
 - **`update_file_name`'s `file` input wants the plain Drive file ID, not the AI step's hydrate
   token.** The trigger payload's `file` field is a hydrate reference meant for content-fetching
