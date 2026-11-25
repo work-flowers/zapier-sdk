@@ -37,7 +37,7 @@
       "name": "whatsapp-message-to-slack",
       "entry_file": "workflow.inbound.ts",
       "workflow_id": "019fad12-9311-7c04-92d2-4e979bfb8db3",
-      "current_version_id": "01a13916-4437-72c1-9c6f-46183ea7ca36",
+      "current_version_id": "01a21032-c312-7519-a0ea-8d724e0cd2b0",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaScfItpnoOB09wBA82kcw",
       "enabled": true,
       "trigger": {
@@ -51,7 +51,7 @@
         "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:43.508Z",
-      "version_created_at": "2026-10-14T06:25:23.419Z",
+      "version_created_at": "2026-11-25T00:54:53.352Z",
       "replaces_classic_zap": "WhatsApp -> Slack",
       "description": "WhatsApp message received -> the contact's own Slack channel, threaded under the quoted message when the customer replied to one."
     },
@@ -59,7 +59,7 @@
       "name": "slack-reply-to-whatsapp",
       "entry_file": "workflow.outbound.ts",
       "workflow_id": "019fad12-a4d6-7a4e-bb4a-cfdc65a148a8",
-      "current_version_id": "01a13916-77d5-729f-8773-fc3f88a19121",
+      "current_version_id": "01a21032-f81d-7a15-84f2-d238cc9cb895",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR5n77hHpWvLlf4Xfcbumw",
       "enabled": true,
       "trigger": {
@@ -75,7 +75,7 @@
         "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:48.056Z",
-      "version_created_at": "2026-10-14T06:25:36.537Z",
+      "version_created_at": "2026-11-25T00:55:06.881Z",
       "replaces_classic_zap": "Slack Replies -> WhatsApp",
       "description": "Reply in a whatsapp-* Slack channel -> WhatsApp message to the customer, with all attachments, a 24-hour-window guard, and unsigned delivery when the replier is not in the User IDs Table."
     },
@@ -83,7 +83,7 @@
       "name": "whatsapp-message-status",
       "entry_file": "workflow.status.ts",
       "workflow_id": "019fad12-b521-7852-a01e-80e0be5eb56d",
-      "current_version_id": "01a13916-aaf1-7891-8f7c-62ffb185a25d",
+      "current_version_id": "01a21033-2d6b-7023-aa8a-2f24d1c48ef5",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeQe_pLyd-ie3fBZLB4lA",
       "enabled": true,
       "trigger": {
@@ -101,7 +101,7 @@
         "trigger_status": "active"
       },
       "created_at": "2026-07-29T08:51:52.227Z",
-      "version_created_at": "2026-10-14T06:25:49.571Z",
+      "version_created_at": "2026-11-25T00:55:20.598Z",
       "replaces_classic_zap": "Message Delivery",
       "description": "WhatsApp status update -> monotonic status on the message log, plus a failure notice threaded onto the Slack message that caused it."
     }
