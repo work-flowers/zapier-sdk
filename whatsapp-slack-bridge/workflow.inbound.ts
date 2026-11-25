@@ -9,6 +9,7 @@ import {
   BUSINESS_PHONE,
   C_CHANNEL,
   C_FIRST_NAME,
+  C_NOTION_LINK,
   C_OPT_IN,
   C_OPT_OUT_DATE,
   C_OPT_OUT_SOURCE,
@@ -25,6 +26,8 @@ import {
   inboundFileUrl,
   isoFromEpochMs,
   isOptOutMessage,
+  linkNotionContact,
+  type LinkResult,
   normalizeInput,
   normalizePhone,
   placeholderForType,
@@ -244,6 +247,22 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       });
     }
 
+    // 8. Link the channel onto the contact's Notion page, once per contact.
+    //    Last, so the message is already in Slack and logged whatever happens
+    //    here. A failure throws (a red run, an alert) and, with nothing cached,
+    //    the next message from this contact tries again.
+    let notionLink: LinkResult | null = null;
+    if (!firstString((contact.data ?? {})[C_NOTION_LINK])) {
+      notionLink = await linkNotionContact(ctx, {
+        contactRowId: String(contact.id),
+        phone,
+        profileName,
+        firstMessage: firstString(p.text?.body, p[type]?.caption),
+        channelId,
+      });
+      console.log(`contact ${phone}: Notion link ${notionLink.status}${notionLink.pageId ? ` -> ${notionLink.pageId}` : ""}`);
+    }
+
     console.log(
       `posted ${type} from ${phone} to ${channelId}` +
         (threadTs ? ` in thread ${threadTs}` : "") +
@@ -259,6 +278,7 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
       hadFile: fileUrl != null,
       optOut,
       autoReplied,
+      notionLink,
     };
   },
 );

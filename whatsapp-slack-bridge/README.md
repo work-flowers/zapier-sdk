@@ -42,6 +42,9 @@ flowchart TD
         POST --> LOG["Log row<br/>Direction: inbound"]
         LOG --> UNS{"type ==<br/>unsupported?"}
         UNS -->|yes| AR["Auto-reply on WhatsApp"]
+        UNS -->|no| NLQ
+        AR --> NLQ{"Notion Link<br/>already set?"}
+        NLQ -->|no| NL["Link channel onto the<br/>Notion contact<br/>(see below)"]
     end
 
     subgraph outbound["slack-reply-to-whatsapp"]
@@ -78,6 +81,154 @@ out and what that prevents, plus the message-log merge rules. Fully self-contain
 (workFlowers wordmark, Inter and JetBrains Mono all embedded as data URIs, nothing
 fetched at runtime), so it can be dropped straight onto a Notion page as an HTML
 preview block, or opened on its own.
+
+## Notion contact link (since 2026-11-24)
+
+The first time a WhatsApp contact's channel is used, `whatsapp-message-to-slack`
+finds their Notion **Contacts** page and sets its `WhatsApp Channel` URL property
+to the channel (`https://slack.com/app_redirect?channel=<id>`, which works without
+the workspace domain). It runs after the message is posted and logged, so it can
+never delay or lose a message. Code: `linkNotionContact` in [`shared.ts`](shared.ts).
+
+```mermaid
+flowchart TD
+    S["First inbound message<br/>(Notion Link empty)"] --> P{"Phone Table:<br/>one contact holds<br/>this number?"}
+    P -->|yes| WP["Set WhatsApp Channel"]
+    WP --> CP(["Cache: phone"])
+    P -->|"no / several"| T{"Profile name has<br/>a usable word?"}
+    T -->|no| DU
+    T -->|yes| Q["Notion query: Name or<br/>Preferred Name contains a word<br/>(≤ 8, unlinked, most hits first)"]
+    Q -->|none| DU
+    Q --> J{"Jev: which candidate,<br/>or none?"}
+    J -->|"none, or p < 0.5"| DU["DM Dennis: no match<br/>+ candidates"]
+    DU --> CU(["Cache: unmatched"])
+    J -->|"guess, p ≥ 0.5"| PD["Cache: pending"]
+    PD --> AP["Slack Request Approval,<br/>DM to Dennis<br/>(run parks on a callback)"]
+    AP -->|Link| WJ["Set WhatsApp Channel<br/>+ Primary Phone if empty<br/>+ phone Table row"]
+    WJ --> CA(["Cache: approved"])
+    AP -->|Reject| CD(["Cache: declined<br/>nothing written"])
+    AP -->|"no click in 30 days"| CE(["Cache: expired<br/>nothing written"])
+```
+
+**Two tiers, cheapest first.**
+
+1. **Phone.** [`[Table] Contact Phone → Notion Page`](https://tables.zapier.com/app/tables/t/01M86DA512K8BP18BFMGW6GSYZ)
+   maps every Notion `Primary Phone` (digits only, E.164 without `+`) to its page.
+   It's a free lookup, and Notion's own `phone_number` filter can't match across
+   formats ("+65 9123 4567" vs WhatsApp's `6591234567`). It was backfilled from
+   all 148 contacts with a phone on 2026-11-24, and
+   [`contact-emails-to-zapier-table`](../contact-emails-to-zapier-table/#phone-index)
+   keeps it in sync. A row typed without its country code ("0412 555 000")
+   still matches by its last digits (`phoneRowMatches`). A number held by more
+   than one contact is not guessed at, and falls through to tier 2. A phone
+   match is linked straight away, with no notification.
+2. **Name: Jev guesses, Dennis approves.** Most people who message us first
+   have no phone in Notion, which is why tier 2 exists. One Notion query fetches
+   up to 8 contacts whose `Name` or `Preferred Name` contains a word of the
+   WhatsApp profile name. Contacts already linked to a different WhatsApp
+   channel are left out. Jev answers one choice question over those candidates,
+   with `none` as an option (see below).
+
+**Nothing is written on Jev's say-so.** When Jev's pick reaches p ≥ 0.5, Slack's
+**Request Approval** action DMs Dennis. The DM names the contact, Jev's
+confidence and the other candidates, with **Link** and **Reject** buttons:
+
+- **Link** sets `WhatsApp Channel`, fills `Primary Phone` only if it is empty
+  (so future lookups hit tier 1), and indexes that number in the phone Table.
+- **Reject** leaves Notion alone. To link someone else, set `WhatsApp Channel`
+  on them by hand; the DM gives the URL.
+
+With no guess, Dennis gets a plain DM listing the candidates, to link by hand.
+
+**The approval runs like the one in
+[`slack-thread-to-notion-discussion`](../slack-thread-to-notion-discussion/).** It
+starts once with `createActionRun`, whose `callbackUrl` is a durable callback,
+so the run parks at no cost until the click. `runAction` would poll for 180s,
+throw, and re-post the request on each step retry. Slack expires an unanswered
+request after 30 days, and the callback waits 31.
+
+**Why not Zapier's Human in the Loop app,** which would have let Dennis edit the
+contact URL before approving? It can't run from a durable. Its
+`request_approval` attaches the review to the calling **classic** Zap's run, and
+an SDK action run has none. Tried on 2026-11-24, it failed with
+`Failed to create review request … Run ID must be a valid UUID`
+(`/source/run_id`). Wiring it in would take a hand-built classic Zap in front of
+it, outside this repo's PR pipeline.
+
+**Nothing is ever posted in the WhatsApp channel.** A human reply there goes to
+the customer, so every request and notice is a DM.
+
+**Each contact is resolved once.** The outcome is cached on the WhatsApp contact
+row, with the page in `Notion Contact Page ID`. `Notion Link` is one of:
+
+- `phone`, `approved`: linked.
+- `pending`: a request is open. It's set before the request goes out, so
+  messages arriving meanwhile don't ask again.
+- `declined`, `expired`: nothing was written.
+- `unmatched`: Jev had no guess.
+
+**To make the next inbound message try again, clear `Notion Link`.** A run that
+fails while linking throws after the message has been delivered. Nothing is
+cached then, so the next message retries. **A republish can orphan a parked
+approval,** as it can in `slack-thread-to-notion-discussion`. If that happens,
+its row stays `pending`: clear `Notion Link` and the next message asks again.
+
+### The Jev question
+
+This is the third Zap on Jev rather than AI by Zapier (see `CLAUDE.md`), chosen
+because Dennis asked for it. It is one `choice` question per contact, via `sdk.fetch` with
+the `typesafe` connection, as in the other two. The state is
+`{ whatsapp: { profile_name, phone, first_message }, candidates: [...] }`, where
+each candidate carries name, preferred/first/last name, job title, city, primary
+email and primary phone.
+
+| Option | Criterion (abridged; full text in `jevLinkQuestions`) |
+| --- | --- |
+| `c0`…`cN` | The sender is `candidates[i]`: the profile name is that contact's name or a recognisable form of it (first name alone, nickname, short/long form, initials + surname, word order, honorific), it fits clearly better than every other candidate, and nothing about the sender contradicts it. |
+| `none` | Fits nobody; fits several about equally (a shared bare first name); or every fitting candidate is contradicted (different surname, a number from another country than the contact's phone or city, a first message naming someone else). |
+
+### Verified cases (2026-11-24, jev-1.14.0)
+
+Dry run over the 14 WhatsApp contacts that already had channels (no writes), then
+live `run-durable` runs:
+
+| Sender | Outcome | Right? |
+| --- | --- | --- |
+| 8 senders whose number is on a Notion contact, two of them typed with spaces or invisible direction marks around the number | Phone match, linked | ✅ exact number |
+| 4 senders whose profile name is their phone number, or empty | No usable word: notice DM | ✅ nothing to go on |
+| A two-word name, +92 number | 8 candidates sharing the first name; `none` 0.61: notice DM | ✅ that person isn't in the CRM |
+| A one-word first name, +66 number | 1 candidate sharing it (no phone or city on file); `c0` 0.88: approval request | ✅ a person decides; Jev alone couldn't know |
+| A team member's full name, fake +65 number (live harness) | 1 candidate (that team member, whose phone differs); `none`, split 0.50 / 0.50: notice DM | ✅ a different number on file is a real conflict |
+| A contact's full name, fake +66 number (live harness) | 5 candidates; `c0` 0.95; row marked `pending`; approval DM sent; Dennis clicked **Reject**: row cached `declined`, the contact untouched | ✅ decline path end to end |
+| Dennis, own number (live, real inbound entry) | Phone match, `WhatsApp Channel` written, row cached | ✅ |
+
+**Not verified live:** an approval clicked **Link**. Testing it would have meant
+writing a fake number onto a real contact. The write it performs
+(`writeNotionLink`, plus the phone-Table row) is the same call the phone path
+made live, but the first real approval is the one to check.
+
+**Backfill:** the 8 existing channels with a phone match were linked on
+2026-11-24. The other 6 (2 named, 4 nameless) resolve on their next
+inbound message.
+
+### Cost
+
+Linking runs once per WhatsApp contact, not per message:
+
+| Path | Tasks |
+| --- | --- |
+| Phone match | 1 (Notion write) |
+| Guess, approved | 4 (query, Jev, approval request, write) |
+| Guess, rejected or expired | 3 (query, Jev, approval request) |
+| No guess | 3 (query, Jev, notice DM) |
+| No candidates | 2 (query, notice DM) |
+| No usable name word | 1 (notice DM) |
+
+The parked wait for a click costs nothing. Jev also bills its own tokens, about
+$0.0001 a call. At the current rate of a few new WhatsApp contacts a month, this
+comes to well under 20 tasks a month. Every later message from an
+already-resolved contact adds nothing: the check reads a field already loaded
+with the contact row.
 
 ## What changed from the classic Zaps
 

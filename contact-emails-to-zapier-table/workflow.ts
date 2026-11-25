@@ -22,6 +22,15 @@ const CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
 // registration with that address creates a duplicate contact.
 const CONTACT_EMAIL_TABLE = "01JYEPSEARXB2Z6BJRCMFGXBC2";
 
+// Zapier Table indexing phone -> Notion Contact page id, for the same reason:
+// a Table read is free, and Notion's `phone_number` filter can't match a
+// number written in another format ("+65 9123 4567" vs the "6591234567" that
+// WhatsApp sends). whatsapp-slack-bridge resolves a new WhatsApp sender's
+// contact through it. Keys are digits only (see `normalizePhone`), plus the
+// last 8 digits in `Phone Tail` so a number stored without its country code
+// ("0412 555 000") can still be found. Backfilled 2026-11-24.
+const CONTACT_PHONE_TABLE = "01M86DA512K8BP18BFMGW6GSYZ";
+
 // Where a cross-contact address collision is recorded.
 //
 // A single shared address is only ever a HINT that two contacts might be the
@@ -121,6 +130,23 @@ function extractEmails(prop: any): string[] {
   return [...out];
 }
 
+/**
+ * A phone number as the phone Table keys it: digits only, with a `00`
+ * international prefix dropped. A leading `+` is just dropped, so E.164 ends up
+ * as WhatsApp's own `wa_id` form ("+65 9123 4567" -> "6591234567"). A number
+ * stored without a country code stays as typed; lookups match it by suffix.
+ * Anything under 7 digits is not a usable phone number and reads as null.
+ * Same digits rule as `normalizePhone` in whatsapp-slack-bridge/shared.ts,
+ * which looks rows up by these keys; change both together.
+ */
+function normalizePhone(v: unknown): string | null {
+  const s = firstString(v);
+  if (!s) return null;
+  let digits = s.replace(/[^0-9]/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  return digits.length >= 7 ? digits : null;
+}
+
 /** Page ids compare hyphen- and case-insensitively: the Table holds ids written
  *  by several generations of automation, some hyphenated ("3a991b07-11ac-…"),
  *  some bare. A hyphenation mismatch used to read as "a different contact owns
@@ -134,6 +160,10 @@ interface ContactEmails {
   pageId: string;
   /** [email, "Primary" | "Secondary"] pairs, primary first, deduped. */
   emails: Array<[string, "Primary" | "Secondary"]>;
+  /** `Primary Phone`, normalized. `undefined` when the payload doesn't carry
+   *  the property at all (the automation may not send it), which is NOT the
+   *  same as `null`, a phone the contact no longer has. */
+  phone: string | null | undefined;
   /** The contact was sent to Notion's trash — the losing half of a merge, or a
    *  genuine delete. */
   inTrash: boolean;
@@ -180,6 +210,11 @@ function extractContact(raw: unknown): ContactEmails | null {
   const props = data?.properties ?? {};
   const primary = cleanEmail(props["Primary Email"]?.email ?? props["Primary Email"]);
   const secondaries = extractEmails(props["Secondary Email"]);
+  const phoneProp = props["Primary Phone"];
+  const phone =
+    phoneProp === undefined
+      ? undefined
+      : normalizePhone(typeof phoneProp === "object" && phoneProp !== null ? phoneProp.phone_number : phoneProp);
 
   const emails: Array<[string, "Primary" | "Secondary"]> = [];
   if (primary) emails.push([primary, "Primary"]);
@@ -206,6 +241,7 @@ function extractContact(raw: unknown): ContactEmails | null {
   return {
     pageId,
     emails,
+    phone,
     inTrash,
     restored: !inTrash && RESTORED_EVENT_TYPES.has(eventType),
     dataSourceId,
@@ -232,6 +268,8 @@ interface PageState {
    *  its properties, so this is the one address source a merge can always rely
    *  on: the webhook may carry none, and the rows may already be swept. */
   secondaries: string[];
+  /** `Primary Phone`, normalized, or null. */
+  phone: string | null;
   /** The data source the page actually lives in — the authority when a payload
    *  doesn't say, or says something stale. */
   dataSourceId: string | null;
@@ -267,6 +305,7 @@ async function readPageState(pageId: string): Promise<PageState | null> {
       possibleDuplicateLinks: [],
       primary: null,
       secondaries: [],
+      phone: null,
       dataSourceId: null,
     };
   }
@@ -295,8 +334,75 @@ async function readPageState(pageId: string): Promise<PageState | null> {
     possibleDuplicateLinks: possibleLinks,
     primary: cleanEmail(props["Primary Email"]?.email),
     secondaries: extractEmails(props["Secondary Email"]),
+    phone: normalizePhone(props["Primary Phone"]?.phone_number),
     dataSourceId: firstString(body?.parent?.data_source_id),
   };
+}
+
+// --- Phone index -------------------------------------------------------------
+
+/**
+ * Make the phone Table say exactly what this contact's `Primary Phone` says:
+ * one row for `phone` pointing here, and no other rows owned by this page.
+ * `phone` null (the number was cleared, or the contact is gone) just removes
+ * this page's rows.
+ *
+ * A number another live contact already holds keeps its first owner, like an
+ * email: two contacts sharing a phone is a duplicate for a person to sort out,
+ * and the email index already flags the duplicates that matter. It is logged,
+ * not flagged. All Table calls, so this costs no tasks.
+ */
+async function syncPhone(
+  pageId: string,
+  phone: string | null,
+): Promise<{ phone: string | null; outcome: "indexed" | "unchanged" | "held-by-other" | "cleared"; removed: number }> {
+  const owned: any[] = [];
+  for (const spelling of [...new Set([pageId, pageId.replace(/-/g, "")])]) {
+    const hit = await sdk.listTableRecords({
+      table: CONTACT_PHONE_TABLE,
+      keyMode: "names",
+      filters: [{ fieldKey: "Page ID", operator: "exact", value: spelling }],
+      pageSize: 100,
+    });
+    for (const row of hit?.data ?? []) {
+      if (!owned.some((r) => r.id === row.id)) owned.push(row);
+    }
+  }
+  const stale = owned.filter((r) => phone === null || firstString(r.data?.["Phone"]) !== phone);
+  if (stale.length > 0) {
+    await sdk.deleteTableRecords({ table: CONTACT_PHONE_TABLE, records: stale.map((r) => String(r.id)) });
+  }
+  if (phone === null) return { phone, outcome: "cleared", removed: stale.length };
+  if (owned.some((r) => firstString(r.data?.["Phone"]) === phone)) {
+    return { phone, outcome: "unchanged", removed: stale.length };
+  }
+
+  const held = await sdk.listTableRecords({
+    table: CONTACT_PHONE_TABLE,
+    keyMode: "names",
+    filters: [{ fieldKey: "Phone", operator: "exact", value: phone }],
+    pageSize: 10,
+  });
+  const other = (held?.data ?? []).find((r: any) => !sameId(firstString(r.data?.["Page ID"]), pageId));
+  if (other) {
+    console.log(`phone ${phone} on ${pageId} is already indexed to ${firstString(other.data?.["Page ID"])}; leaving it`);
+    return { phone, outcome: "held-by-other", removed: stale.length };
+  }
+  await sdk.createTableRecords({
+    table: CONTACT_PHONE_TABLE,
+    keyMode: "names",
+    records: [
+      {
+        data: {
+          Phone: phone,
+          "Phone Tail": phone.slice(-8),
+          "Page ID": pageId,
+          Source: "contact-emails-to-zapier-table",
+        },
+      },
+    ],
+  });
+  return { phone, outcome: "indexed", removed: stale.length };
 }
 
 // --- Merge hand-over ---------------------------------------------------------
@@ -506,6 +612,10 @@ async function restoreContact(ctx: DurableContext, contact: ContactEmails) {
     );
     return { pageId, restored: true, claimed: [], reason: "not a Contacts page" };
   }
+
+  // Its phone row went when it was trashed; put it back.
+  const restoredPhone = state.phone;
+  await ctx.step("restore-phone", async () => syncPhone(pageId, restoredPhone));
 
   const entries: Array<[string, "Primary" | "Secondary"]> = [];
   if (state.primary) entries.push([state.primary, "Primary"]);
@@ -871,6 +981,10 @@ const workflow = defineDurable(
     // duplicate. Runs before the emails check: a trashed contact with no email
     // properties in the payload can still own rows.
     if (contact.inTrash) {
+      // A phone isn't handed over like an address: the survivor's own
+      // Primary Phone is what it is, and editing it re-indexes it. So a
+      // trashed contact simply stops owning its number, merge or delete.
+      await ctx.step("phone-drop-trashed", async () => syncPhone(contact.pageId, null));
       return await mergeAway(ctx, contact);
     }
 
@@ -880,9 +994,17 @@ const workflow = defineDurable(
       return await restoreContact(ctx, contact);
     }
 
+    // Primary Phone, when the automation sent it. Before the email check, so a
+    // phone-only edit still lands.
+    let phoneSync: Awaited<ReturnType<typeof syncPhone>> | null = null;
+    if (contact.phone !== undefined) {
+      const phone = contact.phone;
+      phoneSync = await ctx.step("phone-sync", async () => syncPhone(contact.pageId, phone));
+    }
+
     if (contact.emails.length === 0) {
       console.log("skipping: no valid emails in payload");
-      return { skipped: true, reason: "no valid emails in payload", pageId: contact.pageId };
+      return { skipped: true, reason: "no valid emails in payload", pageId: contact.pageId, phoneSync };
     }
 
     const indexed: string[] = [];
@@ -974,6 +1096,7 @@ const workflow = defineDurable(
       reclaimed,
       duplicates,
       markedPossibleDuplicateOf,
+      phoneSync,
     };
   },
 );
