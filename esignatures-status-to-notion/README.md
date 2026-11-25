@@ -43,7 +43,9 @@ flowchart TD
   TY -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
   TY -- "Project Addendum" --> S2["📝 Status → Sent for signing / Executed"]
   TY -- "NDA" --> S3["📝 Status → Sent / Signed<br/>+ Sent Date / Signed Date (SGT)"]
-  S1 --> PH{"phase == signed?"}
+  S1 --> SD{"sent phase<br/>and SOW has a Deal?"}
+  SD -- yes --> DEAL["📝 Deal Status → In signing<br/><i>reads the SOW page for its Deal</i>"] --> PH
+  SD -- no --> PH{"phase == signed?"}
   S2 --> PH
   S3 --> PH
   PH -- no --> DONE["✅ done"]
@@ -54,6 +56,17 @@ flowchart TD
   UP --> AT["📎 attach to Signed PDF (SOW, NDA) / Executed Agreement"]
   AT --> DONE
 ```
+
+**The SOW's Deal moves to `In signing` here, on the real send (since 2026-11-25).**
+[`esignatures-send-for-signing`](../esignatures-send-for-signing/) used to do it when the *draft* was
+created, which was too early: a draft is often exported as a PDF for client review long before it is
+sent. That Zap now sets the SOW to `Ready to send` instead, and this one moves it to
+`Sent for signature`. The webhook carries only the contract, so a sent SOW costs **two more tasks**:
+one read of the SOW page for its `Deal` relation, and one PATCH of the Deal (none when there is no
+Deal). As before the move to this Zap, the Deal is set unconditionally, so a SOW sent against a Deal
+already `Closed Won` would move it back. [`sow-signed-to-deal-won`](../sow-signed-to-deal-won/) sets
+`Closed Won` again on signature. Verified 2026-11-25 with `run-durable` on a scratch SOW and Deal
+(`dealUpdated` returned, Deal read back as `In signing`).
 
 Steps `DL` → `AT` all sit inside **one** `ctx.step`, so a retry can neither re-download against an
 expired URL nor attach a second copy.

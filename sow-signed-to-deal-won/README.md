@@ -7,10 +7,10 @@ off is still unconfirmed; see below.
 
 Migration of the classic Zap **"SOW Signed -> Mark Deal as Won"**. The last hop
 of the deal lifecycle these Zaps drive:
-[`esignatures-send-for-signing`](../esignatures-send-for-signing/) sets the Deal
-to *In signing* when the SOW goes out,
-[`esignatures-status-to-notion`](../esignatures-status-to-notion/) advances the
-SOW's own status, and — once a human or that Zap lands the SOW on **Signed** —
+[`esignatures-status-to-notion`](../esignatures-status-to-notion/) sets the Deal
+to *In signing* when the SOW goes out (since 2026-11-25; before that
+[`esignatures-send-for-signing`](../esignatures-send-for-signing/) did it at
+draft time) and advances the SOW's own status, and — once a human or that Zap lands the SOW on **Signed** —
 this one closes the Deal.
 
 ## What it does

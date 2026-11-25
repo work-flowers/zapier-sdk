@@ -50,12 +50,9 @@ flowchart TD
   DR -- yes --> UD["✏️ update the draft in place<br/><i>body placeholder + signer if changed</i>"]
   DR -- no --> CC["✍️ eSignatures create_contract<br/><i>save_as_draft, test:false</i>"]
   UD --> UP
-  CC --> UP["📝 Notion: contract URL + Status"]
+  CC --> UP["📝 Notion: contract URL<br/>+ SOW Status → Ready to send"]
   UP --> TID["🗂 write Contract ID to the row"]
-  TID --> D{"SOW with a Deal?"}
-  D -- yes --> DEAL["📝 Deal Status → In signing"]
-  D -- no --> DONE["✅ done"]
-  DEAL --> DONE
+  TID --> DONE["✅ done"]
 ```
 
 ### Per-kind configuration
@@ -64,18 +61,25 @@ flowchart TD
 | --- | --- | --- |
 | Data source | `SOWs` | `Project Addendums` |
 | Contract URL property | `eSignature contract` | `eSignatures Contract` |
-| Status set | `Sent for signature` | `Sent for signing` |
+| Status set on draft | `Ready to send` | none — left as it is |
 | Title | `Agreement Name` | `[Project Addendum] ` + `SOW Name` rollup |
 | Signer name | `Signatory Name` rollup | `Consultant` person's name |
 | Signer email | `Override Email (Optional)` ?? `Signatory Primary Email` rollup | `Consultant` person's email |
 | Validation | a signatory email (either source) | `Consultant` **and** `Client SOW` both set |
 | eSignatures template | `6eaa0583…` "Scope of Work" | `443d6bed…` "Consultant Project Addendum" |
-| Extra step | linked `Deal` → `In signing` | — |
 
 Note the property names genuinely differ in case and number — `eSignature contract` (singular,
-lowercase c) versus `eSignatures Contract` (plural, capital C) — and so do the status options,
-`Sent for signature` versus `Sent for signing`. A mismatch fails silently, so they live in one
-config table rather than being typed out at each call site.
+lowercase c) versus `eSignatures Contract` (plural, capital C). A mismatch fails silently, so they
+live in one config table rather than being typed out at each call site.
+
+**Drafting is not sending.** Until 2026-11-25 this Zap set `Sent for signature` / `Sent for signing`
+and moved the SOW's Deal to `In signing` the moment the *draft* was created, which was carried over
+from the classic Zap. But a draft is often exported as a PDF for the client to review before
+anyone sends it, so the page claimed a send that had not happened. Now a SOW goes to `Ready to send`
+(an existing option), and a Project Addendum's Status is left alone, since its data source has no
+pre-send option. The "sent" status and the Deal's `In signing` are both written by
+[`esignatures-status-to-notion`](../esignatures-status-to-notion/) when eSignatures reports the
+contract actually went to the signer.
 
 ## Trigger
 
@@ -181,8 +185,8 @@ main-path runs used purpose-made scratch records, deleted afterwards.
 
 | Case | Result |
 | --- | --- |
-| `sow` main path | Draft created. Signer name `Kelvin Tan` from the rollup, email from the override — **override precedence confirmed**. Status `Sent for signature`, 575 chars of body. |
-| `addendum` main path | Draft created against the addendum's own template. Title `[Project Addendum] <SOW Name>`, signer from the `Consultant` person, Status `Sent for signing`. |
+| `sow` main path | Draft created. Signer name `Kelvin Tan` from the rollup, email from the override — **override precedence confirmed**. Status `Sent for signature` (now `Ready to send`, see above), 575 chars of body. |
+| `addendum` main path | Draft created against the addendum's own template. Title `[Project Addendum] <SOW Name>`, signer from the `Consultant` person, Status `Sent for signing` (no longer written at draft time). |
 | Retry idempotency | A re-run after a mid-flow failure returned `tableRowCreated: false` — reused the existing mapping row instead of duplicating it. |
 | Empty ping | `{"skipped":"empty-payload"}`, no error raised. |
 | Normaliser, real page | The live NUS (LKYSPP) addendum renders with clean pipe tables, its D1–D8 list intact, and the "Variation from standard terms" clause kept inside its blockquote. |
@@ -197,6 +201,7 @@ Resend handling, verified 2026-11-25 with `run-durable` against a scratch SOW pa
 | Page points at a `signed` contract | `{"skipped":"existing-contract","contractStatus":"signed"}`, one page comment, nothing written to eSignatures |
 | Status → action, URL → id, query error envelopes | Unit-checked: `contract-not-found` → create new; any other error envelope throws rather than reading as "no contract" |
 | Analyzer | `validate-workflow` clean for both entry files |
+| Draft status (2026-11-25) | Scratch SOW at `In client review` with a scratch Deal at `Proposal`: after a resend the SOW read `Ready to send` and the Deal was untouched. The status sync's sent phase then set `Sent for signature` and the Deal to `In signing`. |
 
 **Not verified:** the `withdrawn` / not-found → new draft path end to end (it is the unchanged
 create path, reached through a unit-checked branch), and that eSignatures' renderer substitutes `{{contract-body}}` exactly as expected —
@@ -209,8 +214,9 @@ that needs a human eye on a draft. Open one of the drafts below and check the bo
 - [x] Notion **Project Addendums** → `Send for signing` button repointed to
       `https://hooks.zapier.com/hooks/catch/20495893/ASihmbdguE4cPXFb/` — **done 2026-08-04**
 - [ ] Turn off the two classic Zaps once a real signing round has gone through end to end.
-- [ ] Delete the three test drafts left in eSignatures: `1041daf2-d152-4d21-8084-5dca1e6448b8`,
-      `2a875453-37cf-4c8a-a55e-5443f7720187`, `c9738320-214b-44dd-b310-8adba581f1ae`.
+- [x] Delete the three test drafts left in eSignatures: `1041daf2-d152-4d21-8084-5dca1e6448b8`,
+      `2a875453-37cf-4c8a-a55e-5443f7720187`, `c9738320-214b-44dd-b310-8adba581f1ae` — **gone by
+      2026-11-25**: `query_contract` answers `contract-not-found` for all three.
 
 **No double-drafting risk while the classic Zaps stay on.** Each button posts to one URL, so the
 classic Zaps' catch URLs now simply never fire — they are dead weight rather than a duplicate. The
