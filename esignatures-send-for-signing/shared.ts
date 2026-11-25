@@ -33,6 +33,12 @@ export const NOTION_CONNECTION = "notion_wf";
 export const ESIGN_APP_KEY = "App236843CLIAPI";
 export const ESIGN_CONNECTION = "esign_unofficial";
 
+// The PUBLIC "eSignatures" app, for everything the private app cannot do:
+// reading an existing contract and updating a draft in place on a resend. Same
+// eSignatures account, so contract ids are shared between the two.
+export const ESIGN_PUBLIC_APP_KEY = "EsignaturesioCLIAPI";
+export const ESIGN_PUBLIC_CONNECTION = "esign_public";
+
 export const NOTION_API = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2026-03-11";
 
@@ -162,6 +168,67 @@ export function extractContractId(res: any): string {
     row?.data?.id,
     row?.id,
   );
+}
+
+/** The eSignatures contract id inside a contract URL (draft or sent form), or "". */
+export function contractIdFromUrl(url: string): string {
+  const m = (url || "").match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0].toLowerCase() : "";
+}
+
+/**
+ * What a resend should do with the contract already on the page, from its
+ * eSignatures status. Probed 2026-11-25 against the live account:
+ *
+ *   - `draft`: not yet sent. Neither deletable nor withdrawable (withdraw answers
+ *     `contract-status-error: Contract is in draft status, not active`), but its
+ *     body placeholder and signer CAN be updated in place, so update it.
+ *   - `withdrawn`, or the contract no longer exists (`contract-not-found`, e.g.
+ *     deleted in eSignatures): nothing live to protect, so draft a new one.
+ *   - `signed`, and anything else (a contract out with the signer, or a status
+ *     we have never seen): a person has to decide, so refuse and say why on
+ *     the page. Replacing a contract the signer may be reading, or one already
+ *     signed, is not something a button click should do silently.
+ */
+export type ExistingAction = "update-draft" | "create-new" | "refuse";
+
+export function existingContractAction(status: string): ExistingAction {
+  const s = (status || "").trim().toLowerCase();
+  if (s === "draft") return "update-draft";
+  if (s === "withdrawn" || s === "not-found") return "create-new";
+  return "refuse";
+}
+
+/**
+ * Contract status out of a query_contract result: the contract's own status, or
+ * "not-found" when eSignatures answers `contract-not-found`. Any other error
+ * envelope throws — a failed read must not be mistaken for "no contract".
+ */
+export function readContractStatus(res: any): { status: string; contract: any } {
+  const row = firstResult(res);
+  if (row?.status === "error") {
+    const code = firstString(row?.data?.error_code);
+    if (code === "contract-not-found") return { status: "not-found", contract: null };
+    throw new Error(
+      `eSignatures query_contract failed: ${code} ${firstString(row?.data?.error_message)}`,
+    );
+  }
+  const contract = row?.data?.contract ?? row?.contract ?? null;
+  const status = firstString(contract?.status);
+  if (!status) {
+    throw new Error(`eSignatures query_contract returned no status: ${JSON.stringify(res).slice(0, 400)}`);
+  }
+  return { status, contract };
+}
+
+/** Throw unless an eSignatures write answered with something other than an error. */
+export function assertEsignOk(res: any, what: string): void {
+  const row = firstResult(res);
+  if (row?.status === "error") {
+    throw new Error(
+      `eSignatures ${what} failed: ${firstString(row?.data?.error_code)} ${firstString(row?.data?.error_message)}`,
+    );
+  }
 }
 
 export function dashUuid(id: string): string {
@@ -424,11 +491,14 @@ interface PageSnapshot {
   clientSowIds: string[];
   /** Deal relation — SOW flow only. */
   dealIds: string[];
+  /** The contract URL property as it stands — set when this is a resend. */
+  contractUrl: string;
 }
 
 function readPage(kind: Kind, page: any): PageSnapshot {
   const props = page?.properties ?? {};
   const pageId = dashUuid(firstString(page?.id));
+  const contractUrl = firstString(props[CONFIG[kind].urlProp]?.url);
 
   if (kind === "sow") {
     // The signatory's address rolls up through "Counterparty signatory". The
@@ -445,6 +515,7 @@ function readPage(kind: Kind, page: any): PageSnapshot {
       },
       clientSowIds: [],
       dealIds: relationIds(props["Deal"]),
+      contractUrl,
     };
   }
 
@@ -460,6 +531,7 @@ function readPage(kind: Kind, page: any): PageSnapshot {
     },
     clientSowIds: relationIds(props["Client SOW"]),
     dealIds: [],
+    contractUrl,
   };
 }
 
@@ -486,7 +558,7 @@ async function findOrCreateRow(
   ctx: any,
   pageId: string,
   agreementType: string,
-): Promise<{ id: string; created: boolean }> {
+): Promise<{ id: string; created: boolean; contractId: string }> {
   const row = await ctx.step("table-find-or-create", async () => {
     const found = await sdk.listTableRecords({
       table: ESIGN_TABLE,
@@ -496,7 +568,13 @@ async function findOrCreateRow(
     });
     const rows = ((found as any)?.data ?? []) as any[];
     rows.sort((a, b) => String(a?.id ?? "").localeCompare(String(b?.id ?? "")));
-    if (rows[0]?.id) return { id: String(rows[0].id), created: false };
+    if (rows[0]?.id) {
+      return {
+        id: String(rows[0].id),
+        created: false,
+        contractId: firstString(rows[0]?.data?.[T_CONTRACT_ID]),
+      };
+    }
 
     const createdRes = await sdk.createTableRecords({
       table: ESIGN_TABLE,
@@ -513,9 +591,33 @@ async function findOrCreateRow(
     });
     const newId = firstString(firstResult(createdRes)?.id);
     if (!newId) throw new Error("Zapier Table create returned no record id");
-    return { id: newId, created: true };
+    return { id: newId, created: true, contractId: "" };
   });
   return row;
+}
+
+/**
+ * Post a comment on the page. Best-effort: a comment that fails to land is
+ * logged, not raised, because it only explains a skip that has already been
+ * decided. Called as the BODY of a ctx.step with a literal id.
+ */
+async function postPageComment(pageId: string, text: string): Promise<void> {
+  try {
+    const res = await sdk.fetch(`${NOTION_API}/comments`, {
+      connection: NOTION_CONNECTION,
+      method: "POST",
+      headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        parent: { page_id: pageId },
+        rich_text: [{ text: { content: text } }],
+      }),
+    });
+    if (!res.ok) {
+      console.log(`Failed to add page comment (${res.status}): ${await res.text()}`);
+    }
+  } catch (err) {
+    console.log(`Failed to add page comment: ${String((err as Error)?.message ?? err)}`);
+  }
 }
 
 // --- Workflow body ---------------------------------------------------------
@@ -555,24 +657,9 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
   //    comment on the page — not an error alert nobody can action.
   const problem = validate(kind, snap);
   if (problem) {
-    await ctx.step("comment-missing-data", async () => {
-      try {
-        const res = await sdk.fetch(`${NOTION_API}/comments`, {
-          connection: NOTION_CONNECTION,
-          method: "POST",
-          headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            parent: { page_id: snap.pageId },
-            rich_text: [{ text: { content: cfg.missingDataComment } }],
-          }),
-        });
-        if (!res.ok) {
-          console.log(`Failed to add missing-data comment (${res.status}): ${await res.text()}`);
-        }
-      } catch (err) {
-        console.log(`Failed to add missing-data comment: ${String((err as Error)?.message ?? err)}`);
-      }
-    });
+    await ctx.step("comment-missing-data", async () =>
+      postPageComment(snap.pageId, cfg.missingDataComment),
+    );
     console.log(`not ready to send: ${problem}`);
     return { skipped: "missing-required-properties", reason: problem, pageId: snap.pageId };
   }
@@ -580,6 +667,46 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
   // 3. Claim the Table row before creating the contract, so the contract id
   //    always has somewhere to go.
   const row = await findOrCreateRow(ctx, snap.pageId, cfg.agreementType);
+
+  // 3b. A resend. The page's contract URL is what a person sees, so it wins;
+  //     the mapping row's Contract ID covers a URL someone cleared by hand.
+  //     Checked BEFORE the body is fetched so a refusal costs one read.
+  const existingId = contractIdFromUrl(snap.contractUrl) || row.contractId;
+  let action: ExistingAction = "create-new";
+  let existing: { status: string; contract: any } = { status: "none", contract: null };
+  if (existingId) {
+    existing = await ctx.step("check-existing-contract", async () =>
+      readContractStatus(
+        await sdk.runAction({
+          appKey: ESIGN_PUBLIC_APP_KEY,
+          actionType: "search",
+          actionKey: "query_contract",
+          connection: ESIGN_PUBLIC_CONNECTION,
+          inputs: { contract_id: existingId },
+        }),
+      ),
+    );
+    action = existingContractAction(existing.status);
+    console.log(`existing contract ${existingId} is ${existing.status} -> ${action}`);
+  }
+
+  if (action === "refuse") {
+    const text =
+      existing.status === "signed"
+        ? `This ${cfg.agreementType} already has a signed eSignatures contract (${existingId}), so nothing ` +
+          `was changed. To send a new version, clear the ${cfg.urlProp} property and click Send for signing again.`
+        : `This ${cfg.agreementType} already has an eSignatures contract (${existingId}) with status ` +
+          `"${existing.status}", so nothing was changed. If it has gone out to the signer, withdraw it in ` +
+          `eSignatures first, then click Send for signing again to draft a new version.`;
+    await ctx.step("comment-existing-contract", async () => postPageComment(snap.pageId, text));
+    console.log(`not resending: existing contract ${existingId} is ${existing.status}`);
+    return {
+      skipped: "existing-contract",
+      pageId: snap.pageId,
+      contractId: existingId,
+      contractStatus: existing.status,
+    };
+  }
 
   // 4. The page body becomes the contract body.
   const markdown = await ctx.step("fetch-page-markdown", async () => {
@@ -601,34 +728,100 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
     throw new Error(`Notion page ${snap.pageId} exported an empty body — nothing to put in the contract`);
   }
 
-  // 5. Create the draft contract. save_as_draft keeps it out of the signer's
-  //    inbox until a human sends it; test:false is explicit because the
-  //    action's own default is "true" and would create throwaway contracts.
-  const contract = await ctx.step("create-esignatures-draft", async () =>
-    sdk.runAction({
-      appKey: ESIGN_APP_KEY,
-      actionType: "write",
-      actionKey: "create_contract",
-      connection: ESIGN_CONNECTION,
-      inputs: {
-        template_id: cfg.templateId,
-        title: snap.title,
-        signers__name: [snap.signer.name],
-        signers__email: [snap.signer.email],
-        signers__signing_order: [1],
-        markdown: body,
-        placeholder_field_name: cfg.placeholderField,
-        save_as_draft: true,
-        test: false,
-      },
-    }),
-  );
-
-  const contractId = extractContractId(contract);
-  if (!contractId) {
-    throw new Error(
-      `eSignatures create_contract returned no contract id: ${JSON.stringify(contract).slice(0, 400)}`,
+  let contractId: string;
+  let signerUpdated = false;
+  let titleStale = false;
+  if (action === "update-draft") {
+    // 5a. Update the existing draft in place. The body lives in the template's
+    //     placeholder (a draft's content is still the bare `{{contract-body}}`
+    //     shell), so rewriting that placeholder replaces the whole body.
+    //     Both writes land in the same state when replayed.
+    contractId = existingId;
+    await ctx.step("update-draft-body", async () =>
+      assertEsignOk(
+        await sdk.runAction({
+          appKey: ESIGN_PUBLIC_APP_KEY,
+          actionType: "write",
+          actionKey: "update_contract_placeholder_fields",
+          connection: ESIGN_PUBLIC_CONNECTION,
+          inputs: {
+            contract_id: contractId,
+            placeholder_fields_markdown_map: { [cfg.placeholderField]: body },
+          },
+        }),
+        "update_contract_placeholder_fields",
+      ),
     );
+
+    // The signer may have changed too (a new override email, a new
+    // consultant). Only written when it differs, to save the task.
+    const current = (existing.contract?.signers ?? [])[0] ?? null;
+    const signerId = firstString(current?.id);
+    if (!signerId) {
+      throw new Error(`existing draft ${contractId} has no signer to update`);
+    }
+    if (
+      firstString(current?.name) !== snap.signer.name ||
+      firstString(current?.email).toLowerCase() !== snap.signer.email.toLowerCase()
+    ) {
+      await ctx.step("update-draft-signer", async () =>
+        assertEsignOk(
+          await sdk.runAction({
+            appKey: ESIGN_PUBLIC_APP_KEY,
+            actionType: "write",
+            actionKey: "update_signer",
+            connection: ESIGN_PUBLIC_CONNECTION,
+            inputs: {
+              contract_id: contractId,
+              signer_id: signerId,
+              name: snap.signer.name,
+              email: snap.signer.email,
+            },
+          }),
+          "update_signer",
+        ),
+      );
+      signerUpdated = true;
+    }
+
+    // Neither eSignatures app can rename a contract, so a changed title is
+    // reported, not fixed.
+    titleStale = firstString(existing.contract?.title) !== snap.title;
+    if (titleStale) {
+      console.log(
+        `draft title left as "${firstString(existing.contract?.title)}" — eSignatures cannot rename a contract`,
+      );
+    }
+  } else {
+    // 5b. Create the draft contract. save_as_draft keeps it out of the signer's
+    //     inbox until a human sends it; test:false is explicit because the
+    //     action's own default is "true" and would create throwaway contracts.
+    const contract = await ctx.step("create-esignatures-draft", async () =>
+      sdk.runAction({
+        appKey: ESIGN_APP_KEY,
+        actionType: "write",
+        actionKey: "create_contract",
+        connection: ESIGN_CONNECTION,
+        inputs: {
+          template_id: cfg.templateId,
+          title: snap.title,
+          signers__name: [snap.signer.name],
+          signers__email: [snap.signer.email],
+          signers__signing_order: [1],
+          markdown: body,
+          placeholder_field_name: cfg.placeholderField,
+          save_as_draft: true,
+          test: false,
+        },
+      }),
+    );
+
+    contractId = extractContractId(contract);
+    if (!contractId) {
+      throw new Error(
+        `eSignatures create_contract returned no contract id: ${JSON.stringify(contract).slice(0, 400)}`,
+      );
+    }
   }
   const contractUrl = `https://esignatures.com/draft_contracts/${contractId}/edit`;
 
@@ -681,7 +874,8 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
   }
 
   console.log(
-    `${cfg.name}: drafted ${contractId} for ${snap.signer.email} (${body.length} chars of body)`,
+    `${cfg.name}: ${action === "update-draft" ? "updated" : "drafted"} ${contractId} for ` +
+      `${snap.signer.email} (${body.length} chars of body)`,
   );
 
   return {
@@ -690,6 +884,10 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
     signer: snap.signer.email,
     contractId,
     contractUrl,
+    mode: action === "update-draft" ? "updated-draft" : "created",
+    replacedContract: action === "create-new" && existingId ? existingId : null,
+    signerUpdated,
+    titleStale,
     status: cfg.sentStatus,
     tableRowId: row.id,
     tableRowCreated: row.created,

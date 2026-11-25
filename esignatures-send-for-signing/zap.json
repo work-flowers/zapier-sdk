@@ -49,11 +49,13 @@
   ],
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
-    "esign_unofficial": "026cd1af-bdf8-8ffe-afb3-e6a5708d17a9"
+    "esign_unofficial": "026cd1af-bdf8-8ffe-afb3-e6a5708d17a9",
+    "esign_public": "026935e5-48e9-8cea-9bfc-c46d042addf7"
   },
   "connection_notes": {
     "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases.",
-    "esign_unofficial": "`eSignatures.com (Unofficial)` — App236843CLIAPI, a by-invite private app. Used because its create_contract is the only one that accepts a single `markdown` body plus the name of the placeholder to inject it into. The PUBLIC `EsignaturesioCLIAPI` app has no markdown field (only a placeholder map) and is used by `esignatures-status-to-notion` for its triggers instead. The connection is pinned to App236843CLIAPI@1.0.0 while the app's latest is @1.0.1; that only matters for trigger claims, and this app is used for actions only."
+    "esign_unofficial": "`eSignatures.com (Unofficial)` — App236843CLIAPI, a by-invite private app. Used because its create_contract is the only one that accepts a single `markdown` body plus the name of the placeholder to inject it into. The PUBLIC `EsignaturesioCLIAPI` app has no markdown field (only a placeholder map) and is used by `esignatures-status-to-notion` for its triggers instead. The connection is pinned to App236843CLIAPI@1.0.0 while the app's latest is @1.0.1; that only matters for trigger claims, and this app is used for actions only.",
+    "esign_public": "The PUBLIC `EsignaturesioCLIAPI` app, same eSignatures account (contract ids are shared). Used only on a resend: `query_contract` reads the contract already on the page, and a still-unsent draft is updated in place with `update_contract_placeholder_fields` (the body placeholder) and `update_signer`. The private app has only `create_contract`. Same connection `esignatures-status-to-notion` binds as its trigger auth. Added 2026-11-25."
   },
   "esignatures": {
     "templates": {

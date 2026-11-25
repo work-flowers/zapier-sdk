@@ -38,11 +38,18 @@ flowchart TD
   F --> V{"required data present?"}
   V -- no --> C["💬 comment on the page"] --> SKIP2(["skip — missing-required-properties"])
   V -- yes --> TBL["🗂 find-or-create mapping row<br/><i>keyed on Page ID</i>"]
-  TBL --> MD["📄 GET /v1/pages/{id}/markdown"]
-  MD --> N["🧹 normalise for a contract<br/><i>tables → pipe tables, keep list nesting</i>"]
+  TBL --> EX{"contract already on the page?<br/><i>URL property, else row's Contract ID</i>"}
+  EX -- no --> MD
+  EX -- yes --> Q["🔎 eSignatures query_contract"]
+  Q -- "signed / sent / other" --> C2["💬 comment on the page"] --> SKIP3(["skip — existing-contract"])
+  Q -- "draft / withdrawn / not found" --> MD
+  MD["📄 GET /v1/pages/{id}/markdown"] --> N["🧹 normalise for a contract<br/><i>tables → pipe tables, keep list nesting</i>"]
   N --> B{"body empty?"}
   B -- yes --> ERR2["❌ throw<br/><i>a contract with no terms</i>"]
-  B -- no --> CC["✍️ eSignatures create_contract<br/><i>save_as_draft, test:false</i>"]
+  B -- no --> DR{"existing draft?"}
+  DR -- yes --> UD["✏️ update the draft in place<br/><i>body placeholder + signer if changed</i>"]
+  DR -- no --> CC["✍️ eSignatures create_contract<br/><i>save_as_draft, test:false</i>"]
+  UD --> UP
   CC --> UP["📝 Notion: contract URL + Status"]
   UP --> TID["🗂 write Contract ID to the row"]
   TID --> D{"SOW with a Deal?"}
@@ -110,12 +117,47 @@ field whose own default is `"true"`. Leaving it out would make every run produce
 contract. `save_as_draft: true` is also deliberate — nothing reaches a signer until a human sends
 the draft.
 
+## Clicking Send for signing again
+
+Since 2026-11-25, a second click updates the existing contract instead of always drafting a new
+one. Before that, every click created a fresh draft and repointed the page and the mapping row at
+it, leaving the old contract orphaned in eSignatures. If that one had already gone to the signer and
+was then signed, the signature never reached Notion.
+
+The existing contract is the one in the page's contract URL property. If that is empty, it is the
+mapping row's Contract ID. Its eSignatures status decides what happens:
+
+| Status | What the Zap does |
+| --- | --- |
+| none on the page | Creates a draft, as before |
+| `draft` | **Updates it in place:** the body placeholder gets the page's current body, and the signer's name and email are updated if they changed. The contract id and URL stay the same. |
+| `withdrawn`, or the contract no longer exists | Creates a new draft and repoints the page and row at it |
+| `signed` | Comments on the page and changes nothing. To send a new version, clear the URL property and click again. |
+| anything else, such as out with the signer | Comments on the page, naming the status, and changes nothing. Withdraw it in eSignatures, then click again. |
+
+Facts behind this, probed on the live account on 2026-11-25:
+
+- **A draft cannot be withdrawn or deleted.** `withdraw_contract` answers `contract-status-error:
+  Contract is in draft status, not active`, and neither app has a delete action. So replacing a
+  draft would always leave one behind, and updating it is the only clean option.
+- **A draft's content is still the bare `{{contract-body}}` shell.** The body lives in the
+  placeholder's value, so `update_contract_placeholder_fields` with
+  `placeholder_fields_markdown_map: {"contract-body": …}` replaces the whole body. Reading it back
+  with `query_contract_placeholder_fields` returns exactly what was written.
+- **`update_signer` works on a draft.** It needs the signer id, which `query_contract` returns. An
+  empty name leaves the current one in place.
+- **Neither app can rename a contract.** A changed `Agreement Name` / `SOW Name` leaves the draft's
+  old title in place. The run logs it and returns `titleStale: true`.
+- **`withdrawn` is assumed, not seen.** No withdrawn contract was available to read, so if
+  eSignatures uses a different word, a withdrawn contract falls to the "anything else" row. That
+  means a comment instead of a new draft, never a silent replacement.
+
 ## Two eSignatures apps, on purpose
 
 | App | Used for | Why |
 | --- | --- | --- |
 | `App236843CLIAPI` — "eSignatures.com (Unofficial)" | `create_contract` here | The only one whose `create_contract` takes a single `markdown` body plus a placeholder name |
-| `EsignaturesioCLIAPI` — public "eSignatures" | triggers, in [`esignatures-status-to-notion`](../esignatures-status-to-notion/) | Owns `contract_sent_to_signer` / `contract_signed`; the private app has no usable trigger |
+| `EsignaturesioCLIAPI` — public "eSignatures" | triggers, in [`esignatures-status-to-notion`](../esignatures-status-to-notion/); here, `query_contract`, `update_contract_placeholder_fields` and `update_signer` on a resend (connection alias `esign_public`) | Owns `contract_sent_to_signer` / `contract_signed`; the private app has no usable trigger and only one action |
 
 Both point at the same eSignatures account, and template ids are portable between them.
 
@@ -146,7 +188,18 @@ main-path runs used purpose-made scratch records, deleted afterwards.
 | Normaliser, real page | The live NUS (LKYSPP) addendum renders with clean pipe tables, its D1–D8 list intact, and the "Variation from standard terms" clause kept inside its blockquote. |
 | Types | `npm run build` (tsc, durable 0.12.3 + sdk 0.93.0) | Clean |
 
-**Not verified:** that eSignatures' renderer substitutes `{{contract-body}}` exactly as expected —
+Resend handling, verified 2026-11-25 with `run-durable` against a scratch SOW page and a
+`test: true` probe draft:
+
+| Case | Result |
+| --- | --- |
+| Page points at a `draft` | `mode: "updated-draft"`, same contract id. Read back: body placeholder holds the page's new body, signer email changed to the override. `signerUpdated: true`, `titleStale: false`. |
+| Page points at a `signed` contract | `{"skipped":"existing-contract","contractStatus":"signed"}`, one page comment, nothing written to eSignatures |
+| Status → action, URL → id, query error envelopes | Unit-checked: `contract-not-found` → create new; any other error envelope throws rather than reading as "no contract" |
+| Analyzer | `validate-workflow` clean for both entry files |
+
+**Not verified:** the `withdrawn` / not-found → new draft path end to end (it is the unchanged
+create path, reached through a unit-checked branch), and that eSignatures' renderer substitutes `{{contract-body}}` exactly as expected —
 that needs a human eye on a draft. Open one of the drafts below and check the body rendered.
 
 ## Cutover
@@ -185,5 +238,8 @@ exposes no Get-Contract action.
   `validate-workflow` with the old entry file plus a factory `shared.ts` returned
   `missing-define-durable`, so the next republish of either deployment would have failed the publish
   job. The entry files now call `defineDurable` with a literal name; every step id is unchanged.
+- **Cost.** A first send is unchanged. A resend adds one task for `query_contract`, then on a draft
+  one for the body update and one more only when the signer changed. A refused resend costs that read
+  plus the page comment.
 - Missing data is a **skip with a comment on the page**, not an error. A person has to fix it, and
   an error alert nobody can action is just noise.
