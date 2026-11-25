@@ -2,6 +2,7 @@
 //
 // Shared bindings, helpers and Table access for the three WhatsApp <-> Slack
 // durables. Published as `shared.ts` alongside each deployment's `workflow.ts`.
+import type { DurableContext } from "@zapier/zapier-durable";
 import { createZapierSdk } from "@zapier/zapier-sdk";
 
 export const sdk = createZapierSdk();
@@ -708,5 +709,568 @@ export async function publicUrlForSlackFile(
     row?.permalink_public,
     row?.file?.permalink_public,
     row?.url_private_download,
+  );
+}
+
+// --- Notion contact link ---------------------------------------------------
+//
+// The first time a WhatsApp contact's channel is in use, find their Notion
+// Contacts page and put the channel's link on it (`WhatsApp Channel`). Two
+// tiers, cheapest first:
+//
+//   1. Phone. The phone Table (free) maps every Notion `Primary Phone` to its
+//      page, kept in sync by contact-emails-to-zapier-table. Most people who
+//      message us first have no phone in Notion yet, which is why tier 2 exists.
+//   2. Name, judged by Jev, approved by Dennis. Contacts whose name shares a
+//      word with the WhatsApp profile name are fetched (one Notion query) and
+//      Jev picks one of them, or none, in a single choice question. Nothing is
+//      written yet: when Jev has a guess, Slack's Request Approval action asks
+//      Dennis by DM (Approve / Reject), and the run parks at no cost on a
+//      durable callback until he clicks. With no guess he gets a plain DM
+//      listing the candidates, to link by hand.
+//
+// The outcome is cached on the WhatsApp contact row (`Notion Link`), so each
+// person is resolved once; `pending` while a request is open stops later
+// messages from asking again. Nothing is ever posted in the WhatsApp channel,
+// where a human reply would go to the customer.
+
+export const NOTION_CONNECTION = "notion_wf";
+export const JEV_CONNECTION = "typesafe";
+const NOTION_API = "https://api.notion.com/v1";
+const NOTION_VERSION = "2026-03-11";
+const NOTION_CONTACTS_DS = "21991b07-11ac-81a6-a894-000be4a09a67";
+const N_WHATSAPP_CHANNEL = "WhatsApp Channel";
+const N_PRIMARY_PHONE = "Primary Phone";
+
+/** "[Table] Contact Phone → Notion Page": phone digits -> Notion page id. */
+export const CONTACT_PHONE_TABLE = "01M86DA512K8BP18BFMGW6GSYZ";
+const P_PHONE = "Phone";
+const P_TAIL = "Phone Tail";
+const P_PAGE = "Page ID";
+const P_SOURCE = "Source";
+
+/** WhatsApp contacts Table: the linked page, and the state of the link —
+ *  `phone`, `approved`, `pending` (an approval request is open), `declined`,
+ *  `expired` (no click within 30 days) or `unmatched` (Jev had no guess).
+ *  Clear `Notion Link` to make the next inbound message try again. */
+export const C_NOTION_PAGE = "Notion Contact Page ID";
+export const C_NOTION_LINK = "Notion Link";
+
+/** Dennis's Slack user id: approval requests and notices go to him by DM. */
+const LINK_DM_USER = "U07SZ8SA760";
+
+/**
+ * Slack's `request_approval` holds until someone clicks and expires an
+ * unanswered request after 30 days; the callback outlives it by a day so the
+ * expiry still arrives first. (Zapier's Human in the Loop app would allow an
+ * edit before approving, but it can't run from a durable: it attaches the
+ * review to a classic Zap run and rejects an SDK action run with "Run ID must
+ * be a valid UUID", tried 2026-11-24.)
+ */
+const APPROVAL_CALLBACK_SECONDS = 31 * 24 * 60 * 60;
+
+const JEV_URL = "https://api.typesafe.ai/v1/systemone";
+const JEV_MODEL = "jev-latest";
+/** Jev's pick is pre-filled in the request at or above this; below it the
+ *  URL starts empty and the candidates are only listed. */
+export const JEV_GUESS_MIN = 0.5;
+/** Candidates shown to Jev, most name-word hits first. */
+const JEV_MAX_CANDIDATES = 8;
+
+/** A channel link that works without knowing the workspace's domain. */
+export function slackChannelUrl(channelId: string): string {
+  return `https://slack.com/app_redirect?channel=${channelId}`;
+}
+
+/** The phone Table's `Phone Tail`: the last 8 digits. */
+export function phoneTail(phone: string): string {
+  return phone.slice(-8);
+}
+
+/**
+ * Does a phone Table row's number belong to this WhatsApp sender? Equal, or the
+ * row was typed without its country code (a leading trunk `0` dropped): Notion
+ * holds "0412555000" for a sender WhatsApp reports as "61412555000". At least 8
+ * digits must line up, so a short fragment can't claim a stranger.
+ */
+export function phoneRowMatches(waPhone: string, rowPhone: string | null): boolean {
+  if (!rowPhone) return false;
+  if (rowPhone === waPhone) return true;
+  const national = rowPhone.replace(/^0+/, "");
+  return national.length >= 8 && national.length < waPhone.length && waPhone.endsWith(national);
+}
+
+/** Lowercased, accent-free words of a display name worth searching on. */
+export function nameTokens(name: unknown): string[] {
+  const s = firstString(name);
+  if (!s) return [];
+  const words = s
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((t) => t.length >= 2 && !/^\d+$/.test(t));
+  return [...new Set(words)].slice(0, 4);
+}
+
+function richText(prop: any): string | null {
+  const parts = prop?.title ?? prop?.rich_text;
+  if (!Array.isArray(parts)) return null;
+  return firstString(parts.map((p: any) => p?.plain_text ?? "").join(""));
+}
+
+/** What Jev sees of a Notion contact. */
+export interface NotionCandidate {
+  id: string;
+  name: string | null;
+  preferred_name: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  job_title: string | null;
+  city: string | null;
+  primary_email: string | null;
+  primary_phone: string | null;
+  whatsapp_channel: string | null;
+}
+
+export function candidateFromPage(page: any): NotionCandidate {
+  const p = page?.properties ?? {};
+  return {
+    id: String(page?.id ?? ""),
+    name: richText(p["Name"]),
+    preferred_name: richText(p["Preferred Name"]),
+    first_name: richText(p["First Name"]),
+    last_name: richText(p["Last Name"]),
+    job_title: richText(p["Job Title"]),
+    city: firstString(p["City"]?.select?.name),
+    primary_email: firstString(p["Primary Email"]?.email),
+    primary_phone: firstString(p[N_PRIMARY_PHONE]?.phone_number),
+    whatsapp_channel: firstString(p[N_WHATSAPP_CHANNEL]?.url),
+  };
+}
+
+/** How many of the profile's name words a candidate carries. */
+function nameHits(c: NotionCandidate, tokens: string[]): number {
+  const hay = nameTokens([c.name, c.preferred_name, c.first_name, c.last_name].filter(Boolean).join(" "));
+  return tokens.filter((t) => hay.some((h) => h.startsWith(t) || t.startsWith(h))).length;
+}
+
+/**
+ * The phone Table row(s) for a WhatsApp sender, reduced to one page id. More
+ * than one page holding the number is a duplicate for a person to sort out, so
+ * it is reported, not guessed at.
+ */
+export async function findPhoneOwner(phone: string): Promise<{ pageId: string | null; ambiguous: string[] }> {
+  const hit = await sdk.listTableRecords({
+    table: CONTACT_PHONE_TABLE,
+    keyMode: "names",
+    filters: [{ fieldKey: P_TAIL, operator: "exact", value: phoneTail(phone) }],
+    pageSize: 20,
+  });
+  const pages = new Set<string>();
+  for (const row of (hit as any)?.data ?? []) {
+    const rowPhone = firstString(row?.data?.[P_PHONE]);
+    const page = firstString(row?.data?.[P_PAGE]);
+    if (page && phoneRowMatches(phone, rowPhone)) pages.add(page.replace(/-/g, "").toLowerCase());
+  }
+  const ids = [...pages];
+  return ids.length === 1 ? { pageId: ids[0], ambiguous: [] } : { pageId: null, ambiguous: ids };
+}
+
+/** One Notion query: contacts whose Name or Preferred Name contains a name word. */
+export async function findNameCandidates(tokens: string[], channelUrl: string): Promise<NotionCandidate[]> {
+  if (tokens.length === 0) return [];
+  const or = tokens.flatMap((t) => [
+    { property: "Name", title: { contains: t } },
+    { property: "Preferred Name", rich_text: { contains: t } },
+  ]);
+  const res = await sdk.fetch(`${NOTION_API}/data_sources/${NOTION_CONTACTS_DS}/query`, {
+    method: "POST",
+    connection: NOTION_CONNECTION,
+    headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+    body: JSON.stringify({ filter: { or }, page_size: 100 }),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Notion candidate query failed (${res.status}): ${text.slice(0, 300)}`);
+  const body = JSON.parse(text);
+  return ((body?.results ?? []) as any[])
+    .map(candidateFromPage)
+    // Already linked to some other WhatsApp conversation: not this sender.
+    .filter((c) => !c.whatsapp_channel || c.whatsapp_channel === channelUrl)
+    .map((c) => ({ c, hits: nameHits(c, tokens) }))
+    .filter((x) => x.hits > 0)
+    .sort((a, b) => b.hits - a.hits)
+    .slice(0, JEV_MAX_CANDIDATES)
+    .map((x) => x.c);
+}
+
+/** What Jev knows about the sender. */
+export interface WhatsAppSender {
+  profile_name: string | null;
+  phone: string;
+  first_message: string | null;
+}
+
+/**
+ * The single choice question: which candidate, if any, is the sender. Options
+ * `c0`..`cN` point at `candidates[i]` in the state; `none` covers a name that
+ * fits nobody, or fits several equally (a bare common first name).
+ */
+export function jevLinkQuestions(count: number): Record<string, unknown> {
+  const criteria: Record<string, string> = {};
+  for (let i = 0; i < count; i++) {
+    criteria[`c${i}`] =
+      `The WhatsApp sender is the CRM contact \`candidates[${i}]\`: the profile name is that contact's name or a ` +
+      `recognisable form of it (a first name alone, a nickname, a shortened or extended given name, initials with ` +
+      `the surname, a different word order, an added honorific), it fits this contact clearly better than every ` +
+      `other candidate, and nothing about the sender contradicts the contact.`;
+  }
+  criteria.none =
+    "None of the candidates: the profile name fits none of them; or it fits more than one about equally (for " +
+    "example a first name alone that several candidates share); or something about the sender contradicts every " +
+    "candidate whose name fits (a different surname, a WhatsApp number from another country than the contact's " +
+    "own phone or city, a first message that names someone else).";
+  return {
+    match: {
+      type: "choice",
+      instructions:
+        "`whatsapp` is a person who has just messaged our business on WhatsApp for the first time; we know only " +
+        "their WhatsApp profile name, phone number and first message. `candidates` are contacts from our CRM " +
+        "whose names share a word with that profile name. Which candidate is this person?",
+      criteria,
+    },
+  };
+}
+
+/** Jev's pick, or null when it chose none or wasn't sure enough. */
+export function pickJevMatch(
+  answer: { choice?: unknown; probabilities?: Record<string, unknown> } | null | undefined,
+  candidates: NotionCandidate[],
+  min = JEV_GUESS_MIN,
+): { candidate: NotionCandidate; p: number } | null {
+  const choice = typeof answer?.choice === "string" ? answer.choice : null;
+  const m = choice ? /^c(\d+)$/.exec(choice) : null;
+  if (!m) return null;
+  const candidate = candidates[Number(m[1])];
+  const p = Number(answer?.probabilities?.[choice as string] ?? 0);
+  return candidate && p >= min ? { candidate, p } : null;
+}
+
+export async function askJevForMatch(
+  sender: WhatsAppSender,
+  candidates: NotionCandidate[],
+): Promise<{ choice: string | null; probabilities: Record<string, number>; model: string | null }> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await sdk.fetch(JEV_URL, {
+      method: "POST",
+      connection: JEV_CONNECTION,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: JEV_MODEL,
+        state: {
+          whatsapp: { ...sender, phone: `+${sender.phone}` },
+          // Drop the link field: it is either empty or this very channel.
+          candidates: candidates.map(({ id: _id, whatsapp_channel: _w, ...rest }) => rest),
+        },
+        questions: jevLinkQuestions(candidates.length),
+      }),
+    });
+    const text = await res.text();
+    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+      continue;
+    }
+    if (res.status !== 200) throw new Error(`Jev rejected the link question (${res.status}): ${text.slice(0, 300)}`);
+    const body = JSON.parse(text);
+    const a = body?.answers?.match ?? {};
+    return {
+      choice: typeof a.choice === "string" ? a.choice : null,
+      probabilities: (a.probabilities ?? {}) as Record<string, number>,
+      model: firstString(body?.model),
+    };
+  }
+}
+
+/**
+ * Write the channel link (and, when asked, the phone) onto a Notion contact.
+ * `gone` when the page is in the trash; anything else unexpected throws.
+ */
+export async function writeNotionLink(
+  pageId: string,
+  channelUrl: string,
+  fillPhone: string | null,
+): Promise<"written" | "gone"> {
+  const properties: Record<string, unknown> = { [N_WHATSAPP_CHANNEL]: { url: channelUrl } };
+  if (fillPhone) properties[N_PRIMARY_PHONE] = { phone_number: `+${fillPhone}` };
+  const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+    method: "PATCH",
+    connection: NOTION_CONNECTION,
+    headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+    body: JSON.stringify({ properties }),
+  });
+  if (res.ok) return "written";
+  const text = await res.text();
+  if (res.status === 404 || (res.status === 400 && /archived|in_trash|trash/i.test(text))) return "gone";
+  throw new Error(`Notion rejected the link write to ${pageId} (${res.status}): ${text.slice(0, 300)}`);
+}
+
+function notionPageUrl(pageId: string): string {
+  return `https://www.notion.so/${pageId.replace(/-/g, "")}`;
+}
+
+/** A candidate as one line of Slack mrkdwn: linked name, then title / email. */
+function describeCandidate(c: NotionCandidate): string {
+  const bits = [c.job_title, c.primary_email].filter(Boolean).join(", ");
+  return `<${notionPageUrl(c.id)}|${(c.name ?? c.id).replace(/[<>|]/g, "")}>${bits ? ` (${bits.replace(/[<>|]/g, "")})` : ""}`;
+}
+
+/**
+ * The approver's decision ("Approved" / "Declined") from a Request Approval
+ * action run: either a getActionRun result or the body Zapier POSTs to the
+ * callbackUrl (the same shape, tolerating a `data` envelope either way). Same
+ * reader as slack-thread-to-notion-discussion's.
+ */
+export function approvalDecision(run: unknown): string | undefined {
+  let r: unknown = run;
+  for (let i = 0; i < 2 && r && typeof r === "object" && "data" in r; i++) {
+    r = (r as { data?: unknown }).data;
+  }
+  if (Array.isArray(r)) r = { results: r };
+  if (!r || typeof r !== "object") return undefined;
+  const results = (r as { results?: unknown }).results;
+  const first = Array.isArray(results) ? results[0] : undefined;
+  const status = first && typeof first === "object" ? (first as { status?: unknown }).status : undefined;
+  return typeof status === "string" && status.length > 0 ? status : undefined;
+}
+
+export interface LinkArgs {
+  contactRowId: string;
+  phone: string;
+  profileName: string | null;
+  firstMessage: string | null;
+  channelId: string;
+}
+
+export interface LinkResult {
+  status: "phone" | "approved" | "declined" | "expired" | "unmatched";
+  pageId: string | null;
+  p?: number;
+  candidates?: number;
+  phoneFilled?: boolean;
+}
+
+/**
+ * Resolve this WhatsApp contact's Notion page and link the channel onto it.
+ *
+ * Costs: phone match 1 task (the write). Name path: the query and Jev (2),
+ * then either the approval request (1) plus the write on approval (1), or a
+ * notice DM (1) when Jev has no guess. No usable name word: the notice only.
+ * Runs once per WhatsApp contact: the result is cached on its Table row.
+ */
+export async function linkNotionContact(ctx: DurableContext, a: LinkArgs): Promise<LinkResult> {
+  const channelUrl = slackChannelUrl(a.channelId);
+  const who = `${(a.profileName ?? "no profile name").replace(/[<>|*]/g, "")} +${a.phone}`;
+
+  // 1. Phone, from the free Table.
+  const owner = await ctx.step("notion-link-phone-lookup", async () => findPhoneOwner(a.phone));
+  if (owner.ambiguous.length > 1) {
+    console.log(`phone ${a.phone} is on ${owner.ambiguous.length} Notion contacts; falling back to the name`);
+  }
+  if (owner.pageId) {
+    const pageId = owner.pageId;
+    const wrote = await ctx.step("notion-link-write-phone", async () => writeNotionLink(pageId, channelUrl, null));
+    if (wrote === "written") return cacheLink(ctx, "notion-link-cache-phone", a.contactRowId, { status: "phone", pageId });
+    console.log(`phone owner ${pageId} is in the trash; falling back to the name`);
+  }
+
+  // 2. Name candidates, and Jev's guess among them.
+  const tokens = nameTokens(a.profileName);
+  const candidates = tokens.length
+    ? await ctx.step("notion-link-candidates", async () => findNameCandidates(tokens, channelUrl))
+    : [];
+  let guess: { candidate: NotionCandidate; p: number } | null = null;
+  let jevNote = "";
+  if (candidates.length > 0) {
+    const sender: WhatsAppSender = { profile_name: a.profileName, phone: a.phone, first_message: a.firstMessage };
+    const answer = await ctx.step("notion-link-jev", async () => askJevForMatch(sender, candidates));
+    guess = pickJevMatch(answer, candidates);
+    const top = answer.choice ? `${answer.choice} p=${Number(answer.probabilities[answer.choice] ?? 0).toFixed(2)}` : "no answer";
+    jevNote = `Jev: ${top} over ${candidates.length} candidate(s).`;
+    console.log(`Jev link for ${who}: ${top} over ${candidates.length} candidate(s)`);
+  }
+  const others = (exclude: string | null) =>
+    candidates.filter((c) => c.id !== exclude).slice(0, 4).map(describeCandidate).join("; ");
+
+  // 2a. No guess: nothing to approve. Tell Dennis, with the candidates.
+  if (!guess) {
+    const list = candidates.length
+      ? ` ${jevNote} Candidates: ${others(null)}.`
+      : tokens.length
+        ? " No contact's name shares a word with their profile name."
+        : " Their WhatsApp profile name has no word to search on.";
+    await dmDennis(
+      ctx,
+      "notion-link-dm-unmatched",
+      `:grey_question: No Notion contact matched for <#${a.channelId}> (${who}).${list} ` +
+        `To link them, set *WhatsApp Channel* on their contact to ${channelUrl}`,
+    );
+    return cacheLink(ctx, "notion-link-cache-unmatched", a.contactRowId, {
+      status: "unmatched",
+      pageId: null,
+      candidates: candidates.length,
+    });
+  }
+
+  // 2b. A guess: ask Dennis to approve it before anything is written. Mark the
+  //     row pending first, so messages arriving while the request is open don't
+  //     ask again. Started with createActionRun, never runAction: runAction
+  //     polls for at most 180s and then throws, and a retried step re-posts
+  //     the request (slack-thread-to-notion-discussion learned this the hard
+  //     way). The run parks on the callback, free, until Dennis clicks.
+  const target = guess.candidate;
+  const p = guess.p;
+  const fill = target.primary_phone ? null : a.phone;
+  await ctx.step("notion-link-mark-pending", async () =>
+    sdk.updateTableRecords({
+      table: CONTACTS_TABLE,
+      keyMode: "names",
+      records: [{ id: a.contactRowId, data: { [C_NOTION_LINK]: "pending", [C_NOTION_PAGE]: target.id } }],
+    }),
+  );
+  const [approvalDone, approvalCallbackUrl] = await ctx.createCallback<unknown>({
+    name: "notion-link-approval",
+    timeoutSeconds: APPROVAL_CALLBACK_SECONDS,
+  });
+  const otherList = others(target.id);
+  const approvalRunId = await ctx.step("notion-link-request-approval", async () => {
+    const started = await sdk.createActionRun({
+      app: SLACK_APP,
+      actionType: "write",
+      action: "request_approval",
+      connection: SLACK_CONNECTION,
+      callbackUrl: approvalCallbackUrl,
+      inputs: {
+        request_message:
+          `:link: Is the WhatsApp sender in <#${a.channelId}> (${who}) the Notion contact ${describeCandidate(target)}? ` +
+          `Jev thinks so (p=${p.toFixed(2)} over ${candidates.length} candidate(s)). ` +
+          `*Approve* sets their *WhatsApp Channel*` +
+          (fill ? ` and fills their empty *Primary Phone* with +${a.phone}` : "") +
+          `. *Reject* leaves Notion alone; to link someone else, set *WhatsApp Channel* on them to ${channelUrl}` +
+          (otherList ? `. Other candidates: ${otherList}.` : "."),
+        approval_type: "direct",
+        user: LINK_DM_USER,
+        send_as: "bot",
+        username: "WhatsApp Bridge",
+        icon: ":whatsapp:",
+        approve_label: "Link",
+        decline_inclusion: "yes",
+        decline_label: "Reject",
+      },
+    });
+    return started.data.id;
+  });
+
+  const outcome = await approvalDone;
+  if (outcome.status === "expired") {
+    console.log(`approval ${approvalRunId} for ${who} expired unanswered; nothing written`);
+    return cacheLink(ctx, "notion-link-cache-expired", a.contactRowId, {
+      status: "expired",
+      pageId: null,
+      p,
+      candidates: candidates.length,
+    });
+  }
+  // Read the decision from the action run itself; fall back to the callback
+  // body once the run is past Zapier's 7-day result retention.
+  const decision = await ctx.step("notion-link-read-approval", async () => {
+    try {
+      const fromRun = approvalDecision(await sdk.getActionRun({ run: approvalRunId }));
+      if (fromRun) return fromRun;
+    } catch (err) {
+      console.log(`getActionRun ${approvalRunId} failed (${String(err)}); using the callback body`);
+    }
+    return approvalDecision(outcome.value) ?? "unknown";
+  });
+  if (decision !== "Approved") {
+    console.log(`approval ${approvalRunId} for ${who}: ${decision}; nothing written`);
+    return cacheLink(ctx, "notion-link-cache-declined", a.contactRowId, {
+      status: "declined",
+      pageId: null,
+      p,
+      candidates: candidates.length,
+    });
+  }
+
+  const wrote = await ctx.step("notion-link-write-approved", async () => writeNotionLink(target.id, channelUrl, fill));
+  if (wrote === "gone") {
+    // Trashed while the request was open. Say so rather than caching a link
+    // to a page that isn't there.
+    await dmDennis(
+      ctx,
+      "notion-link-dm-gone",
+      `:warning: You approved linking <#${a.channelId}> to ${describeCandidate(target)}, but that contact is now in the trash, so nothing was written. ` +
+        `Set *WhatsApp Channel* on the right contact to ${channelUrl}`,
+    );
+    return cacheLink(ctx, "notion-link-cache-gone", a.contactRowId, {
+      status: "unmatched",
+      pageId: null,
+      p,
+      candidates: candidates.length,
+    });
+  }
+  if (fill) {
+    // Index the number now rather than waiting on the Notion automation, so the
+    // next lookup is free and immediate. Check first: the automation may
+    // already have done it.
+    await ctx.step("notion-link-index-phone", async () => {
+      const existing = await findPhoneOwner(fill);
+      if (existing.pageId || existing.ambiguous.length) return "exists";
+      await sdk.createTableRecords({
+        table: CONTACT_PHONE_TABLE,
+        keyMode: "names",
+        records: [{ data: { [P_PHONE]: fill, [P_TAIL]: phoneTail(fill), [P_PAGE]: target.id, [P_SOURCE]: "whatsapp-slack-bridge" } }],
+      });
+      return "created";
+    });
+  }
+  return cacheLink(ctx, "notion-link-cache-approved", a.contactRowId, {
+    status: "approved",
+    pageId: target.id,
+    p,
+    candidates: candidates.length,
+    phoneFilled: fill != null,
+  });
+}
+
+/** Record the outcome on the WhatsApp contact row, so this contact is never
+ *  resolved again (until someone clears `Notion Link`). */
+async function cacheLink(ctx: StepCtx, label: string, rowId: string, result: LinkResult): Promise<LinkResult> {
+  await ctx.step(label, async () =>
+    sdk.updateTableRecords({
+      table: CONTACTS_TABLE,
+      keyMode: "names",
+      records: [{ id: rowId, data: { [C_NOTION_LINK]: result.status, [C_NOTION_PAGE]: result.pageId ?? "" } }],
+    }),
+  );
+  return result;
+}
+
+function dmDennis(ctx: StepCtx, label: string, text: string): Promise<any> {
+  return ctx.step(label, async () =>
+    sdk.runAction({
+      appKey: SLACK_APP,
+      actionType: "write",
+      actionKey: "direct_message",
+      connection: SLACK_CONNECTION,
+      inputs: {
+        channel: LINK_DM_USER,
+        text,
+        send_multi: "no",
+        as_bot: "yes",
+        add_edit_link: "no",
+        unfurl: "no",
+        link_names: "yes",
+      },
+    }),
   );
 }

@@ -5,6 +5,10 @@ Contacts Database"**. Keeps the email → contact-page-id Zapier Table
 (`01JYEPSEARXB2Z6BJRCMFGXBC2`) in sync whenever a contact's Primary or Secondary
 Email changes in Notion.
 
+Since 2026-11-24 it also keeps a second Table, phone → contact-page-id
+(`01M86DA512K8BP18BFMGW6GSYZ`), in sync with each contact's `Primary Phone`. See
+[Phone index](#phone-index).
+
 This Table is load-bearing: the Luma guest workflows resolve contacts **exclusively**
 through it (Secondary Email is a multi-select, which Notion's find action cannot
 search). Any email on a contact that's missing from the Table produces a **duplicate
@@ -293,6 +297,46 @@ serialize concurrent classic-Zap runs per email) and **Looping by Zapier** (a pl
 loop over steps). Cross-run races can still theoretically double-create a Table row;
 duplicate rows are benign (lookups take the first hit, both point at the same page).
 
+## Phone index
+
+`[Table] Contact Phone → Notion Page` (`01M86DA512K8BP18BFMGW6GSYZ`) maps a
+contact's `Primary Phone` to its page. It has four fields:
+
+- `Phone`: digits only, `00` prefix dropped, so E.164 becomes WhatsApp's `wa_id` form.
+- `Phone Tail`: the last 8 digits.
+- `Page ID`
+- `Source`
+
+[`whatsapp-slack-bridge`](../whatsapp-slack-bridge/#notion-contact-link-since-2026-11-24)
+resolves a new WhatsApp sender's contact through it, free, before falling back to a
+name match. It was backfilled from all 148 contacts with a phone on 2026-11-24.
+
+```mermaid
+flowchart TD
+    A["Payload carries<br/>Primary Phone?"] -->|"no (key absent)"| N(["Leave the phone Table alone"])
+    A -->|"yes, empty"| D["Delete this page's rows"]
+    A -->|"yes, a number"| S["Delete this page's rows for<br/>any other number"]
+    S --> H{"Row for this number?"}
+    H -- "→ this page" --> U(["Unchanged"])
+    H -- "→ another live page" --> K(["Leave it (first owner keeps), log"])
+    H -- none --> C(["Create row"])
+    T["Contact trashed"] --> D2["Delete its rows<br/>(merge or delete)"]
+    R["Contact restored"] --> S2["Re-index its Primary Phone<br/>from the page"]
+```
+
+A trashed contact simply stops owning its number. A phone isn't handed over like
+an address, because the survivor's own `Primary Phone` is what it is, and editing
+it re-indexes it. Two live contacts with one number keep the first owner. That's
+a duplicate for a person to sort out, so it's logged, not flagged. Every phone
+operation is a Table call, so this adds **no tasks**.
+
+> ⚠️ **Manual step for Dennis.** The phone sync only runs when the Notion DB
+> automation's payload includes `Primary Phone`. In the Contacts automation that
+> posts here, add **Primary Phone** to the properties that trigger it *and* to
+> the properties sent in the webhook body. Until then, a phone edited in Notion
+> is never re-indexed: the bridge still finds the 148 backfilled numbers, and
+> any number it fills in itself.
+
 ## Known limitations
 
 - **Removed emails leave their rows behind** (parity with the original). A stale row
@@ -338,6 +382,11 @@ trash path above.
 
 Both paths write to the real Table and real Notion — use throwaway `@example.test`
 addresses and clean up afterwards.
+
+**Phone sync**, verified 2026-11-24 with Dennis's own contact, whose number was
+already indexed. `{"data":{"id":"28e91b07-…","properties":{"Primary Email":{"email":"dennis@work.flowers"},"Primary Phone":{"phone_number":"<his number, typed with spaces>"}}}}`
+returned `phoneSync: { phone: "<the same digits>", outcome: "unchanged" }`, so the
+spaced input normalizes to the backfilled key and nothing was written.
 
 ## Deploy
 
