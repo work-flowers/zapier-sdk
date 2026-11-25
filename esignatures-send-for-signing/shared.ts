@@ -66,8 +66,13 @@ interface KindConfig {
   datasource: string;
   /** URL property that receives the eSignatures draft link. Names differ. */
   urlProp: string;
-  /** Status option meaning "out for signature". Differs between the two. */
-  sentStatus: string;
+  /**
+   * Status written when the draft is created or updated, or null to leave
+   * Status alone. NOT "sent for signature": a draft has not been sent, and is
+   * often exported as a PDF for client review first. The real "sent" status is
+   * written by esignatures-status-to-notion when eSignatures reports the send.
+   */
+  draftStatus: string | null;
   /** Value written to the Table's Agreement Type cell. */
   agreementType: string;
   /** eSignatures template — a bare shell holding one {{contract-body}}. */
@@ -83,7 +88,7 @@ const CONFIG: Record<Kind, KindConfig> = {
     name: "sow-send-for-signing",
     datasource: "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b", // "SOWs"
     urlProp: "eSignature contract", // singular, lowercase c
-    sentStatus: "Sent for signature", // lowercase s
+    draftStatus: "Ready to send",
     agreementType: "SOW",
     templateId: "6eaa0583-2cde-42d2-bf3e-2fe9b0808f3e", // "Scope of Work"
     placeholderField: "contract-body",
@@ -97,7 +102,9 @@ const CONFIG: Record<Kind, KindConfig> = {
     name: "project-addendum-send-for-signing",
     datasource: "46234707-641a-4aa4-96f6-295554e6543f", // "Project Addendums"
     urlProp: "eSignatures Contract", // plural, capital C
-    sentStatus: "Sent for signing",
+    // Project Addendums have no pre-send option (Draft, In consultant review,
+    // Sent for signing, Executed), so drafting leaves Status as it is.
+    draftStatus: null,
     agreementType: "Project Addendum",
     // The classic Zap used the "Scope of Work" template here too — a bug: it
     // generated addenda from the SOW shell. Fixed to the addendum's own
@@ -108,9 +115,8 @@ const CONFIG: Record<Kind, KindConfig> = {
   },
 };
 
-/** "Deals" data source — the SOW flow advances the linked deal's status. */
-const DEALS_DS = "21a91b07-11ac-808d-9657-000b1390d20b";
-const DEAL_IN_SIGNING = "In signing";
+// The linked Deal moves to "In signing" in esignatures-status-to-notion, when
+// the contract is actually sent — not here, at draft time (moved 2026-11-25).
 
 // --- Pure helpers ----------------------------------------------------------
 
@@ -489,8 +495,6 @@ interface PageSnapshot {
   signer: Signer;
   /** Relation ids that must be non-empty for the addendum flow. */
   clientSowIds: string[];
-  /** Deal relation — SOW flow only. */
-  dealIds: string[];
   /** The contract URL property as it stands — set when this is a resend. */
   contractUrl: string;
 }
@@ -514,7 +518,6 @@ function readPage(kind: Kind, page: any): PageSnapshot {
         email: override || rolled,
       },
       clientSowIds: [],
-      dealIds: relationIds(props["Deal"]),
       contractUrl,
     };
   }
@@ -530,7 +533,6 @@ function readPage(kind: Kind, page: any): PageSnapshot {
       email: firstString(person?.person?.email),
     },
     clientSowIds: relationIds(props["Client SOW"]),
-    dealIds: [],
     contractUrl,
   };
 }
@@ -825,21 +827,22 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
   }
   const contractUrl = `https://esignatures.com/draft_contracts/${contractId}/edit`;
 
-  // 6. Write the draft link and status back in one call. `Status` is a
-  //    status-type property; update_database_item handles it (verified against
-  //    both data sources) so no raw PATCH is needed.
+  // 6. Write the draft link, and the draft status where the kind has one, in
+  //    one call. `Status` is a status-type property; update_database_item
+  //    handles it (verified against both data sources) so no raw PATCH is needed.
+  const recordInputs: Record<string, unknown> = {
+    datasource: cfg.datasource,
+    page: snap.pageId,
+    [`properties|||${cfg.urlProp}|||url`]: contractUrl,
+  };
+  if (cfg.draftStatus) recordInputs["properties|||Status|||status"] = cfg.draftStatus;
   await ctx.step("update-notion-record", async () =>
     sdk.runAction({
       appKey: NOTION_APP_KEY,
       actionType: "write",
       actionKey: "update_database_item",
       connection: NOTION_CONNECTION,
-      inputs: {
-        datasource: cfg.datasource,
-        page: snap.pageId,
-        [`properties|||${cfg.urlProp}|||url`]: contractUrl,
-        "properties|||Status|||status": cfg.sentStatus,
-      },
+      inputs: recordInputs,
     }),
   );
 
@@ -852,26 +855,6 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
       records: [{ id: row.id, data: { [T_CONTRACT_ID]: contractId } }],
     }),
   );
-
-  // 8. SOW only: advance the linked deal. Skipped cleanly when there is no
-  //    deal, which is normal — not every SOW hangs off one.
-  let dealUpdated = false;
-  if (kind === "sow" && snap.dealIds.length) {
-    await ctx.step("update-deal-status", async () =>
-      sdk.runAction({
-        appKey: NOTION_APP_KEY,
-        actionType: "write",
-        actionKey: "update_database_item",
-        connection: NOTION_CONNECTION,
-        inputs: {
-          datasource: DEALS_DS,
-          page: snap.dealIds[0],
-          "properties|||Status|||status": DEAL_IN_SIGNING,
-        },
-      }),
-    );
-    dealUpdated = true;
-  }
 
   console.log(
     `${cfg.name}: ${action === "update-draft" ? "updated" : "drafted"} ${contractId} for ` +
@@ -888,10 +871,9 @@ export async function runSendForSigning(ctx: any, kind: Kind, rawInput: unknown)
     replacedContract: action === "create-new" && existingId ? existingId : null,
     signerUpdated,
     titleStale,
-    status: cfg.sentStatus,
+    status: cfg.draftStatus,
     tableRowId: row.id,
     tableRowCreated: row.created,
-    dealUpdated,
     bodyChars: body.length,
   };
 }

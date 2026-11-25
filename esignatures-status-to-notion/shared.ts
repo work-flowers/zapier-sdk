@@ -87,6 +87,15 @@ const TYPES: Record<AgreementType, TypeConfig> = {
 
 const AGREEMENT_TYPES = new Set<string>(Object.keys(TYPES));
 
+/**
+ * On a SOW's SEND, its linked Deal moves to "In signing". This used to happen in
+ * esignatures-send-for-signing when the draft was created, which was too early:
+ * a draft is often exported as a PDF for client review long before it is sent.
+ * Moved here 2026-11-25.
+ */
+const DEAL_RELATION_PROP = "Deal";
+const DEAL_IN_SIGNING = "In signing";
+
 /** Singapore has no DST, so "today" is a fixed +8h offset from UTC. */
 const SGT_OFFSET_MS = 8 * 3600 * 1000;
 
@@ -586,6 +595,41 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     return { ok: true };
   });
 
+  // 2b. SOW sent: advance the linked Deal. Read the page for its Deal relation
+  //     (the payload carries only the contract), then PATCH the Deal. Skipped
+  //     cleanly when there is no Deal, which is normal. A replayed PATCH of a
+  //     property lands in the same state.
+  let dealUpdated: string | null = null;
+  if (phase === "sent" && agreementType === "SOW") {
+    const dealId: string = await ctx.step("read-sow-deal", async () => {
+      const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+        connection: NOTION_CONNECTION,
+        headers: { "Notion-Version": NOTION_VERSION },
+      });
+      if (!res.ok) {
+        throw new Error(`Notion get page ${pageId} failed (${res.status}): ${await res.text()}`);
+      }
+      const page: any = await res.json();
+      const rel = page?.properties?.[DEAL_RELATION_PROP]?.relation;
+      return Array.isArray(rel) ? firstString(rel[0]?.id) : "";
+    });
+    if (dealId) {
+      await ctx.step("update-deal-in-signing", async () => {
+        const res = await sdk.fetch(`${NOTION_API}/pages/${dealId}`, {
+          connection: NOTION_CONNECTION,
+          method: "PATCH",
+          headers: { "Notion-Version": NOTION_VERSION, "Content-Type": "application/json" },
+          body: JSON.stringify({ properties: { Status: { status: { name: DEAL_IN_SIGNING } } } }),
+        });
+        if (!res.ok) {
+          throw new Error(`Notion update deal ${dealId} failed (${res.status}): ${await res.text()}`);
+        }
+        return { ok: true };
+      });
+      dealUpdated = dealId;
+    }
+  }
+
   // 3. On signature, file the executed PDF. New behaviour — the classic Zap
   //    passed an empty files array and so never filed anything.
   let attach: AttachResult | null = null;
@@ -624,6 +668,7 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     status,
     tableRowId,
     resolvedVia,
+    ...(phase === "sent" && agreementType === "SOW" ? { dealUpdated } : {}),
     ...(dateProp ? { dateProperty: dateProp, date: today } : {}),
     ...(phase === "signed"
       ? {
