@@ -1,7 +1,7 @@
 {
   "name": "drive-invoice-to-xero",
   "workflow_id": "019fa877-c2c2-72aa-962d-525aa58ebf0e",
-  "current_version_id": "01a027dc-4ed1-7233-80ec-8de8f00a02df",
+  "current_version_id": "01a216a5-e6bd-7d45-bb05-d7bfd463148e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASeMCQ6DKs5W9R3O3tcPMA",
   "enabled": true,
   "is_private": false,
@@ -173,5 +173,5 @@
     "status": "Dennis is turning the classic Zap off. Both were subscribed to the same folder."
   },
   "created_at": "2026-07-28T11:24:08.773Z",
-  "version_created_at": "2026-07-30T02:59:25.651Z"
+  "version_created_at": "2026-11-26T06:58:22.557Z"
 }
