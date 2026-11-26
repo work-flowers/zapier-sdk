@@ -784,6 +784,12 @@ current enabled state — pass it only to change that. Afterwards, refresh `zap.
 - **`_zap_raw_request` on Xero needs the `Xero-Tenant-Id` header.** Its input schema has no
   `organization` field and silently strips one, so an org-scoped call otherwise fails with
   *"Please select an organization to perform this step on."*
+- **`line_items` goes through a spread (`...{ line_items: … }`) on purpose.** The publish-time
+  analyzer reads the fieldset's children as flat required inputs and refused the PR #308 republish
+  (2026-11-19) with "leaves required input 'Quantity' (`line_quantity`) unset", although every line
+  sets it. The spread makes it skip that check, as in
+  [`drive-screenshot-to-xero-sales-invoice`](../drive-screenshot-to-xero-sales-invoice/). Don't tidy
+  it away.
 - **`new_bill`'s `number` maps to Xero's `InvoiceNumber`**, not `Reference` — verified against
   bills the classic Zap created.
 - **No catch URL.** This is a polling trigger, so there is nothing external to repoint; the

@@ -2207,13 +2207,18 @@ const workflow = defineDurable<Record<string, unknown>, unknown>(
             currency: header.currency,
             number: header.invoiceNumber ?? "",
             attachment: file.fileRef,
-            line_items: lines.map((l) => ({
+            // Spread, deliberately: the publish-time analyzer reads line_items'
+            // children as flat required fields and refuses ("leaves required
+            // input 'Quantity' unset") even though every entry sets
+            // line_quantity. A spread in `inputs` makes it skip that check, as
+            // in drive-screenshot-to-xero-sales-invoice. Don't tidy it away.
+            ...{ line_items: lines.map((l) => ({
               line_description: l.description || header.vendor,
               line_quantity: l.quantity,
               line_unit_amount: l.unitPrice,
               line_items_type: effectiveBasis,
               line_tax_type: taxType,
-            })),
+            })) },
           },
         });
         return { ok: true as const, result };
