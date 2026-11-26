@@ -17,8 +17,10 @@ Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Path
 1. **Trigger** — Gmail *New Email Matching Search*, one run per **email** (not per attachment).
    The search query pre-filters; see [Trigger query](#trigger-query).
 2. **Skip gates** (plain code, no task cost) — drop the email entirely if it carries a `SENT`
-   or `DRAFT` label, comes from a blocked sender, matches a blocked subject phrase, or has no
-   PDF attachments. Carried over from the classic Zap's "A bunch of filters" step.
+   or `DRAFT` label, comes from a blocked sender, is addressed (To or Cc) to a blocked client
+   mailing list, matches a blocked subject phrase, or has no PDF attachments. Mostly carried over
+   from the classic Zap's "A bunch of filters" step; the mailing-list gate was added 2026-11-26 —
+   see [Client mailing lists](#client-mailing-lists).
 3. **Extract text** — one Files by Zapier `text_from_file_new` call per PDF. A PDF that won't
    convert yields empty text rather than failing the run; the classifier still gets its
    filename and the surrounding email, but the attachment is **never filed** — see
@@ -36,7 +38,7 @@ Type"* (Gmail trigger → filters → Files by Zapier → AI classifier → Path
 
 ```mermaid
 flowchart TD
-    T["📧 Gmail: New Email Matching Search<br/><i>one run per email</i>"] --> G{"Skip gates<br/>SENT/DRAFT · blocked sender<br/>blocked subject · no PDFs"}
+    T["📧 Gmail: New Email Matching Search<br/><i>one run per email</i>"] --> G{"Skip gates<br/>SENT/DRAFT · blocked sender<br/>client mailing list · blocked subject · no PDFs"}
     G -- blocked --> X["⏹ skip email"]
     G -- ok --> E["Files by Zapier<br/>text_from_file_new<br/><i>one per PDF</i>"]
     E --> AI["🤖 Jev (TypeSafe) via API by Zapier<br/><b>ONE call, all attachments + email context</b><br/>→ category · paid · superseded-by-receipt<br/>· auto-paid · lapsed <i>(probabilities)</i>"]
@@ -196,13 +198,37 @@ siblings that were actually read.
 ## Trigger query
 
 ```
-has:attachment filename:pdf -in:sent -in:drafts -in:chats -in:trash -in:spam -from:no-reply.1tdl9c@zapiermail.com
+has:attachment filename:pdf -in:sent -in:drafts -in:chats -in:trash -in:spam -from:no-reply.1tdl9c@zapiermail.com -list:procurement@knoxxfoods.com
 ```
 
 This narrows what Gmail polls. It is **not** the authoritative filter — Gmail's phrase matching
-is fuzzy, so every exclusion is re-checked in code (`BLOCKED_SENDERS`, `BLOCKED_SUBJECTS`,
+is fuzzy, so every exclusion is re-checked in code (`BLOCKED_SENDERS`, `BLOCKED_RECIPIENTS`, `BLOCKED_SUBJECTS`,
 `BLOCKED_LABELS` in `workflow.ts`). The trigger fires on all folders including sent mail unless
 excluded, hence `-in:sent -in:drafts`.
+
+### Client mailing lists
+
+Dennis sits on some **client** mailing lists, and their PDFs are the client's paperwork, not
+workFlowers'. `procurement@knoxxfoods.com` (the Knoxx procurement Google Group, subject prefix
+`[Knoxx Procurement]`) carries supplier invoices, commercial invoices, purchase-order notices and
+container shipping documents. Before this gate, a commercial invoice in that mail classified as an
+`Invoice`, was filed to **Invoices**, and [`drive-invoice-to-xero`](../drive-invoice-to-xero/)
+then raised it as a draft bill in **our** Xero. On 2026-11-26, 11 of the Zap's last 15 runs were
+Knoxx procurement mail, and container `TLLU3689327` had an attachment filed to Invoices.
+
+Two layers keep it out:
+
+- **Trigger query** — `-list:procurement@knoxxfoods.com`. Gmail's `list:` matches mail delivered
+  through the group whether the group is in To or Cc (checked: it found all 22 group threads from
+  the previous week, the same set as a plain address search). These emails no longer start a run.
+- **Code** — `BLOCKED_RECIPIENTS` in `workflow.ts`, matched case-insensitively against the
+  trigger's `to.emails` and `cc.emails`. A skip here returns before any app action, so it is free.
+  Checked against the real payloads of the 15 runs above: all 11 Knoxx emails skip with
+  `sent to client mailing list procurement@knoxxfoods.com`, and the other 4 are unaffected.
+
+Only mail **addressed to the group** is filtered. A Knoxx supplier writing to Dennis directly,
+without the group, still goes through the classifier — as does a genuine workFlowers bill, which
+never goes to that list. To add another client list, add it to both places.
 
 Blocked subject phrases, carried over from the classic Zap:
 

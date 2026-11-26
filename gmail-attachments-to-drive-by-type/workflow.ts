@@ -68,6 +68,17 @@ const BLOCKED_SUBJECTS = [
   "your monthly statement for assets",
 ];
 
+/**
+ * Mailing lists Dennis is on for a CLIENT, not for workFlowers (case-insensitive,
+ * matched against To and Cc). Their PDFs are the client's own procurement paperwork:
+ * supplier invoices, commercial invoices and shipping documents addressed to the
+ * client. Filed into Invoices they become draft bills in OUR Xero, which is how
+ * Knoxx's container paperwork started raising bills here in Nov 2026. The trigger
+ * query's `-list:` exclusion stops most of these before a run; this is the
+ * authoritative check, in case Gmail's list matching misses one.
+ */
+const BLOCKED_RECIPIENTS = new Set(["procurement@knoxxfoods.com"]);
+
 /** Gmail labels that mean we sent it, not received it. */
 const BLOCKED_LABELS = new Set(["SENT", "DRAFT"]);
 
@@ -270,7 +281,30 @@ interface Email {
   date: string;
   bodyPlain: string;
   labels: string[];
+  /** To and Cc addresses, lower-cased. */
+  recipients: string[];
   attachments: Attachment[];
+}
+
+/** Addresses from a Gmail trigger recipient field: `{ emails: [...] }`, an
+ *  array, or a comma-separated string ("Name <a@b.c>, d@e.f"). */
+function recipientEmails(v: unknown): string[] {
+  const raw: unknown[] =
+    v && typeof v === "object" && !Array.isArray(v) && Array.isArray((v as any).emails)
+      ? (v as any).emails
+      : Array.isArray(v)
+        ? v
+        : typeof v === "string"
+          ? v.split(",")
+          : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const s = firstString((item as any)?.email, item);
+    if (!s) continue;
+    const m = s.match(/<([^>]+)>/);
+    out.push((m ? m[1] : s).trim().toLowerCase());
+  }
+  return out;
 }
 
 function extractEmail(raw: unknown): Email | null {
@@ -289,6 +323,7 @@ function extractEmail(raw: unknown): Email | null {
     date: firstString(m.date) ?? "",
     bodyPlain: firstString(m.body_plain, m.body_html) ?? "",
     labels,
+    recipients: [...recipientEmails(m.to), ...recipientEmails(m.cc)],
     attachments: extractAttachments(m),
   };
 }
@@ -301,6 +336,8 @@ function blockReason(email: Email): string | null {
   if (BLOCKED_SENDERS.has(email.fromEmail)) {
     return `blocked sender ${email.fromEmail}`;
   }
+  const list = email.recipients.find((r) => BLOCKED_RECIPIENTS.has(r));
+  if (list) return `sent to client mailing list ${list}`;
   const subject = email.subject.toLowerCase();
   const hit = BLOCKED_SUBJECTS.find((s) => subject.includes(s));
   if (hit) return `blocked subject phrase "${hit}"`;

@@ -11,10 +11,10 @@
     "authentication_id": "02a57b11-742e-8601-a7d4-99004bd654c7",
     "authentication_note": "Gmail dennis@work.flowers (the non-shared connection). The Gmail credential lives HERE, not in --connections — the workflow code never calls Gmail.",
     "params": {
-      "query": "has:attachment filename:pdf -in:sent -in:drafts -in:chats -in:trash -in:spam -from:no-reply.1tdl9c@zapiermail.com"
+      "query": "has:attachment filename:pdf -in:sent -in:drafts -in:chats -in:trash -in:spam -from:no-reply.1tdl9c@zapiermail.com -list:procurement@knoxxfoods.com"
     },
     "status": "active",
-    "trigger_note": "Polling trigger, one run per EMAIL (not per attachment) — that is what lets the classifier see an invoice alongside the receipt that settles it. The query only narrows what Gmail polls; the authoritative filters are BLOCKED_SENDERS / BLOCKED_SUBJECTS / BLOCKED_LABELS in workflow.ts."
+    "trigger_note": "Polling trigger, one run per EMAIL (not per attachment) — that is what lets the classifier see an invoice alongside the receipt that settles it. The query only narrows what Gmail polls; the authoritative filters are BLOCKED_SENDERS / BLOCKED_RECIPIENTS / BLOCKED_SUBJECTS / BLOCKED_LABELS in workflow.ts. `-list:procurement@knoxxfoods.com` (added 2026-11-26) keeps the Knoxx procurement Google Group out: Dennis is on it for the client, and its supplier invoices were being filed to Invoices and raised as draft bills in workFlowers Xero."
   },
   "connections": {
     "gdrive": "02eb8724-3fc7-8edc-9b30-be83af0b327f",
