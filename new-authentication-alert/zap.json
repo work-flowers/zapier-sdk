@@ -1,7 +1,7 @@
 {
   "name": "new-authentication-alert",
   "workflow_id": "01a0a8b2-378d-78c7-bddc-7007a0736dfa",
-  "current_version_id": "01a0a8b2-47f8-7ee2-be80-627f6f427889",
+  "current_version_id": "01a21add-b6fb-77af-a2df-bd2f3e4bf156",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AaHKOpdvzvJRUuA6wBgT2g",
   "enabled": true,
   "is_private": false,

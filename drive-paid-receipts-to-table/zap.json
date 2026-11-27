@@ -1,7 +1,7 @@
 {
   "name": "drive-paid-receipts-to-table",
   "workflow_id": "019fa8ae-d589-7b80-befb-5ed77334e29a",
-  "current_version_id": "019faae4-87f0-7764-9008-88803127ff79",
+  "current_version_id": "01a21adc-678f-7460-9483-30e5861c02d0",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AS_Mp9rcT5jL4YKMIyPKMA",
   "enabled": true,
   "is_private": false,
@@ -80,5 +80,5 @@
     "status": "Dennis is turning the classic Zap off."
   },
   "created_at": "2026-07-28T12:24:18.059Z",
-  "version_created_at": "2026-07-28T22:42:11.571Z"
+  "version_created_at": "2026-11-27T02:36:23.253Z"
 }
