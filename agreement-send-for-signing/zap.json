@@ -1,12 +1,12 @@
 {
   "name": "agreement-send-for-signing",
-  "workflow_id": null,
-  "current_version_id": null,
-  "trigger_url": null,
+  "workflow_id": "01a21af2-c09d-736a-a5a3-fe7b0486163e",
+  "current_version_id": "01a21af2-ef2c-7959-9066-bfb7409c09dc",
+  "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AtiZxCssjDv4KFAgYWh7Gk8",
   "enabled": false,
   "is_private": false,
   "deploy": {
-    "state": "pending-create",
+    "state": "published",
     "workflow_name": "agreement-send-for-signing",
     "description": "Notion Agreement Pipeline 'Send to eSignatures' button -> eSignatures.com DRAFT contract whose text is the row's own page body. Document type picks the shell template and signer 1 (Signatory contact or Consultant; Override email wins); Dennis is always signer 2. A resend updates an unsent draft in place. Writes the draft link to 'eSignatures contract', sets Status = Ready to send, and maps the contract (Agreement Type = Agreement) in the eSignatures Mapping Table. Replaces sow-send-for-signing, project-addendum-send-for-signing and notion-nda-to-esignatures-draft (TKT-1088).",
     "enable_on_publish": false,
