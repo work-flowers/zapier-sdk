@@ -67,6 +67,8 @@ const AGREEMENT_TYPE = "Agreement";
 // --- Pipeline properties ---------------------------------------------------
 const P = {
   title: "Agreement Name",
+  /** Auto-increment unique_id, prefix "AGR" (e.g. AGR-5). */
+  id: "ID",
   docType: "Document type",
   status: "Status",
   signatory: "Signatory",
@@ -201,6 +203,14 @@ function dashUuid(id: string): string {
   const hex = (id || "").replace(/-/g, "").toLowerCase();
   if (hex.length !== 32) return (id || "").trim();
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** "AGR-5" from a Notion unique_id property; "" when absent. */
+function uniqueIdRef(prop: any): string {
+  const n = prop?.unique_id?.number;
+  if (typeof n !== "number") return "";
+  const prefix = firstString(prop?.unique_id?.prefix);
+  return prefix ? `${prefix}-${n}` : String(n);
 }
 
 function plainText(rich: unknown): string {
@@ -645,11 +655,16 @@ function readRow(page: any): Snapshot {
   if (cfg?.needsCounterparty && !counterparty) missing.push(P.counterparty);
 
   const label = cfg?.label ?? docType;
-  const title = counterparty
+  const base = counterparty
     ? `${label} – ${counterparty}`
     : agreementName
       ? `${label} – ${agreementName}`
       : label;
+  // The pipeline ID (AGR-5) goes in the title so the signed copy carries it:
+  // the Agreement File Analyzer links an executed copy to its pipeline row by
+  // that reference, and without it falls back to a fuzzy content match.
+  const agrRef = uniqueIdRef(props[P.id]);
+  const title = agrRef ? `${base} (${agrRef})` : base;
 
   return {
     pageId: dashUuid(firstString(page?.id)),
