@@ -26,10 +26,10 @@
     "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5"
   },
   "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — where this workflow deletes the mirrors that scw-events-to-workflowers-block / gcal-block-sweep created.",
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — shared with the whole blocking family. Read for the loop guard (a cancelled event whose id is a Mirror Event ID is the sync's own deletion echoing back) and the mapping lookup; the matched row's Status is written to 'deleted'."

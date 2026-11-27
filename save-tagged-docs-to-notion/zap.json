@@ -23,9 +23,9 @@
   "connections": {
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   }
 }

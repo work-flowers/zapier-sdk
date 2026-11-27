@@ -35,10 +35,10 @@
     "tier": "standard/auto",
     "why": "Single creative-writing task: turn post markdown into one image-generation prompt. The classic Zap used the raw Anthropic app (Claude Opus 4.5, user's own billing) with a brand-guidelines PDF knowledge source; AI by Zapier has no knowledge sources, so the brand guidance is embedded in the prompt instead. Verified 2026-08-14 that standard/auto produces an on-brand, hex-correct, style-tagged brief on a real post — see the README's verified-cases table."
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.99.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "replaces_classic_zap": "Generate Blog Post Image (exported 2026-08-14; webhook -> paths on Prompt (Optional) -> Anthropic/AI brief -> Gemini -> ae:345724 external cover + upload_file_to_data_source_item)"
 }

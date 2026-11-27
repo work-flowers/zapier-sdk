@@ -1,8 +1,8 @@
 {
   "type": "module",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.99.0",
-    "@zapier/zapier-durable": "0.12.5"
+    "@zapier/zapier-sdk": "0.115.1",
+    "@zapier/zapier-durable": "0.14.1"
   },
   "devDependencies": {
     "typescript": "latest"

@@ -32,10 +32,10 @@
   "tables": {
     "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read or written by this workflow. The classic Zap's find-or-create queried it; the durable guards on the Notion page property instead, and notion-companies-to-zapier-table mirrors the id into the Table."
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.97.1"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "created_at": "2026-08-10",
   "version_created_at": "2026-11-25T00:51:38.755Z",

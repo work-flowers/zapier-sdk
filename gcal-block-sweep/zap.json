@@ -29,10 +29,10 @@
     "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
   },
   "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers'); gcal_scw is the SCW one ('dchiuten@securecodewarrior.com', created 2026-08-28). Both are read (event_v2 window search on the source side) and written (detailed_event on the destination side); cleanup deletes only on gcal_scw.",
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — source occurrence id -> mirror event id, both directions. SHARED with the two trigger Zaps: read to skip everything already mapped (free), written with a row for each mirror this sweep creates. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7), Source Updated (f8)."

@@ -29,10 +29,10 @@
       "version": "2.0.4"
     }
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.97.1"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "notion": {
     "contacts_data_source": "21991b07-11ac-81a6-a894-000be4a09a67",
