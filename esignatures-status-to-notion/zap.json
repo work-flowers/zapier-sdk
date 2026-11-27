@@ -64,7 +64,7 @@
         "Status (status) = \"Sent for signature\" + Sent date (sent) / \"Signed\" + Signed date (signed), dates = today SGT",
         "No files property: the executed PDF is never downloaded or attached (filed by the Gmail -> Drive -> register chain)"
       ],
-      "deal_on_sent": "Deals relation, first id -> Status \"In signing\", only when Category = Client",
+      "deal_on_sent": "Deals relation, first id -> Status \"In signing\", only when Counterparty type = Client",
       "added": "2026-11-27 (TKT-1089)"
     },
     "sows": {

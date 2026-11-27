@@ -25,9 +25,9 @@ this one closes the Deal.
    | Source | Deal relation | Also requires |
    |---|---|---|
    | SOWs `07e4d8c1…` (legacy, until the cutover task) | `Deal` | nothing (unchanged) |
-   | Agreement Pipeline `42491b07-11ac-8198…` | `Deals` | `Status` = Signed and `Category` = Client |
+   | Agreement Pipeline `42491b07-11ac-8198…` | `Deals` | `Status` = Signed and `Counterparty type` = Client |
 
-   The pipeline holds every kind of agreement, so the Category gate keeps consultant, vendor and
+   The pipeline holds every kind of agreement, so the Counterparty type gate keeps consultant, vendor and
    other agreements away from Deals, and the Status re-check means a broadly configured automation
    can't close a Deal early.
 4. Skips if the page is archived/trashed, belongs to any other data source (including one it can't
@@ -48,7 +48,7 @@ flowchart TD
     D -- no --> SRC{"Parent data source?"}
     SRC -- "other" --> S
     SRC -- "SOWs" --> R1["Deal relation: Deal"]
-    SRC -- "Agreement Pipeline" --> G{"Status = Signed<br/>and Category = Client?"}
+    SRC -- "Agreement Pipeline" --> G{"Status = Signed<br/>and Counterparty type = Client?"}
     G -- no --> S
     G -- yes --> R2["Deal relation: Deals"]
     R1 --> H{"Deal linked?"}

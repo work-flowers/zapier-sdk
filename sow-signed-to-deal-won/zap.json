@@ -21,7 +21,7 @@
     "sows_data_source": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
     "deals_data_source": "21a91b07-11ac-808d-9657-000b1390d20b",
     "api_version": "2026-03-11",
-    "note": "The page is re-read with sdk.fetch (webhook is a ping); its parent data source picks the rule: SOWs (Deal relation 'Deal') or Agreement Pipeline (relation 'Deals', also needs Status Signed and Category Client; TKT-1089). The Deal write uses the Notion update_database_item action. Deal lifecycle: esignatures-status-to-notion sets 'In signing' when the agreement is sent, this workflow sets 'Closed Won' when it is signed.",
+    "note": "The page is re-read with sdk.fetch (webhook is a ping); its parent data source picks the rule: SOWs (Deal relation 'Deal') or Agreement Pipeline (relation 'Deals', also needs Status Signed and Counterparty type Client; TKT-1089). The Deal write uses the Notion update_database_item action. Deal lifecycle: esignatures-status-to-notion sets 'In signing' when the agreement is sent, this workflow sets 'Closed Won' when it is signed.",
     "agreement_pipeline_data_source": "42491b07-11ac-8198-b685-000bf23f6e17"
   },
   "zapier_durable_version": "0.14.1",
@@ -37,5 +37,5 @@
     "classic_zap_disabled": "PENDING — turn the classic Zap off in the Zapier UI once repointed. Not machine-verifiable.",
     "status": "durable live and fed by the Notion automation; classic Zap shutdown unconfirmed"
   },
-  "description": "Notion SOWs / Agreement Pipeline automation (agreement signed) -> re-read the page and set its related Deal's Status to Closed Won. Pipeline rows also need Category Client. Skips cleanly on empty pings, archived pages, other data sources, unsigned or non-client pipeline rows, and rows with no Deal relation."
+  "description": "Notion SOWs / Agreement Pipeline automation (agreement signed) -> re-read the page and set its related Deal's Status to Closed Won. Pipeline rows also need Counterparty type Client. Skips cleanly on empty pings, archived pages, other data sources, unsigned or non-client pipeline rows, and rows with no Deal relation."
 }
