@@ -1,7 +1,7 @@
 {
   "name": "drive-screenshot-to-xero-sales-invoice",
   "workflow_id": "019fd190-ba8f-73be-a6c0-555cc4c79f68",
-  "current_version_id": "01a20cae-726e-7492-b5ed-5a52e5f91c81",
+  "current_version_id": "01a21b9d-9372-770f-bf36-c9d9498da22f",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AVr5t2p1OaZ_8JkxYlKJdQ",
   "enabled": true,
   "is_private": false,
@@ -86,7 +86,7 @@
     "model_change": "Classic Zap pinned OpenAI gpt-5.4-mini explicitly (provider_id/model_id on AI by Zapier). This migration uses the repo's tier-sentinel convention instead (advanced/auto), chosen after A/B testing per the ai_model note above rather than carried over unexamined."
   },
   "created_at": "2026-08-05T10:55:50.928Z",
-  "version_created_at": "2026-11-24T08:31:30.705Z",
+  "version_created_at": "2026-11-27T06:07:23.139Z",
   "csv_input": {
     "added": "2026-10-06",
     "download": "sdk.fetch GET https://www.googleapis.com/drive/v3/files/{id}?alt=media&supportsAllDrives=true on the gdrive connection (Relay); verified the Drive API answers through this connection with the CLI before shipping.",

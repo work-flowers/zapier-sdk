@@ -1,7 +1,7 @@
 {
   "name": "deal-won-to-newsletter-subscriber",
   "workflow_id": "019febf8-3292-7656-81c7-1282de5e0937",
-  "current_version_id": "01a2102f-ce06-73cf-a75c-c961f91f832a",
+  "current_version_id": "01a21b9d-742b-7298-b0da-69a5e7273251",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AewcWF109tWHfnuXqx79yw",
   "enabled": true,
   "is_private": false,
@@ -66,6 +66,6 @@
     "typecheck": "tsc --strict --skipLibCheck clean"
   },
   "created_at": "2026-08-10T13:58:00.000Z",
-  "version_created_at": "2026-11-25T00:51:38.918Z",
+  "version_created_at": "2026-11-27T06:07:13.671Z",
   "description": "Notion Deal Won webhook -> subscribe the deal's contact email(s) to the Buttondown newsletter."
 }

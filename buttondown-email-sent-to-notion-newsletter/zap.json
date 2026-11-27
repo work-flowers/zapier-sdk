@@ -1,7 +1,7 @@
 {
   "name": "buttondown-email-sent-to-notion-newsletter",
   "workflow_id": "019febf8-2485-77fe-a81b-7db323701ff6",
-  "current_version_id": "01a20a94-9fe8-726a-9f92-e96e31f9a231",
+  "current_version_id": "01a21b9c-d05a-7ca6-80ce-bce3dd4fa102",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AR28ffoWa-QdV0xr1JSgIQ",
   "enabled": true,
   "is_private": false,
@@ -74,7 +74,7 @@
     "note": "An earlier main-path run (019febe9-8c3f-7006-964c-0c3f6feaa378) stalled in `started` with zero recorded operations and never completed. The identical code and input finished in seconds on retry, so this was a transient run-durable sandbox stall, not a workflow defect."
   },
   "created_at": "2026-08-10T13:58:00.000Z",
-  "version_created_at": "2026-11-23T22:44:02.394Z",
+  "version_created_at": "2026-11-27T06:06:31.766Z",
   "description": "Buttondown email sent -> set Status=Sent and Send Date on the Notion Newsletter Issues page, resolved via the Email Newsletter ID Mapping Table.",
   "cutover": {
     "status": "complete \u2014 2026-08-10, confirmed by Dennis.",

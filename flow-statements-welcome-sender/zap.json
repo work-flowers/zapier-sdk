@@ -1,7 +1,7 @@
 {
   "name": "flow-statements-welcome-sender",
   "workflow_id": "01a16861-a9b3-7273-b340-6021abe2d66a",
-  "current_version_id": "01a18fa1-f0f2-7cf6-8e3d-f2018bc64873",
+  "current_version_id": "01a21b9e-1797-755e-a07a-ca4f6a088176",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASYlNr6VP-QQvHS-NBx02A",
   "enabled": true,
   "is_private": false,

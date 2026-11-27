@@ -1,7 +1,7 @@
 {
   "name": "contact-us-form-to-notion-contact",
   "workflow_id": "019fff93-c3ca-7c22-b2a0-80891e4c169d",
-  "current_version_id": "01a00955-7223-7678-be92-d026c159f36f",
+  "current_version_id": "01a21b9d-0f48-77be-9282-866ffe61bae3",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYbfhf7p-bPjqmN8MnU6rQ",
   "enabled": true,
   "is_private": false,
@@ -46,7 +46,7 @@
     "@zapier/zapier-sdk": "0.115.1"
   },
   "created_at": "2026-08-14T09:21:41.836Z",
-  "version_created_at": "2026-08-16T06:49:49.973Z",
+  "version_created_at": "2026-11-27T06:06:48.900Z",
   "replaces_classic_zap": "When a new Contact Us form submission is created, save to Notion",
   "cutover": {
     "classic_zap_disabled": "PENDING — URGENT: both Zaps subscribe to the same form, so submissions are double-processed until the classic Zap is off (this durable dedupes via the email Table; the classic Zap creates blindly). Not machine-verifiable.",
