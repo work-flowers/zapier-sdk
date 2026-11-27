@@ -25,6 +25,7 @@
     "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection",
     "TableCLIAPI": "search_or_write/find_record + write/update_record — Zapier Tables need no connection"
   },
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). First attempted in PR #332, whose publish run stopped at an earlier Zap before reaching this one; shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",

@@ -1,7 +1,7 @@
 {
   "name": "start-a-timer-from-knoxx-notion-task",
   "workflow_id": "01a0f05b-ba10-76f3-9fc1-a596551d4db2",
-  "current_version_id": "01a180b3-cfa8-7561-ba7f-a7f607bf6711",
+  "current_version_id": "01a21032-38d5-72b2-bb96-551e419bfc9a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AYPMY-6P-xJaqT0pIV7JIw",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -28,7 +28,8 @@
   },
   "zapier_durable_version": "0.12.6",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.103.0",
+    "zod": "4.3.6"
   },
   "dependencies_note": "zod is gone: the payload is extracted defensively by hand and nothing was being validated by the z.unknown() the sibling carries.",
   "external_ids": {

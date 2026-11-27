@@ -1,12 +1,12 @@
 {
   "name": "sow-signed-to-deal-won",
   "workflow_id": "019fff93-afb5-7bc2-9956-21cd2711e24d",
-  "current_version_id": "019fff99-2e4c-7fc5-8a8d-151000db49d4",
+  "current_version_id": "01a2102f-d3df-7c08-a21f-dc5e7f6161d0",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AZjwYOCHTMS6jx2Wmm_eGg",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -29,7 +29,7 @@
     "@zapier/zapier-sdk": "0.99.0"
   },
   "created_at": "2026-08-14T09:21:36.695Z",
-  "version_created_at": "2026-08-14T09:27:36.900Z",
+  "version_created_at": "2026-11-25T00:51:40.568Z",
   "replaces_classic_zap": "SOW Signed -> Mark Deal as Won",
   "cutover": {
     "notion_sows_automation_repointed": "DONE — confirmed 2026-11-02: the Notion SOWs automation (32891b07-11ac-80a2-82c6-004def8c7cb8) posted the Sakana AI SOW to this workflow's webhook_url and DEAL-85 closed.",

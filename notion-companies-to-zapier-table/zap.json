@@ -1,11 +1,11 @@
 {
   "name": "notion-companies-to-zapier-table",
   "workflow_id": "019f735e-b5fa-7bf1-be8b-82f35858b211",
-  "current_version_id": "019fffbb-6009-7c29-9db8-cef6a5e97694",
+  "current_version_id": "01a2102f-c998-79b9-aeda-686dcd26ab94",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AXhKjw5csbTysoZ2vuOC1g",
   "enabled": true,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {
@@ -20,6 +20,9 @@
     "@zapier/zapier-sdk": "0.80.0"
   },
   "created_at": "2026-07-18T03:56:54.676Z",
-  "version_created_at": "2026-08-14T10:04:57.871Z",
-  "description": "Mirror Notion Companies records into Zapier Table 01JM8PH8YM93A482M8BFZ6WKW6, keyed on Notion Page ID. Race-safe: webhook is a ping only; re-fetches page state, guards on last_edited_time, dedupes racing creates, reconciles after 20s. Skips empty pings of the catch URL. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/notion-companies-to-zapier-table"
+  "version_created_at": "2026-11-25T00:51:37.696Z",
+  "description": "Mirror Notion Companies records into Zapier Table 01JM8PH8YM93A482M8BFZ6WKW6, keyed on Notion Page ID. Race-safe: webhook is a ping only; re-fetches page state, guards on last_edited_time, dedupes racing creates, reconciles after 20s. Skips empty pings of the catch URL. Source of truth: https://github.com/work-flowers/zapier-sdk/tree/main/notion-companies-to-zapier-table",
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
+  }
 }

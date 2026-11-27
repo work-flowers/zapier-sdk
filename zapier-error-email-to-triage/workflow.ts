@@ -255,9 +255,12 @@ function extractAlert(raw: unknown): { alert: Alert } | { skip: string } {
   const body = firstString(m.body_plain, m.text_body, m.body) ?? "";
   const parsed = parseAlertBody(body);
   if (kind === "needs_review") {
-    // No error text to read, so check the template another way: the approval
-    // link is what makes this the diagnosis email.
-    if (!/agma_approval_request/.test(body)) parsed.workflowId = null;
+    // No error text to read, so check the template another way: the review
+    // link is what makes this the diagnosis email. Its `source` is
+    // `agma_approval_request` when a fix awaits approval, and
+    // `agma_escalation` when Zapier could not fix the run itself (first seen
+    // 2026-11-20, supercut-to-youtube).
+    if (!/agma_(approval_request|escalation)/.test(body)) parsed.workflowId = null;
     parsed.message = NEEDS_REVIEW_MESSAGE;
   }
   if (!parsed.workflowId || !parsed.message) {

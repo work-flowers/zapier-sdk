@@ -22,6 +22,7 @@
       "version": "2.39.1"
     }
   },
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). First attempted in PR #332, whose publish run stopped at an earlier Zap before reaching this one; shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.3.6",

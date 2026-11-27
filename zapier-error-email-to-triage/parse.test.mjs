@@ -91,6 +91,14 @@ check("needs-review: own alert skipped; changed template throws", () => {
   assert.throws(() => t.extractAlert(drift), /did not parse/);
 });
 
+check("needs-review: escalation variant (agma_escalation) parses like an approval request", () => {
+  const esc = fixture("needs-review.json");
+  esc.body_plain = esc.body_plain.replace(/agma_approval_request/g, "agma_escalation");
+  const { alert } = t.extractAlert(esc);
+  assert.equal(alert.kind, "needs_review");
+  assert.equal(alert.workflowId, "019fa877-c2c2-72aa-962d-525aa58ebf0e");
+});
+
 check("alreadyCounted: same run start minute only, and only when the run was found", () => {
   // Notion hands Last Seen back truncated to the minute.
   assert.equal(t.alreadyCounted("2026-11-19T06:49:00.000+00:00", "2026-11-19T06:49:29.308Z", true), true);

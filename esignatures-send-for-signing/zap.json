@@ -6,12 +6,12 @@
       "name": "sow-send-for-signing",
       "entry_file": "workflow.sow.ts",
       "workflow_id": "019fcc6b-7cd4-7ad7-a75a-f1deee3d3669",
-      "current_version_id": "01a211e0-231a-71cf-b960-0c8e7be07846",
+      "current_version_id": "01a21394-b996-7098-bf81-bd1ca24e99e6",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AUy6Fmun9xI3-Y7udady-g",
       "enabled": true,
       "is_private": false,
       "trigger": {
-        "selected_api": "WebHookCLIAPI@1.1.1",
+        "selected_api": "WebHookCLIAPI@1.2.2",
         "action": "hook_v2",
         "authentication_id": null,
         "params": {},
@@ -20,7 +20,7 @@
         "webhook_url_note": "This is the URL the Notion SOWs `Send for signing` button must POST to. It is NOT returned at get-workflow's top level — it lives at `triggers[0].details.webhook_url`. The `trigger_url` above is Zapier-internal and requires a JWT; do not point Notion at it."
       },
       "created_at": "2026-08-04T10:57:04.213Z",
-      "version_created_at": "2026-11-25T08:43:53.101Z",
+      "version_created_at": "2026-11-25T16:40:44.859Z",
       "replaces_classic_zap": "Send SOW for Signing",
       "description": "Notion SOWs 'Send for signing' button -> eSignatures draft contract built from the SOW page body, contract URL written back and Status set to Ready to send. The linked Deal moves to In signing in esignatures-status-to-notion, on the real send."
     },
@@ -28,12 +28,12 @@
       "name": "project-addendum-send-for-signing",
       "entry_file": "workflow.addendum.ts",
       "workflow_id": "019fcc6b-8b6e-7908-aad6-35e2965037a2",
-      "current_version_id": "01a211e0-5d70-73a6-adee-c4431f613c1d",
+      "current_version_id": "01a21394-b9a8-7737-a4fd-f98ebd22eb5d",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AePG0VTqs8lhyKd8bKmtHg",
       "enabled": true,
       "is_private": false,
       "trigger": {
-        "selected_api": "WebHookCLIAPI@1.1.1",
+        "selected_api": "WebHookCLIAPI@1.2.2",
         "action": "hook_v2",
         "authentication_id": null,
         "params": {},
@@ -42,7 +42,7 @@
         "webhook_url_note": "Target for the Notion Project Addendums `Send for signing` button. Same warning as above — not `trigger_url`."
       },
       "created_at": "2026-08-04T10:57:07.951Z",
-      "version_created_at": "2026-11-25T08:44:08.052Z",
+      "version_created_at": "2026-11-25T16:40:44.612Z",
       "replaces_classic_zap": "Send Project Addendum for Signing",
       "description": "Notion Project Addendums 'Send for signing' button -> eSignatures draft contract built from the addendum page body, addressed to the Consultant."
     }
@@ -72,7 +72,10 @@
       "datasource_id": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
       "datasource_name": "SOWs",
       "name_note": "Named `SOWs`, not \"Scope of Work Database\" as the classic Zap's parammap labelled it.",
-      "properties_written": ["Status (status) = \"Ready to send\" (was \"Sent for signature\" until 2026-11-25)", "eSignature contract (url)"],
+      "properties_written": [
+        "Status (status) = \"Ready to send\" (was \"Sent for signature\" until 2026-11-25)",
+        "eSignature contract (url)"
+      ],
       "properties_read": [
         "Agreement Name (title)",
         "Signatory Name (rollup via Counterparty signatory -> title)",
@@ -83,8 +86,14 @@
     "project_addendums": {
       "datasource_id": "46234707-641a-4aa4-96f6-295554e6543f",
       "datasource_name": "Project Addendums",
-      "properties_written": ["eSignatures Contract (url). Status is left alone (was set to \"Sent for signing\" until 2026-11-25); the data source has no pre-send option"],
-      "properties_read": ["SOW Name (rollup via Client SOW -> title)", "Consultant (person, limit 1)", "Client SOW (relation)"]
+      "properties_written": [
+        "eSignatures Contract (url). Status is left alone (was set to \"Sent for signing\" until 2026-11-25); the data source has no pre-send option"
+      ],
+      "properties_read": [
+        "SOW Name (rollup via Client SOW -> title)",
+        "Consultant (person, limit 1)",
+        "Client SOW (relation)"
+      ]
     },
     "deals": {
       "datasource_id": "21a91b07-11ac-808d-9657-000b1390d20b",
@@ -111,7 +120,10 @@
     }
   },
   "zapier_durable_version": "0.12.3",
-  "dependencies": { "@zapier/zapier-sdk": "0.93.0", "zod": "4.4.3" },
+  "dependencies": {
+    "@zapier/zapier-sdk": "0.93.0",
+    "zod": "4.4.3"
+  },
   "live_runs": {
     "note": "Verified 2026-08-04 with `run-durable` against purpose-made scratch records (since every real mapped record is a live client agreement). Scratch pages and their mapping rows were deleted afterwards; the three eSignatures drafts they produced are listed in the README for manual deletion.",
     "runs": [
@@ -129,7 +141,10 @@
         "case": "retry idempotency",
         "outcome": "a re-run after a mid-flow failure returned tableRowCreated:false — it reused the existing mapping row rather than duplicating it"
       },
-      { "case": "empty ping", "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}}, no error raised" }
+      {
+        "case": "empty ping",
+        "outcome": "{\"skipped\":\"empty-payload\"} on {\"querystring\":{}}, no error raised"
+      }
     ]
   },
   "cutover": {

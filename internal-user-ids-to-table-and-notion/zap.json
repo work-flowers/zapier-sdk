@@ -1,5 +1,5 @@
 {
-  "note": "One shared sync.ts deployed as FIVE workflows \u2014 one per source system. Each deployment publishes its own workflow.<source>.ts as workflow.ts plus sync.ts verbatim. Republish all five together whenever sync.ts changes.",
+  "note": "One shared sync.ts deployed as FIVE workflows — one per source system. Each deployment publishes its own workflow.<source>.ts as workflow.ts plus sync.ts verbatim. Republish all five together whenever sync.ts changes.",
   "deployments": [
     {
       "name": "internal-user-ids-slack",
@@ -40,11 +40,11 @@
       "source": "linear",
       "entry_file": "workflow.linear.ts",
       "workflow_id": "019f9c3e-8c90-7a94-a710-6d86600858e4",
-      "current_version_id": "019f9c3f-d170-7cba-b97f-799bdac4b6a3",
+      "current_version_id": "01a2102f-ca64-72e8-a9d8-86aa3ce0384c",
       "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ae-1Qoz3F34YNq5LHrjKFw",
       "enabled": true,
       "trigger": {
-        "selected_api": "WebHookCLIAPI@1.1.1",
+        "selected_api": "WebHookCLIAPI@1.2.2",
         "action": "hook_v2",
         "authentication_id": null,
         "status": "active",
@@ -52,7 +52,7 @@
         "webhook_url_note": "This is the target for Linear's outgoing webhook (Linear > Settings > API > Webhooks). It is NOT returned by get-workflow's top level — it lives at `triggers[0].details.webhook_url`. The `trigger_url` above is the durable's internal endpoint and requires a JWT; do not point Linear at it."
       },
       "created_at": "2026-07-26T02:26:12.754Z",
-      "version_created_at": "2026-07-26T02:27:35.920Z",
+      "version_created_at": "2026-11-25T00:51:37.863Z",
       "description": "Linear user webhook -> Linear User ID on the User IDs Table + Notion People row."
     },
     {

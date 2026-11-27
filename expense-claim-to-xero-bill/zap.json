@@ -1,7 +1,7 @@
 {
   "name": "expense-claim-to-xero-bill",
   "workflow_id": "01a116a3-c22f-75b3-b5d8-b59a927e753b",
-  "current_version_id": "01a116cd-fa5d-7b15-b104-e3c67f8b6a4d",
+  "current_version_id": "01a21035-0cad-72e1-a49e-b89284ac261a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AbTAJSQ0PeEufWnhLrLbFg",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -25,7 +25,8 @@
   },
   "zapier_durable_version": "0.12.6",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.103.0",
+    "zod": "4.3.6"
   },
   "notion": {
     "expense_claims_data_source": "4c0a9038-54fc-4643-a63b-df4e52139219",

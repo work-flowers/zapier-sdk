@@ -1,12 +1,12 @@
 {
   "name": "notion-blog-post-to-hero-image",
   "workflow_id": "019fffd7-8cfe-74dd-8b2a-db2d9519a86d",
-  "current_version_id": "019fffd7-e519-7100-91c9-40e78ea2afae",
+  "current_version_id": "01a2102f-cf1e-7834-b78a-760f4668a8b2",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac2Pej0ma_rCl5MDIG-BYQ",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
