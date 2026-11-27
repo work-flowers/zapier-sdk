@@ -31,7 +31,7 @@ The search only narrows what Gmail polls. `extractAlert()` re-checks the exact s
 The email names no error. It has no `Workflow:` line and no `Error` block, only a "Review workflow" link, `zapier.com/workflow/<id>/v/<version>?…&source=agma_approval_request`. So:
 
 - The workflow id comes from that link, and the Zap name from the subject.
-- The template check is the `agma_approval_request` marker. Without it the email throws, like any other alert that no longer parses.
+- The template check is the link's `source` marker: `agma_approval_request` when a fix awaits approval, or `agma_escalation` when Zapier could not fix the run itself (first seen 2026-11-20 on supercut-to-youtube; shipped by a direct publish that day and committed here on 2026-11-27). Without either the email throws, like any other alert that no longer parses.
 - The error comes from the run lookup, as for the other alerts. A found run gives the same signature a `had an error` email would, so both kinds land on one ticket.
 - When the run can't be found, the message is a fixed `Zapier diagnosed a failed run and wants a fix approved in the editor`, with Error Type `Needs review`. Every such alert for a Zap then shares one ticket.
 

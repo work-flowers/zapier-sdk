@@ -1,7 +1,7 @@
 {
   "name": "agent-chat-session-to-notion",
   "workflow_id": "01a03cdd-a9f7-72be-a1b5-dd45f0b14ffe",
-  "current_version_id": "01a03ce4-b8f3-7a84-90b4-727a6e670241",
+  "current_version_id": "01a21030-4500-7a7e-bb8a-e23f22f32f5a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ATlmsO3syDeDn2pxUiKcsw",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},

@@ -1,7 +1,7 @@
 {
   "name": "notion-button-to-skills-sync",
   "workflow_id": "01a0fb96-6594-71c4-a0a7-49d520aa622a",
-  "current_version_id": "01a0fb96-9fea-7d46-9725-2e9f642e9ca9",
+  "current_version_id": "01a21033-28eb-7baa-a7cd-f88774b4f905",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AdPKuX1RHJVm8bMtgfaKuA",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -25,7 +25,8 @@
   "connections_note": "GitHubCLIAPI connection \"GitHub denchiuten #3\". Used only through sdk.fetch: the GitHub app has no workflow-dispatch action. Verified 2026-10-02 with a read of the workflow and a live dispatch. No Notion connection: the workflow reads only the button payload.",
   "zapier_durable_version": "0.12.6",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.103.0",
+    "zod": "4.3.6"
   },
   "external_ids": {
     "github_repo": "work-flowers/synced-skills",

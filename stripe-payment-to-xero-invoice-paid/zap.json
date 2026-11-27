@@ -1,12 +1,12 @@
 {
   "name": "stripe-payment-to-xero-invoice-paid",
   "workflow_id": "019fca55-0aeb-7898-b5f1-298e4de3b657",
-  "current_version_id": "019fca55-7a33-72a2-805b-76512873c547",
+  "current_version_id": "01a21070-acb0-73ed-8d84-23106dd092d5",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ach0L6lLYmG_BwUYqn3tDQ",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "StripeCLIAPI@2.25.2",
+    "selected_api": "StripeCLIAPI@2.25.5",
     "action": "new_payment",
     "authentication_id": "024d9d46-9e33-89c7-bfec-e03f8e7a2dd0",
     "authentication_note": "Stripe dennis@work.flowers — the exact connection/version the classic Zap used. NOT the other similarly-named connection in the account ('Stripe dennis@work.flowers #2', StripeCLIAPI@2.25.1) — do not confuse the two on any future edit.",
@@ -99,5 +99,5 @@
     ]
   },
   "created_at": "2026-08-04T01:13:18.829Z",
-  "version_created_at": "2026-08-04T01:13:18.829Z"
+  "version_created_at": "2026-11-25T02:02:29.945Z"
 }

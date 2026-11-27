@@ -1,7 +1,7 @@
 {
   "name": "supercut-to-youtube",
   "workflow_id": "01a1f6dd-198a-722f-96e6-e11cecdaea47",
-  "current_version_id": "01a1f747-547f-7282-8f34-9396b2c9be21",
+  "current_version_id": "01a21047-3bac-7494-84aa-1cabd682632c",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AmndzWRNVvieWsLHdkhzkOI",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -27,7 +27,13 @@
   "connections_note": "supercut is an API by Zapier connection holding Dennis's personal Supercut token (sk_u_..., the one the supercut-sync worker uses); /download needs a personal token. youtube is the workFlowers channel (UCbrz9V64Z2x5OBveDo5ee4w), the default YouTube connection since 2026-11-20. AI by Zapier and Zapier Tables need no connection.",
   "notion": {
     "data_source": "0f3fea21-11be-4158-ba98-9bb26936db89",
-    "hand_added_properties": ["YouTube Status", "YouTube Video ID", "YouTube URL", "YouTube Error", "YouTube Clients OK"],
+    "hand_added_properties": [
+      "YouTube Status",
+      "YouTube Video ID",
+      "YouTube URL",
+      "YouTube Error",
+      "YouTube Clients OK"
+    ],
     "note": "Supercut Recordings is managed by the supercut-sync Notion Worker. The five YouTube properties were added by hand on 2026-11-20 and are not declared by the worker, so they stay writable. No create_database_item call here, so repo rule 5 does not apply."
   },
   "tables": {

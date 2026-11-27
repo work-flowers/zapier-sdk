@@ -1,7 +1,7 @@
 {
   "name": "notion-review-to-company-logo",
   "workflow_id": "01a07719-c174-780c-b700-5a9a8d342675",
-  "current_version_id": "01a07719-cf84-7db4-9269-600e51826930",
+  "current_version_id": "01a21030-bf48-7cd1-9921-1eb359107cd0",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AV8iJGaTVUZlIQFfl-H5tQ",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},

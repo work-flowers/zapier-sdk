@@ -1,12 +1,12 @@
 {
   "name": "notion-page-deleted-to-zapier-tables",
   "workflow_id": "019fff93-9b7d-7cca-99aa-c8dd80e1739a",
-  "current_version_id": "019fff93-f375-7414-a661-ca066981a7b3",
+  "current_version_id": "01a2102f-d0cc-730b-a98c-596bc2ba9d1d",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AeXbTKpucg8Oun2QexY0qA",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
@@ -33,7 +33,7 @@
     "@zapier/zapier-sdk": "0.99.0"
   },
   "created_at": "2026-08-14T09:21:31.519Z",
-  "version_created_at": "2026-08-14T09:21:54.148Z",
+  "version_created_at": "2026-11-25T00:51:39.653Z",
   "replaces_classic_zap": "Delete Contact, Company or Meeting Note Page from Zapier Table (paths B/C/D — path A, Contacts, was already retired into contact-emails-to-zapier-table on 2026-07-26)",
   "cutover": {
     "notion_webhook_repointed": "PENDING — repoint the Notion integration-webhook subscription that currently posts page.deleted events to the classic Zap's catch URL at this workflow's webhook_url. Notion answers the new URL with a verification ping; the token is readable in that skipped run's input.",

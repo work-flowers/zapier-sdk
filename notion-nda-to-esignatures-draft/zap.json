@@ -1,7 +1,7 @@
 {
   "name": "notion-nda-to-esignatures-draft",
   "workflow_id": "01a0e77a-792a-7c20-8b45-e35aee5b20e4",
-  "current_version_id": "01a0e789-dba2-7e86-b4c2-f0a14522b3a4",
+  "current_version_id": "01a21032-2faa-7a7b-9ba3-f9419f30dc9b",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Af_GrfUiPAquoA_jdGXoeQ",
   "enabled": true,
   "is_private": false,
@@ -12,7 +12,7 @@
     "enable_on_publish": true
   },
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},

@@ -1,12 +1,12 @@
 {
   "name": "notion-newsletter-to-buttondown",
   "workflow_id": "019f0cba-8f96-76a4-8aff-3ec87e9178e4",
-  "current_version_id": "01a15d7e-9617-736b-a1bc-6c83148cc197",
+  "current_version_id": "01a2102f-c95b-7041-b4ec-61e47d5fa8be",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ARcz_XgM1aTd9G3qiaKOlg",
   "enabled": true,
   "is_private": false,
   "trigger": {
-    "selected_api": "WebHookCLIAPI@1.1.1",
+    "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "params": {
       "_zap_static_hook_code": "69e1d85705565ddf"
@@ -19,6 +19,10 @@
     "@zapier/zapier-sdk": "0.70.2"
   },
   "created_at": "2026-06-28T05:36:21.123Z",
-  "version_created_at": "2026-10-21T08:05:39.788Z",
-  "description": "Notion Newsletter Issues page -> Buttondown draft/scheduled email. Native markdown export fixes callouts/columns; create-or-update keyed on the page's Buttondown ID."
+  "version_created_at": "2026-11-25T00:51:37.615Z",
+  "description": "Notion Newsletter Issues page -> Buttondown draft/scheduled email. Native markdown export fixes callouts/columns; create-or-update keyed on the page's Buttondown ID.",
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "buttondown": "02a9a6e8-4c09-8cdb-a798-4d65af16d32a"
+  }
 }
