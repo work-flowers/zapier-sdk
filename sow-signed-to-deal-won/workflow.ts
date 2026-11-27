@@ -11,12 +11,32 @@ const NOTION_CONNECTION = "notion_wf"; // work.flowers workspace connection
 const NOTION_API = "https://api.notion.com/v1";
 const NOTION_VERSION = "2026-03-11";
 
-/** "SOWs" data source — the trigger automation lives on it. */
-const SOWS_DS = "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b";
+/**
+ * The two data sources whose signed rows close a Deal, each with its own Deal
+ * relation name and gate. "SOWs" (legacy, kept until the cutover task moves its
+ * in-flight rows) closes on any posted row with a Deal; "Agreement Pipeline"
+ * (TKT-1089) also needs Status = Signed and Category = Client, since it holds
+ * every kind of agreement. Each source's Notion automation posts here.
+ */
+interface SourceRule {
+  label: string;
+  dealProp: string;
+  requireStatus?: string;
+  requireCategory?: string;
+}
+const SOURCES: Record<string, SourceRule> = {
+  "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b": { label: "SOW", dealProp: "Deal" },
+  "42491b07-11ac-8198-b685-000bf23f6e17": {
+    label: "Agreement",
+    dealProp: "Deals",
+    requireStatus: "Signed",
+    requireCategory: "Client",
+  },
+};
 /** "Deals" data source — where the win is recorded. */
 const DEALS_DS = "21a91b07-11ac-808d-9657-000b1390d20b";
-/** The deal's lifecycle end-state once its SOW is signed. Upstream,
- *  esignatures-send-for-signing sets "In signing" when the SOW goes out. */
+/** The deal's lifecycle end-state once its agreement is signed. Upstream,
+ *  esignatures-status-to-notion sets "In signing" when the agreement goes out. */
 const DEAL_WON_STATUS = "Closed Won";
 
 const InputSchema = z.unknown();
@@ -114,12 +134,14 @@ const workflow = defineDurable<Input, unknown>(
       }
       const p: any = await res.json();
       const props = p.properties ?? {};
+      const dataSourceId = dashUuid(firstString(p.parent?.data_source_id));
+      const dealProp = SOURCES[dataSourceId]?.dealProp ?? "Deal";
       return {
         archived: Boolean(p.archived || p.in_trash),
-        dataSourceId: dashUuid(
-          firstString(p.parent?.data_source_id, p.parent?.database_id),
-        ),
-        dealIds: ((props["Deal"]?.relation ?? []) as any[])
+        dataSourceId,
+        status: firstString(props["Status"]?.status?.name),
+        category: firstString(props["Category"]?.select?.name),
+        dealIds: ((props[dealProp]?.relation ?? []) as any[])
           .map((rel) => dashUuid(firstString(rel?.id)))
           .filter((s) => s !== ""),
         title: ((props["Agreement Name"]?.title ?? props["Name"]?.title ?? []) as any[])
@@ -132,16 +154,29 @@ const workflow = defineDurable<Input, unknown>(
       console.log(`SOW ${sowPageId} is archived/trashed — skipping`);
       return { skipped: "sow-archived", sowPageId };
     }
-    if (sow.dataSourceId && sow.dataSourceId !== SOWS_DS) {
+    // Parent read off the page itself (never the payload). An empty id is
+    // treated as unknown, not as a pass: the old check let it through.
+    const rule = SOURCES[sow.dataSourceId];
+    if (!rule) {
       console.log(
-        `page ${sowPageId} belongs to data source ${sow.dataSourceId}, not SOWs — skipping`,
+        `page ${sowPageId} belongs to data source ${sow.dataSourceId || "(unknown)"}, not SOWs or Agreement Pipeline — skipping`,
       );
-      return { skipped: "not-a-sow", sowPageId, dataSourceId: sow.dataSourceId };
+      return { skipped: "not-an-agreement", sowPageId, dataSourceId: sow.dataSourceId };
+    }
+    if (rule.requireStatus && sow.status !== rule.requireStatus) {
+      console.log(`${rule.label} ${sowPageId} is "${sow.status}", not ${rule.requireStatus} — skipping`);
+      return { skipped: "not-signed", sowPageId, status: sow.status };
+    }
+    if (rule.requireCategory && sow.category !== rule.requireCategory) {
+      console.log(
+        `${rule.label} ${sowPageId} has Category "${sow.category}", not ${rule.requireCategory} — skipping`,
+      );
+      return { skipped: "not-client", sowPageId, category: sow.category };
     }
     if (!sow.dealIds.length) {
       // Normal, not an error — not every SOW hangs off a deal (parity with the
       // classic Zap's "Related Deal Exists" filter).
-      console.log(`SOW ${sowPageId} has no Deal relation — nothing to mark won`);
+      console.log(`${rule.label} ${sowPageId} has no Deal relation — nothing to mark won`);
       return { skipped: "no-deal-relation", sowPageId };
     }
 
@@ -169,6 +204,7 @@ const workflow = defineDurable<Input, unknown>(
     );
 
     return {
+      source: rule.label,
       sowPageId,
       sowTitle: sow.title,
       dealId,

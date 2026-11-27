@@ -1,15 +1,20 @@
 # esignatures-status-to-notion
 
 eSignatures fires; we look the contract id up in the mapping Table to find which Notion record it
-belongs to, and move that record's status on. On signature, the executed PDF is filed on the record
-too — which the classic Zap never actually did.
+belongs to, and move that record's status on. Since TKT-1089 the main target is **Agreement
+Pipeline**: Status → `Sent for signature` / `Signed`, `Sent date` / `Signed date` stamped, and on send
+a Client agreement's Deal moves to `In signing`. **Pipeline rows never get the PDF** (see
+[Agreement Pipeline](#agreement-pipeline-tkt-1089)). The legacy SOW, Project Addendum and NDA records
+still get their executed PDF filed on signature, which the classic Zap never actually did.
 
 **Status:** ✅ Enabled — and unlike the send pair, **these two are already live**: they claimed
 their eSignatures triggers at publish time, so they run in parallel with the classic Zaps as of
 2026-08-04. That is deliberate and benign; see [Cutover](#cutover). Replaces the classic
 **Update SOW / Project Addendum Status When Sent for Signature** and **Signed SOWs / Project
 Addenda** Zaps. Since 2026-09-28 it also moves **NDAs** rows (from
-[`notion-nda-to-esignatures-draft`](../notion-nda-to-esignatures-draft/)) to `Sent` / `Signed`.
+[`notion-nda-to-esignatures-draft`](../notion-nda-to-esignatures-draft/)) to `Sent` / `Signed`, and
+since TKT-1089 **Agreement Pipeline** rows (mapping rows with Agreement Type `Agreement`, written by
+`agreement-send-for-signing`, TKT-1088).
 
 **Durable ×2.** One shared [`shared.ts`](shared.ts) deployed twice:
 
@@ -34,22 +39,27 @@ flowchart TD
   P -- yes --> SKIP(["skip — empty-payload"])
   P -- no --> ID["🔑 contract id<br/><i>.contract.id OR .id — the triggers differ</i>"]
   ID --> TBL{"mapping row found?"}
-  TBL -- no --> URLQ{"🔎 contract URL property<br/>contains the id?<br/><i>SOWs / Addendums / NDAs</i>"}
+  TBL -- no --> URLQ{"🔎 contract URL property<br/>contains the id?<br/><i>Pipeline / SOWs / Addendums / NDAs</i>"}
   URLQ -- "none" --> SKIP2(["skip — no-mapping-row<br/><i>not one of ours</i>"])
   URLQ -- "2+" --> ERR(["❌ throw — ambiguous"])
-  URLQ -- "1" --> BF["🗂 backfill mapping row"] --> TY
-  TBL -- yes --> TY{"Agreement Type?"}
-  TY -- "unrecognised" --> SKIP3(["skip — unknown-agreement-type"])
-  TY -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
-  TY -- "Project Addendum" --> S2["📝 Status → Sent for signing / Executed"]
-  TY -- "NDA" --> S3["📝 Status → Sent / Signed<br/>+ Sent Date / Signed Date (SGT)"]
-  S1 --> SD{"sent phase<br/>and SOW has a Deal?"}
-  SD -- yes --> DEAL["📝 Deal Status → In signing<br/><i>reads the SOW page for its Deal</i>"] --> PH
+  URLQ -- "1" --> BF["🗂 backfill mapping row"] --> RP
+  TBL -- yes --> TY{"Agreement Type<br/>recognised?"}
+  TY -- no --> SKIP3(["skip — unknown-agreement-type"])
+  TY -- yes --> RP["📖 read the page<br/><i>its parent data source picks the type,<br/>over the mapping row's</i>"]
+  RP --> TYPE{"type"}
+  TYPE -- "Agreement (pipeline)" --> S0["📝 Status → Sent for signature / Signed<br/>+ Sent date / Signed date (SGT)"]
+  TYPE -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
+  TYPE -- "Project Addendum" --> S2["📝 Status → Sent for signing / Executed"]
+  TYPE -- "NDA" --> S3["📝 Status → Sent / Signed<br/>+ Sent Date / Signed Date (SGT)"]
+  S0 --> SD{"sent phase, Deal linked<br/><i>(pipeline: and Category = Client)</i>?"}
+  S1 --> SD
+  SD -- yes --> DEAL["📝 Deal Status → In signing"] --> PH
   SD -- no --> PH{"phase == signed?"}
   S2 --> PH
   S3 --> PH
   PH -- no --> DONE["✅ done"]
-  PH -- yes --> URL{"PDF url in payload?"}
+  PH -- "yes, pipeline" --> NOPDF["⏭ no PDF — pdfSkipped<br/><i>Gmail → Drive → register files it</i>"] --> DONE
+  PH -- "yes, legacy type" --> URL{"PDF url in payload?"}
   URL -- no --> NF["⚠️ pdfError: extract-url<br/><i>status already written, not rolled back</i>"] --> DONE
   URL -- yes --> DL["⬇️ sdk.fetch the presigned PDF"]
   DL --> UP["⬆️ Notion single_part file upload"]
@@ -57,13 +67,47 @@ flowchart TD
   AT --> DONE
 ```
 
-**The SOW's Deal moves to `In signing` here, on the real send (since 2026-11-25).**
+## Agreement Pipeline (TKT-1089)
+
+TKT-1085 split agreements into **Agreement Pipeline** (data source
+`42491b07-11ac-8198-b685-000bf23f6e17`, rows we draft, AGR ids) and the **Signed Agreement Register**
+(executed copies, `eb0a6e70-5cf7-4817-8140-d0e44d3ec396`). This Zap writes only the pipeline, never the
+register.
+
+- **Type `Agreement`.** `agreement-send-for-signing` (TKT-1088) writes the mapping row with
+  Agreement Type `Agreement`, the pipeline page id and the contract id, puts the draft link in
+  `eSignatures contract` and sets Status `Ready to send`. This Zap owns `Sent for signature` and
+  `Signed`, and stamps `Sent date` / `Signed date` (SGT).
+- **Deal on send.** When the row has a `Deals` relation **and** `Category` is `Client`, the first
+  linked Deal moves to `In signing`. Other categories (Consultant, Vendor, …) never touch a Deal, and
+  the run output says why in `dealSkipped`.
+- **No PDF (Dennis, 2026-11-26).** The pipeline has no files property. The executed PDF eSignatures
+  emails to each signer is filed by [`gmail-attachments-to-drive-by-type`](../gmail-attachments-to-drive-by-type/)
+  into the Signed Agreements folder, [`drive-signed-agreement-to-notion`](../drive-signed-agreement-to-notion/)
+  creates the register row, and the Agreement File Analyzer agent links it to the pipeline row by the
+  AGR reference in the document. Downloading it here and dropping a second copy in that folder would
+  create a second register row, so a signed pipeline run returns `pdfSkipped:
+  "pdf-filed-by-gmail-chain"` and makes no download.
+- **The page's own data source decides the type.** Every run reads the record (`read-page`) and, when
+  its parent is one of the four data sources, uses that type's property names even if the mapping row
+  says otherwise. Page ids survive a move between databases, so a row the cutover task moves from
+  SOWs or NDAs into the pipeline keeps a mapping row that still says `SOW`/`NDA`; without this it
+  would be written with the old database's names and fail. The output carries `mappedType` when the
+  two differ. A page in an unknown data source keeps the mapped type.
+- **Legacy branches stay until cutover.** SOW, Project Addendum and NDA still resolve and still file
+  the PDF on their own records. The CarTimes SOW (contract `dfd11efe…`) is in flight in the old SOWs
+  database; its mapping row (`SOW`) and its page's parent (SOWs) agree, so it resolves as before. The
+  cutover task removes those branches.
+
+
+**The SOW's Deal moves to `In signing` here, on the real send (since 2026-11-25; pipeline rows since
+TKT-1089, Client category only).**
 [`esignatures-send-for-signing`](../esignatures-send-for-signing/) used to do it when the *draft* was
 created, which was too early: a draft is often exported as a PDF for client review long before it is
 sent. That Zap now sets the SOW to `Ready to send` instead, and this one moves it to
-`Sent for signature`. The webhook carries only the contract, so a sent SOW costs **two more tasks**:
-one read of the SOW page for its `Deal` relation, and one PATCH of the Deal (none when there is no
-Deal). As before the move to this Zap, the Deal is set unconditionally, so a SOW sent against a Deal
+`Sent for signature`. The Deal comes from the `read-page` read every run now makes, so it adds one
+PATCH of the Deal (none when there is no Deal). As before the move to this Zap, a SOW's Deal is set
+unconditionally, so a SOW sent against a Deal
 already `Closed Won` would move it back. [`sow-signed-to-deal-won`](../sow-signed-to-deal-won/) sets
 `Closed Won` again on signature. Verified 2026-11-25 with `run-durable` on a scratch SOW and Deal
 (`dealUpdated` returned, Deal read back as `In signing`).
@@ -131,8 +175,9 @@ it belonged to a real record. That happened to the Sakana AI Vanta amendment on 
 to be replayed by hand inside the PDF URL's 72-hour window.
 
 Since then a miss queries each data source for a record whose contract URL property contains the
-contract id: `eSignature contract` on SOWs, `eSignatures Contract` on Project Addendums,
-`Contract URL` on NDAs (the `urlProp` column of `TYPES`). eSignatures puts the id in the path of both
+contract id: `eSignatures contract` on Agreement Pipeline (since TKT-1089), `eSignature contract` on
+SOWs, `eSignatures Contract` on Project Addendums, `Contract URL` on NDAs (the `urlProp` column of
+`TYPES`). eSignatures puts the id in the path of both
 link forms (`/contracts/<id>` and `/draft_contracts/<id>/edit`), and ids are UUIDs, so `url.contains`
 cannot match another contract.
 
@@ -156,7 +201,7 @@ Verified 2026-08-04 with `run-durable`.
 | `contract_signed`, fallback extraction | URL at `some_unexpected_wrapper.documents[0].totally_unknown_key` still found and filed. |
 | `contract_sent_to_signer`, main path | Nested `{"contract":{"id":…}}` payload resolved, `agreementType: SOW`, Status `Sent for signature`. |
 | Empty ping | `{"skipped":"empty-payload"}` on both deployments, no error raised. |
-| Types | `npm run build` (tsc, durable 0.12.3 + sdk 0.93.0) | Clean |
+| Types | `npm run build` (tsc, durable 0.12.3 + sdk 0.93.0 at the time) | Clean |
 
 Re-verified 2026-09-28 after adding NDAs and restructuring the entry files (deployed deps, durable
 0.12.3 + sdk 0.93.0):
@@ -181,6 +226,35 @@ Verified 2026-11-02 for the URL fallback, with `run-durable` on the deployed dep
 | Empty ping | `{"skipped":"empty-payload"}` |
 | `url.contains` filter on all three data sources' URL properties | Accepted; returns the record on SOWs and NDAs |
 | Types | strict tsc with `--noUnusedLocals` | Clean |
+
+Verified 2026-11-27 for TKT-1089, with `run-durable` on SDK 0.115.1 / durable 0.14.1 (no writes):
+
+| Case | Result |
+| --- | --- |
+| Unknown contract id, both deployments | Table miss, URL fallback across all four data sources (incl. the pipeline's `eSignatures contract` filter) accepted, `{"skipped":"no-mapping-row"}` |
+| CarTimes SOW mapping row | Resolves `SOW` → page `42391b07…2a63`, whose parent is the SOWs data source, so the read-page check keeps `SOW` |
+| Agreement Pipeline schema via the `notion_wf` connection | Readable after the move to the restricted teamspace; `Status` options, `Sent date`, `Signed date`, `eSignatures contract`, `Category`, `Deals` all as coded |
+| Types, analyzer | strict tsc with `--noUnusedLocals` clean; `validate-workflow` no issues on both entry files |
+
+**Not yet verified live:** a real pipeline send and signature (status, dates, Deal move, no PDF). That
+is the TKT-1089 end-to-end test, which needs TKT-1088's send Zap.
+
+## Cost
+
+About 2 real runs a month per deployment (3 sent and 4 signed runs between 2026-10-05 and
+2026-11-27, from `list-workflow-runs`). Table reads are free.
+
+| Path | Tasks per run |
+| --- | --- |
+| Empty ping, or Table miss with nothing found | 0 / 4 (the miss queries 4 data sources) |
+| Sent, pipeline or SOW with a Deal | 3: read page, status PATCH, Deal PATCH |
+| Sent, no Deal / not Client / Addendum / NDA | 2: read page, status PATCH |
+| Signed, pipeline | 2: read page, status PATCH (no PDF) |
+| Signed, legacy type with PDF | 6: read page, status PATCH, download, create upload, send bytes, attach |
+| Table miss resolved by URL | add 4 queries; the backfill write is a free Table call |
+
+So roughly 10 tasks a month. TKT-1089 added the `read-page` call to every run (+1 task on Addendum
+and NDA runs and on signed SOW runs); it is what makes moved rows resolve to the right properties.
 
 ## Cutover
 
@@ -214,10 +288,14 @@ replay also needs the PDF URL from the event, and it expires 72 hours after sign
 ## Maintainer notes
 
 - **The status option names differ between the data sources** — SOWs uses `Sent for signature`
-  (lowercase s), Project Addendums uses `Sent for signing`, NDAs uses `Sent`. Likewise `Signed`
-  versus `Executed`, and `Signed PDF` versus `Executed Agreement`. A mismatch fails silently, so all
-  of it lives in one config table (`TYPES`). Only NDAs have date properties (`Sent Date`,
-  `Signed Date`), stamped with today in Singapore time from a `ctx.step` clock read.
+  (lowercase s), Project Addendums uses `Sent for signing`, NDAs uses `Sent`, Agreement Pipeline
+  uses `Sent for signature`. Likewise `Signed` versus `Executed`, and `Signed PDF` versus
+  `Executed Agreement` (the pipeline has no files property). A mismatch fails silently, so all of it
+  lives in one config table (`TYPES`). NDAs (`Sent Date`, `Signed Date`) and the pipeline
+  (`Sent date`, `Signed date`, lowercase d) get dates, stamped with today in Singapore time from a
+  `ctx.step` clock read.
+- **Runtime:** SDK 0.115.1 / durable 0.14.1 since TKT-1089 (from 0.93.0 / 0.12.3; Zapier refuses
+  publishes below SDK 0.107.0).
 - **The status is written with a raw `PATCH /v1/pages`** (`{Status: {status: {name}}}`), not
   `update_database_item`, since 2026-09-28. The action's schema cache lags schema changes, and NDAs'
   Status had just been converted from select to status. All three `Status` properties are
@@ -230,6 +308,8 @@ replay also needs the PDF URL from the event, and it expires 72 hours after sign
 - Both triggers take **zero input fields**, so there is nothing to configure and nothing that can be
   mis-shaped into a silent claim failure.
 - The mapping Table is read here and written only to backfill a row the URL fallback resolved.
-  `esignatures-send-for-signing` owns it, and `notion-nda-to-esignatures-draft` adds `NDA` rows. `NDA` is not one of the `Agreement Type`
-  field's static choices (the SDK can't edit a field's choices), but the Table accepts it. Add the
-  choice in the Table UI if you want a coloured chip.
+  `esignatures-send-for-signing` owns it, `notion-nda-to-esignatures-draft` adds `NDA` rows, and
+  `agreement-send-for-signing` (TKT-1088) adds `Agreement` rows. Neither `NDA` nor `Agreement` is one
+  of the `Agreement Type` field's static choices (the SDK can't edit a field's choices), but the
+  Table stores them (checked 2026-11-27: the 2 `NDA` rows read back as written). Add the choices in
+  the Table UI if you want coloured chips.
