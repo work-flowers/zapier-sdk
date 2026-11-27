@@ -1,7 +1,7 @@
 {
   "name": "blog-rss-to-slack",
   "workflow_id": "019fffd7-a3e5-733a-b85b-57bea38537c0",
-  "current_version_id": "019fffd8-2476-7ea4-a305-efffb0027913",
+  "current_version_id": "01a21a9f-58bb-7ef9-b7f5-2a4493d4ff6f",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AQFx0S2rBXyigvvtmoxumQ",
   "enabled": true,
   "is_private": false,
