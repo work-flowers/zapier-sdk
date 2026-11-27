@@ -34,6 +34,7 @@
   "tables": {
     "01JM8PH8YM93A482M8BFZ6WKW6": "[Table] Company IDs — NOT read by this workflow. The classic Zap looked up f11/f7 here; the durable reads the COM-n id and the guard off the Notion page itself, and notion-companies-to-zapier-table mirrors the written id back into f7."
   },
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",

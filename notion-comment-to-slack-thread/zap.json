@@ -25,6 +25,7 @@
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.3.6",

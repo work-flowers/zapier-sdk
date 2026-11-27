@@ -352,7 +352,15 @@ export function resolveTriggerBlock(dir, dep) {
 //
 // publish wants { alias: { connectionId } }; zap.json stores { alias: id } —
 // top-level, or per deployment in a multi-deployment dir when the entry has its
-// own `connections`. Non-string values are repo notes, not bindings.
+// own `connections`. Only a value shaped like a connection id (a UUID, or a
+// legacy numeric id) is a binding; anything else is a repo note. A string
+// note (`"note": "No workflow-body connections…"`) used to be sent to Zapier
+// as `connections.note.connectionId`, which refused the publish and stopped
+// PR #337's run at gws-new-user-provisioning (2026-11-27).
+const CONNECTION_ID_RE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d+)$/i;
+export function isConnectionId(value) {
+  return typeof value === "string" && CONNECTION_ID_RE.test(value.trim());
+}
 export function declaredConnections(dir, dep) {
   const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
   let source = zap.connections;
@@ -362,8 +370,8 @@ export function declaredConnections(dir, dep) {
   }
   const out = {};
   for (const [alias, value] of Object.entries(source || {})) {
-    if (typeof value !== "string") continue;
-    out[alias] = { connectionId: value };
+    if (!isConnectionId(value)) continue;
+    out[alias] = { connectionId: value.trim() };
   }
   return Object.keys(out).length ? out : null;
 }
