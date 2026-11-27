@@ -24,9 +24,9 @@
   "connectionless_apps": {
     "TableCLIAPI": "find_record / update_record — no connection, no task cost"
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "01K8A2KV9X1W95GAB6Y69D7G4C": "Harvest Projects (New) — f1 project_id, f2 client_id, f3 is_active, f4 Name, f5 Project Page ID. f5 is maintained by hand outside this repo and is never written by these Zaps; update_record leaves omitted columns alone (verified 2026-09-30)."
