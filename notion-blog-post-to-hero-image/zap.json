@@ -1,7 +1,7 @@
 {
   "name": "notion-blog-post-to-hero-image",
   "workflow_id": "019fffd7-8cfe-74dd-8b2a-db2d9519a86d",
-  "current_version_id": "01a2102f-cf1e-7834-b78a-760f4668a8b2",
+  "current_version_id": "01a21c16-f9d6-7289-8043-bf481f5c2a3e",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/Ac2Pej0ma_rCl5MDIG-BYQ",
   "enabled": true,
   "is_private": false,

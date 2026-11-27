@@ -1,7 +1,7 @@
 {
   "name": "notion-button-to-skills-sync",
   "workflow_id": "01a0fb96-6594-71c4-a0a7-49d520aa622a",
-  "current_version_id": "01a21033-28eb-7baa-a7cd-f88774b4f905",
+  "current_version_id": "01a21c17-1b49-7f0b-bbbb-d3a7a2c17ed9",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AdPKuX1RHJVm8bMtgfaKuA",
   "enabled": true,
   "is_private": false,

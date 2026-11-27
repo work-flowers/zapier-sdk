@@ -1,7 +1,7 @@
 {
   "name": "harvest-new-project-to-zapier-table",
   "workflow_id": "01a0f071-7aaa-7fec-9343-77dc74adacea",
-  "current_version_id": "01a0f071-b5c4-73c9-8498-78ba1d33c903",
+  "current_version_id": "01a21c16-d386-701d-bb29-760ea967f81a",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/ASyQiiqbZ0vpQjZXDg3lLw",
   "enabled": true,
   "is_private": false,
