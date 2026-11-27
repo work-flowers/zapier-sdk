@@ -26,18 +26,22 @@ until the cutover task retires them. Adding a document type is one entry in `DOC
 
 | Document type | eSignatures shell | Signer 1 | Required before drafting | Title |
 | --- | --- | --- | --- | --- |
-| SOW – Fixed project, SOW – Full retainer, SOW – Support retainer | Scope of Work (`6eaa0583…`) | Signatory contact | Signatory with a name and email | `Scope of Work – <Counterparty>` |
-| Order form | Scope of Work (`6eaa0583…`) | Signatory contact | Signatory with a name and email | `Order Form – <Counterparty>` |
-| Project addendum | Consultant Project Addendum (`443d6bed…`) | Consultant (Notion person) | Consultant with an email, Parent agreement | `Project Addendum – <Counterparty>` |
-| NDA | Mutual NDA (`6325d51d…`) | Signatory contact | Signatory with a name and email, Counterparty | `Mutual NDA – <Counterparty>` |
-| Consulting agreement | Scope of Work (`6eaa0583…`), **interim** | Signatory contact | Signatory with a name and email | `Consulting Agreement – <Counterparty>` |
-| Amendment | Scope of Work (`6eaa0583…`), **interim** | Signatory contact | Signatory with a name and email | `Amendment – <Counterparty>` |
+| SOW – Fixed project, SOW – Full retainer, SOW – Support retainer | Scope of Work (`6eaa0583…`) | Signatory contact | Signatory with a name and email | `Scope of Work – <Counterparty> (AGR-n)` |
+| Order form | Scope of Work (`6eaa0583…`) | Signatory contact | Signatory with a name and email | `Order Form – <Counterparty> (AGR-n)` |
+| Project addendum | Consultant Project Addendum (`443d6bed…`) | Consultant (Notion person) | Consultant with an email, Parent agreement | `Project Addendum – <Counterparty> (AGR-n)` |
+| NDA | Mutual NDA (`6325d51d…`) | Signatory contact | Signatory with a name and email, Counterparty | `Mutual NDA – <Counterparty> (AGR-n)` |
+| Consulting agreement | Scope of Work (`6eaa0583…`), **interim** | Signatory contact | Signatory with a name and email | `Consulting Agreement – <Counterparty> (AGR-n)` |
+| Amendment | Scope of Work (`6eaa0583…`), **interim** | Signatory contact | Signatory with a name and email | `Amendment – <Counterparty> (AGR-n)` |
 
 - **Override email** wins over the Signatory's `Signer email` rollup, and over the Consultant's
   Notion email, on every type.
 - **Counterparty** is the registered legal name, typed by hand. It is signer 1's company and goes
   in the title. It is not derived from `Companies`, which often holds a trading name and has no
   entry for an individual consultant. With no Counterparty, the title uses `Agreement Name`.
+- **The title ends with the row's pipeline ID**, e.g. `Mutual NDA – Acme Pte. Ltd. (AGR-12)`, so
+  the signed copy carries the reference the Agreement File Analyzer links an executed copy by.
+  Without it, the agent falls back to matching on content, which missed AGR-5 in the TKT-1089
+  test. Drafts created before this change keep their old title (eSignatures cannot rename).
 - **Shell templates** (read back 2026-11-27, unchanged): Scope of Work and Consultant Project
   Addendum are exactly `{{contract-body}}`. Mutual NDA is `{{ contract-body }}`, a page break,
   and a *Signatory Details* section with a required *Title / Designation* field for every signer.
