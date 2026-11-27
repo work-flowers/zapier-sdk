@@ -1,7 +1,7 @@
 {
   "name": "agreement-send-for-signing",
   "workflow_id": "01a21af2-c09d-736a-a5a3-fe7b0486163e",
-  "current_version_id": "01a21af2-ef2c-7959-9066-bfb7409c09dc",
+  "current_version_id": "01a21ba4-3613-7fb6-8a7f-6b3b2630afab",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AtiZxCssjDv4KFAgYWh7Gk8",
   "enabled": true,
   "is_private": false,
