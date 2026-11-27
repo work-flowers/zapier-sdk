@@ -27,9 +27,9 @@
     "slack_wf": "020cae54-a27c-86d6-93a9-27b012c17e74",
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "thread_map": "01M1DXXXH3E7K7JWDJYA1R50CF",

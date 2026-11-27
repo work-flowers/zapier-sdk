@@ -28,10 +28,10 @@
   "connectionless_apps": {
     "AICLIAPI": "get_completion — authentication_id \"0\" (Included in Plan), no connection"
   },
-  "zapier_durable_version": "0.12.3",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.94.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "drive_folders": {
     "Notion Setup Session Invoices": "1ptd7K3cVnDG_FZWjq3xxPmKKnbizbJfM"

@@ -42,10 +42,10 @@
     "action_note": "`save_as_draft: \"yes\"` — nothing reaches a signer until a human sends the draft from eSignatures. `test: \"no\"` explicitly. `metadata` = the Notion page id, so a later contract-signed flow can find the row again. The create step runs with maxAttempts 1: create_contract is not idempotent.",
     "output_note": "Verified 2026-09-28: create_contract returns `{data:[{status:\"queued\", data:{contract:{id, draft_contract_url, signers, metadata, …}}}]}` — the same double nesting as the private app. `draft_contract_url` is `https://esignatures.com/draft_contracts/<id>/edit`."
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "live_runs": {
     "note": "2026-09-28 with run-durable against the real Palmera Projects NDA row (3e991b07-11ac-8156-a61d-cde50c151003), at Dennis's request. A draft only; nothing sent.",

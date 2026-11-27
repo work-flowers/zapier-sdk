@@ -28,10 +28,10 @@
     "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
   },
   "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the DESTINATION this workflow creates/updates/deletes mirror events on. Same id gcal-event-updated-to-meeting-note carries on its trigger. `gcal_scw` (dchiuten@securecodewarrior.com) is read-only here: it is the same credential as the trigger, bound as an alias since 2026-10-31 so mirrorSeries can call Google's events.instances for a series master.",
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — source occurrence id -> mirror event id, both directions. SHARED with workflowers-events-to-scw-busy and gcal-block-sweep: it is the loop guard (an incoming event id found in Mirror Event ID is the sync's own output), the update/delete target map, and the change detector. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3, scw_to_wf|wf_to_scw), Status (f4, active|deleted), Start (f5), End (f6), Summary (f7), Source Updated (f8)."

@@ -23,9 +23,9 @@
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0",
+    "@zapier/zapier-sdk": "0.115.1",
     "zod": "4.3.6"
   },
   "notion": {

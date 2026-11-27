@@ -26,9 +26,9 @@
   "connectionless_apps": {
     "TableCLIAPI": "find_record / create_record — Zapier Tables auth is automatic, no connection and no task cost"
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0",
+    "@zapier/zapier-sdk": "0.115.1",
     "zod": "4.3.6"
   },
   "dependencies_note": "zod is gone: the payload is extracted defensively by hand and nothing was being validated by the z.unknown() the sibling carries.",

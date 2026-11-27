@@ -18,10 +18,10 @@
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
   },
   "connections_note": "Xero work.flowers, XeroCLIAPI@2.21.0 — same connection every other Xero Zap in this repo uses. Used twice in the workflow body: once to find the invoice, once to record the payment against it. Not bound on the trigger (Stripe is).",
-  "zapier_durable_version": "0.12.3",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.93.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "version_pinning_note": "Newest versions of each direct dependency published at least 24h before build time, per the Vercel sandbox's pnpm minimumReleaseAge=1440 requirement.",
   "tasks_per_run": {

@@ -33,10 +33,10 @@
     "tier": "standard/auto",
     "why": "Shortening a company name to a slug is a trivial generation task; Standard matched the intent on every verified case and the workflow deterministically re-enforces all naming rules afterwards (normalizeChannelName), so tier only affects word choice."
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.97.1"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "created_at": "2026-08-10",
   "version_created_at": "2026-11-25T00:51:38.616Z",

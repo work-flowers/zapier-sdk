@@ -27,9 +27,9 @@
   "connections_note": "notion_agents is the 'custom-agent-embed' connection on the Notion Agents Unofficial custom integration (App245513CLIAPI@1.0.0, slug notion-agents-unofficial). notion_wf is the standard work.flowers Notion connection used by every Zap in this repo.",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "ai_model": {
     "tier": "standard/auto",
     "why": "Short-summary workload — exactly what Standard is recommended for. Verified on real session transcripts (see README table): summaries were accurate and followed the prompt's format rules at Standard; no capability gap suggesting a higher tier."

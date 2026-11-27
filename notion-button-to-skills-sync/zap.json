@@ -23,9 +23,9 @@
     "github_wf": "02581386-b46a-8abe-ad7a-bb264a3bd2ff"
   },
   "connections_note": "GitHubCLIAPI connection \"GitHub denchiuten #3\". Used only through sdk.fetch: the GitHub app has no workflow-dispatch action. Verified 2026-10-02 with a read of the workflow and a live dispatch. No Notion connection: the workflow reads only the button payload.",
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.103.0",
+    "@zapier/zapier-sdk": "0.115.1",
     "zod": "4.3.6"
   },
   "external_ids": {

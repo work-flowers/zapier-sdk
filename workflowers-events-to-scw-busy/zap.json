@@ -28,10 +28,10 @@
     "gcal_wf": "02a752ba-ba43-86d2-b9f7-dc031d6d1aa5"
   },
   "connections_note": "gcal_scw is the SCW Google Calendar connection 'dchiuten@securecodewarrior.com' (created 2026-08-28) — the DESTINATION this workflow creates/moves/deletes bare Busy blocks on. `gcal_wf` (dennis@work.flowers) is read-only here: it is the same credential as the trigger, bound as an alias since 2026-10-31 so mirrorSeries can call Google's events.instances for a series master.",
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.102.2"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "tables": {
     "01M13QPJ5GRJV33096MBNSN1Q5": "GCal Sync Map — source occurrence id -> mirror event id, both directions. SHARED with scw-events-to-workflowers-block and gcal-block-sweep: loop guard, update/delete target map, change detector. Columns: Source Event ID (f1), Mirror Event ID (f2), Direction (f3), Status (f4), Start (f5), End (f6), Summary (f7 — the SOURCE title, for debugging; the mirror itself is always 'Busy'), Source Updated (f8)."

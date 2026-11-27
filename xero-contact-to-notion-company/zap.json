@@ -22,8 +22,8 @@
     "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17"
   },
   "connections_note": "notion_wf is the work.flowers workspace connection. NEVER bind the Knoxx connection (02b95b31-c152-8800-9036-1107e08f70da) — it points at a client workspace and cannot see work.flowers databases.",
-  "zapier_durable_version": "0.12.3",
-  "dependencies": { "zod": "4.4.3", "@zapier/zapier-sdk": "0.93.0" },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": { "zod": "4.4.3", "@zapier/zapier-sdk": "0.115.1" },
   "purpose": {
     "direction": "XERO -> NOTION. The complement of xero-contact-from-notion-deal, which covers Notion -> Xero.",
     "the_case": "A contact is created in Xero by other means — typically a transaction arrives from a new vendor and the contact is made by hand. If a Company record already exists in Notion, its Notion Company ID (the `ID` property, e.g. COM-766) is pasted into that Xero contact's ACCOUNT NUMBER, and this workflow completes the link. Nothing changes on the Notion side, so no Notion webhook fires and the other durable never runs — which is why this cannot be folded into it."

@@ -38,10 +38,10 @@
     "decided": "2026-09-06 by Dennis",
     "note": "Every run sets the icon, replacing hand-picked custom emoji or uploaded-file icons on a re-trigger. The only skipped write is a byte-identical one. The alternative considered and rejected was fill-only (set when absent, refresh only our own logo.dev URL)."
   },
-  "zapier_durable_version": "0.12.6",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.3.6",
-    "@zapier/zapier-sdk": "0.103.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "cutover": {
     "classic_zap_state": "paused in full as of the 2026-09-06 export (every node paused: true), so there is no double-write window and this ships enabled",
