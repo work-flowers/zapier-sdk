@@ -24,10 +24,10 @@
     "channel_name": "#marketing",
     "note": "Posts as bot 'BlogBot' with :blogger: icon, unfurl on — identical presentation to the classic Zap."
   },
-  "zapier_durable_version": "0.12.5",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
-    "@zapier/zapier-sdk": "0.99.0"
+    "@zapier/zapier-sdk": "0.115.1"
   },
   "replaces_classic_zap": "Share new Blog Posts in Slack (exported 2026-08-14; RSS new_feed -> filter out /blog/tags & /blog/authors -> Slack channel_message)"
 }

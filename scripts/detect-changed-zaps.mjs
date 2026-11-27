@@ -257,9 +257,9 @@ function renderMarkdown(results) {
     lines.push(`### 🎯 Trigger check — ${count} deployment(s) across ${triggerOnly.length} Zap director(y/ies)`);
     lines.push("");
     lines.push(
-      "`zap.json` changed but no code did. On merge, each deployment's declared trigger is compared " +
-        "against the one that is live, and it is **republished only if they differ** " +
-        "(a trigger-only republish ships the same source as a new version).",
+      "`zap.json` changed but no code did. On merge, each deployment's declared trigger, connection " +
+        "bindings, app-version pins and dependency versions are compared against the live ones, and it is " +
+        "**republished only if one of them differs** (such a republish ships the same source as a new version).",
     );
     lines.push("");
     lines.push("| Zap directory | Deployment | Workflow ID | Enabled |");
