@@ -1,0 +1,56 @@
+{
+  "name": "agreement-send-for-signing",
+  "workflow_id": null,
+  "current_version_id": null,
+  "trigger_url": null,
+  "enabled": false,
+  "is_private": false,
+  "deploy": {
+    "state": "pending-create",
+    "workflow_name": "agreement-send-for-signing",
+    "description": "Notion Agreement Pipeline 'Send to eSignatures' button -> eSignatures.com DRAFT contract whose text is the row's own page body. Document type picks the shell template and signer 1 (Signatory contact or Consultant; Override email wins); Dennis is always signer 2. A resend updates an unsent draft in place. Writes the draft link to 'eSignatures contract', sets Status = Ready to send, and maps the contract (Agreement Type = Agreement) in the eSignatures Mapping Table. Replaces sow-send-for-signing, project-addendum-send-for-signing and notion-nda-to-esignatures-draft (TKT-1088).",
+    "enable_on_publish": false,
+    "enable_note": "Published disabled until the end-to-end test in TKT-1088 passes. Then `enable-workflow <workflow_id>` and set `enabled: true` here."
+  },
+  "trigger": {
+    "selected_api": "WebHookCLIAPI@1.2.2",
+    "action": "hook_v2",
+    "authentication_id": null,
+    "params": {},
+    "webhook_url": null,
+    "trigger_note": "Catch hook. The sender is the Agreement Pipeline database's `Send to eSignatures` button property ('Send webhook' action). After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
+  },
+  "connections": {
+    "notion_wf": "02b73654-15c8-85c3-b16a-07304d2beb17",
+    "esign": "026935e5-48e9-8cea-9bfc-c46d042addf7"
+  },
+  "connection_notes": {
+    "notion_wf": "work.flowers workspace connection. Never the `Knoxx | Dennis #2` connection (02b95b31-c152-8800-9036-1107e08f70da), which cannot see work.flowers databases. Verified 2026-11-27 that it reads Agreement Pipeline after the database moved into the restricted Finance, Legal and HR teamspace.",
+    "esign": "The PUBLIC `EsignaturesioCLIAPI` app ('eSignatures'), the same connection notion-nda-to-esignatures-draft and esignatures-status-to-notion bind. Every eSignatures call here goes through it: create_contract (template + `placeholder_fields_markdown_map` + two signers + metadata), query_contract, update_contract_placeholder_fields and update_signer. The private `App236843CLIAPI` app the SOW flow used is not needed: it cannot take a second signer."
+  },
+  "notion": {
+    "pipeline_datasource": "42491b07-11ac-8198-b685-000bf23f6e17",
+    "pipeline_database": "42491b07-11ac-8186-98f1-c4aea2e84e7c",
+    "api_version": "2026-03-11",
+    "properties_read": "Agreement Name (title), Document type (select), Status (status), Signatory (relation to Contacts), Signer name / Signer email (rollups via Signatory), Override email (email), Consultant (people), Parent agreement (relation), Counterparty (rich_text, registered legal name), eSignatures contract (url) — plus the page BODY via GET /v1/pages/{id}/markdown, which is the contract text. Names checked against the live schema 2026-11-27.",
+    "properties_written": "eSignatures contract (url) = the draft link, which contains the contract id; Status = \"Ready to send\". Nothing else: \"Sent for signature\" and \"Signed\" belong to esignatures-status-to-notion.",
+    "template_mode_note": "Repo rule 5 does not apply — this workflow only updates an existing page."
+  },
+  "esignatures": {
+    "templates": {
+      "Scope of Work": "6eaa0583-2cde-42d2-bf3e-2fe9b0808f3e — SOW (all three) and Order form; interim shell for Consulting agreement and Amendment",
+      "Consultant Project Addendum": "443d6bed-607d-458e-a0de-27dd627bf96f — Project addendum",
+      "Mutual NDA": "6325d51d-cd18-47fe-8925-0a0ccff24f3a — NDA"
+    },
+    "template_note": "Read back 2026-11-27 with query_template / query_template_content: Scope of Work and Consultant Project Addendum are exactly `{{contract-body}}`; Mutual NDA is `{{ contract-body }}`, a page break, and a Signatory Details section with the required every-signer `signatory_title` field. No template was changed.",
+    "action_note": "`save_as_draft: \"yes\"`, `test: \"no\"`, `metadata` = the Notion page id, `assigned_user_email` = Dennis. create_contract runs with maxAttempts 1: it is not idempotent."
+  },
+  "tables": {
+    "01KHZEP4FA560E9GMTGTBR1E2N": "eSignatures Mapping — read by Page ID before the eSignatures check (covers a link cleared by hand), then written after the Notion write-back: find by Page ID, update or create, with Page ID, Contract ID and Agreement Type = \"Agreement\" (exact string, the TKT-1089 contract). Read by esignatures-status-to-notion. Table ops cost no tasks."
+  },
+  "zapier_durable_version": "0.14.1",
+  "dependencies": {
+    "zod": "4.4.3",
+    "@zapier/zapier-sdk": "0.115.1"
+  }
+}

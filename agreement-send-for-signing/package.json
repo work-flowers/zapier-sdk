@@ -1,0 +1,16 @@
+{
+  "name": "agreement-send-for-signing",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@zapier/zapier-durable": "0.14.1",
+    "@zapier/zapier-sdk": "0.115.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "latest"
+  },
+  "scripts": {
+    "build": "tsc --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --noEmit --noUnusedLocals workflow.ts"
+  }
+}
