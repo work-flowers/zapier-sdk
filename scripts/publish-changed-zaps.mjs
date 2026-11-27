@@ -18,7 +18,9 @@
 // a publish that succeeds and then fails on the first run); a zap.json with no
 // `connections` keeps the deployed set. App-version pins work the same way
 // (added 2026-11-10): a pin zap.json declares replaces the deployed pin for
-// that app, so a deprecated pin can be bumped by PR. Every republish compares the trigger
+// that app, so a deprecated pin can be bumped by PR. Dependency versions
+// follow the same rule (added 2026-11-27, when Zapier set a minimum SDK version
+// that old deployments failed). Every republish compares the trigger
 // zap.json declares against the deployed one, on the four fields that are
 // actually Zapier's (selected_api, action, authentication_id, params — the rest
 // of the block is repo annotation and a webhook_url readback). Identical, the
@@ -435,6 +437,58 @@ export function sameAppVersions(a, b) {
   return norm(a) === norm(b);
 }
 
+// ---- Dependency pins: zap.json wins for the packages it pins ----------------
+//
+// Added 2026-11-27, when Zapier began refusing publishes on an old SDK
+// ("below-minimum-sdk-version: @zapier/zapier-sdk dependency '0.91.0' is below
+// the minimum required version '0.107.0'"). The republish path carried the
+// deployed dependencies forward verbatim, so every existing Zap still on an
+// old SDK could no longer be republished at all, and bumping the version in
+// zap.json did nothing. Same rule as app-version pins: a package zap.json
+// declares (top-level `dependencies`, or a deployment's own non-null
+// `dependencies`) REPLACES the deployed version of that package; deployed
+// packages zap.json does not mention are kept; no declaration keeps the
+// deployed set. zap.json mirrors the deployed versions (repo rule 4), so a
+// Zap whose zap.json was never edited republishes exactly as before.
+export function declaredDependencies(dir, dep) {
+  const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+  let source = zap.dependencies;
+  if (Array.isArray(zap.deployments)) {
+    const d = zap.deployments.find((x) => x.workflow_id === dep.workflowId);
+    if (d && d.dependencies != null) source = d.dependencies;
+  }
+  const out = {};
+  for (const [pkg, v] of Object.entries(source || {})) {
+    if (typeof v === "string" && v.trim() !== "") out[pkg] = v.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+// Deployed dependencies with every package zap.json pins replaced by its pin.
+export function mergeDependencies(deployed, declared) {
+  if (declared == null) return deployed ?? null;
+  return Object.assign({}, deployed || {}, declared);
+}
+
+// The durable runtime moves in step with the SDK (every live pairing in this
+// repo bumps both together), so it follows the same rule: a version zap.json
+// declares (top-level `zapier_durable_version`, or a deployment's own) replaces
+// the deployed one; none keeps it.
+export function declaredDurableVersion(dir, dep) {
+  const zap = JSON.parse(readFileSync(join(REPO_ROOT, dir, "zap.json"), "utf8"));
+  let v = zap.zapier_durable_version;
+  if (Array.isArray(zap.deployments)) {
+    const d = zap.deployments.find((x) => x.workflow_id === dep.workflowId);
+    if (d && d.zapier_durable_version != null) v = d.zapier_durable_version;
+  }
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+}
+
+export function sameDependencies(a, b) {
+  const norm = (x) => JSON.stringify(Object.entries(x || {}).sort());
+  return norm(a) === norm(b);
+}
+
 // ---- First publish of a brand-new Zap -----------------------------------
 
 // Read the `deploy` block a not-yet-created Zap declares, and fail loudly on
@@ -695,8 +749,8 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const deployedKeys = Object.keys(deployedSources);
   if (deployedKeys.length === 0) fail(`${dir}: deployed version ${currentVersionId} reported no source_files`);
 
-  const dependencies = version?.dependencies ?? null;
-  const durableVersion = version?.zapier_durable_version ?? null;
+  const deployedDependencies = version?.dependencies ?? null;
+  const deployedDurableVersion = version?.zapier_durable_version ?? null;
   const deployedConnections = version?.connections ?? null;
   const deployedAppVersions = version?.app_versions ?? null;
   const deployedTrigger = version?.trigger ?? null;
@@ -720,11 +774,20 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
   const appVersions = mergeAppVersions(deployedAppVersions, declaredAppVersions(dir, dep));
   const appVersionsChanged = !sameAppVersions(appVersions, deployedAppVersions);
 
+  // 2d. And for dependency versions: a package zap.json pins replaces the
+  //     deployed version of it (see declaredDependencies).
+  const dependencies = mergeDependencies(deployedDependencies, declaredDependencies(dir, dep));
+  const declaredDurable = declaredDurableVersion(dir, dep);
+  const durableVersion = declaredDurable ?? deployedDurableVersion;
+  const dependenciesChanged =
+    !sameDependencies(dependencies, deployedDependencies) ||
+    String(durableVersion ?? "") !== String(deployedDurableVersion ?? "");
+
   // 3. This deployment is only here because zap.json changed, and neither the
-  //    trigger, the bindings nor the app pins it declares differ from what is
-  //    live: nothing to publish. (Checked BEFORE the draft refusal below, so an
+  //    trigger, the bindings, the app pins nor the dependency pins it declares
+  //    differ from what is live: nothing to publish. (Checked BEFORE the draft refusal below, so an
   //    open draft can't fail a run that is a no-op.)
-  if (!dep.bySource && !triggerChanged && !connectionsChanged && !appVersionsChanged) {
+  if (!dep.bySource && !triggerChanged && !connectionsChanged && !appVersionsChanged && !dependenciesChanged) {
     return { skipped: "no-trigger-change", workflowId: id };
   }
 
@@ -773,11 +836,13 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     triggerChanged,
     connectionsChanged,
     appVersionsChanged,
+    dependenciesChanged,
     reason: [
       dep.bySource ? "source" : null,
       triggerChanged ? "trigger" : null,
       connectionsChanged ? "connections" : null,
       appVersionsChanged ? "app-versions" : null,
+      dependenciesChanged ? "dependencies" : null,
     ]
       .filter(Boolean)
       .join(" + "),
@@ -787,6 +852,8 @@ function publishDeployment(dir, dep, currentVersionId, execute) {
     connectionsTo: connectionIds(connections),
     appVersionsFrom: appVersionPins(deployedAppVersions),
     appVersionsTo: appVersionPins(appVersions),
+    dependenciesFrom: { ...(deployedDependencies || {}), zapier_durable_version: deployedDurableVersion },
+    dependenciesTo: { ...(dependencies || {}), zapier_durable_version: durableVersion },
   };
 
   if (!execute) return { plan };
@@ -1268,6 +1335,11 @@ function main() {
       log(`  - live: \`${JSON.stringify(plan.appVersionsFrom)}\``);
       log(`  - repo: \`${JSON.stringify(plan.appVersionsTo)}\``);
     }
+    if (plan.dependenciesChanged) {
+      log(`- 📦 dependency versions change — zap.json wins:`);
+      log(`  - live: \`${JSON.stringify(plan.dependenciesFrom)}\``);
+      log(`  - repo: \`${JSON.stringify(plan.dependenciesTo)}\``);
+    }
     if (args.execute) {
       syncBackVersionId(dir, currentVersionId, newVersionId);
       const atWarning = syncBackVersionCreatedAt(dir, dep.workflowId, newVersionId, result.versionCreatedAt);
@@ -1283,7 +1355,8 @@ function main() {
     } else {
       log(`- would republish from \`${plan.fromVersion}\` carrying deps forward` +
         (plan.connectionsChanged ? " with the declared connection bindings" : ", connections unchanged") +
-        (plan.appVersionsChanged ? ", with the declared app-version pins" : ", app-versions unchanged"));
+        (plan.appVersionsChanged ? ", with the declared app-version pins" : ", app-versions unchanged") +
+        (plan.dependenciesChanged ? ", with the declared dependency versions" : ""));
     }
     log("");
   }
