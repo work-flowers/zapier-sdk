@@ -22,7 +22,7 @@ src = src
     "const createZapierSdk = () => ({ runAction: async (_: unknown): Promise<any> => { throw new Error('no network in tests'); } });",
   );
 if (src.includes("@zapier/")) throw new Error("unstubbed @zapier import left in source");
-src += "\nexport const __test = { decide, normalizeInvoiceNumber, stripUncheckpointableChars, CATEGORY_FOLDERS, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING, CATEGORY_CRITERIA, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText };\n";
+src += "\nexport const __test = { decide, normalizeInvoiceNumber, stripUncheckpointableChars, CATEGORY_FOLDERS, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING, CATEGORY_CRITERIA, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText, extractEmail, blockReason };\n";
 
 const tmpTs = join(dir, ".decide-under-test.ts");
 const outDir = join(dir, ".decide-under-test-out");
@@ -41,7 +41,7 @@ try {
   rmSync(outDir, { recursive: true, force: true });
 }
 const { decide, stripUncheckpointableChars, FOLDER_INVOICES, FOLDER_PAID_RECEIPTS, FOLDER_SIGNED_AGREEMENTS, FOLDER_FINANCIAL_REPORTING,
-  CATEGORY_CRITERIA, CATEGORY_FOLDERS, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText } =
+  CATEGORY_CRITERIA, CATEGORY_FOLDERS, jevQuestions, readJevSignals, toClassification, invoiceNumberFromText, extractEmail, blockReason } =
   mod.__test;
 
 // --- helpers -----------------------------------------------------------------
@@ -298,6 +298,30 @@ check("table layouts: label and value apart, skipping words and dates (Lantern L
    "INVOICE NO INVOICE DATE PAGE NO.\r\nMD10764681 21-Sep-2026 1 of 2",
    "Invoice No:\r\n21-Sep-2026\r\nAB-77120"].map(invoiceNumberFromText),
   ["INV-26-0008", "MD10764681", "AB-77120"]);
+
+// --- client mailing lists ---------------------------------------------------
+// Shapes from real 2026-11-26 runs: the Gmail trigger delivers to/cc as
+// { names, emails }. Knoxx procurement mail must never reach the classifier,
+// whether the group is in To or Cc.
+const pdf = { attachmentsArray: [{ filename: "TLLU3689327_1.pdf", file: "hydrate://x" }] };
+const mail = (to, cc, extra = {}) =>
+  blockReason(extractEmail({ id: "m1", subject: "[Knoxx Procurement] Documents for container", from: { email: "minnie@knoxxfoods.com" },
+    to, cc, labels: ["INBOX"], ...pdf, ...extra }));
+check("procurement group in To -> blocked",
+  mail({ names: [""], emails: ["procurement@knoxxfoods.com"] }, { names: [], emails: [] }),
+  "sent to client mailing list procurement@knoxxfoods.com");
+check("procurement group in Cc (mixed case) -> blocked",
+  mail({ names: [], emails: ["brokerage@rhfreight.com.au"] }, { names: [], emails: ["p@knoxxfoods.com", "Procurement@KnoxxFoods.com"] }),
+  "sent to client mailing list procurement@knoxxfoods.com");
+check("recipient as a display-name string -> blocked",
+  mail("Knoxx Procurement <procurement@knoxxfoods.com>, dennis@work.flowers", undefined),
+  "sent to client mailing list procurement@knoxxfoods.com");
+check("other Knoxx address, no group -> not blocked by recipient",
+  mail({ emails: ["dennis@work.flowers"] }, { emails: ["p@knoxxfoods.com"] }),
+  null);
+check("no to/cc at all -> not blocked by recipient",
+  mail(undefined, undefined),
+  null);
 
 // -------------------------------------------------------------------------------
 if (failures > 0) {
