@@ -51,7 +51,7 @@ flowchart TD
   TYPE -- "SOW" --> S1["📝 Status → Sent for signature / Signed"]
   TYPE -- "Project Addendum" --> S2["📝 Status → Sent for signing / Executed"]
   TYPE -- "NDA" --> S3["📝 Status → Sent / Signed<br/>+ Sent Date / Signed Date (SGT)"]
-  S0 --> SD{"sent phase, Deal linked<br/><i>(pipeline: and Category = Client)</i>?"}
+  S0 --> SD{"sent phase, Deal linked<br/><i>(pipeline: and Counterparty type = Client)</i>?"}
   S1 --> SD
   SD -- yes --> DEAL["📝 Deal Status → In signing"] --> PH
   SD -- no --> PH{"phase == signed?"}
@@ -78,7 +78,7 @@ register.
   Agreement Type `Agreement`, the pipeline page id and the contract id, puts the draft link in
   `eSignatures contract` and sets Status `Ready to send`. This Zap owns `Sent for signature` and
   `Signed`, and stamps `Sent date` / `Signed date` (SGT).
-- **Deal on send.** When the row has a `Deals` relation **and** `Category` is `Client`, the first
+- **Deal on send.** When the row has a `Deals` relation **and** `Counterparty type` is `Client`, the first
   linked Deal moves to `In signing`. Other categories (Consultant, Vendor, …) never touch a Deal, and
   the run output says why in `dealSkipped`.
 - **No PDF (Dennis, 2026-11-26).** The pipeline has no files property. The executed PDF eSignatures
@@ -233,7 +233,7 @@ Verified 2026-11-27 for TKT-1089, with `run-durable` on SDK 0.115.1 / durable 0.
 | --- | --- |
 | Unknown contract id, both deployments | Table miss, URL fallback across all four data sources (incl. the pipeline's `eSignatures contract` filter) accepted, `{"skipped":"no-mapping-row"}` |
 | CarTimes SOW mapping row | Resolves `SOW` → page `42391b07…2a63`, whose parent is the SOWs data source, so the read-page check keeps `SOW` |
-| Agreement Pipeline schema via the `notion_wf` connection | Readable after the move to the restricted teamspace; `Status` options, `Sent date`, `Signed date`, `eSignatures contract`, `Category`, `Deals` all as coded |
+| Agreement Pipeline schema via the `notion_wf` connection | Readable after the move to the restricted teamspace; `Status` options, `Sent date`, `Signed date`, `eSignatures contract`, `Category` (since renamed `Counterparty type`), `Deals` all as coded |
 | Types, analyzer | strict tsc with `--noUnusedLocals` clean; `validate-workflow` no issues on both entry files |
 
 **Not yet verified live:** a real pipeline send and signature (status, dates, Deal move, no PDF). That

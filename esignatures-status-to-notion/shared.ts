@@ -67,7 +67,7 @@ interface TypeConfig {
   signedDateProp?: string;
   /**
    * On SEND, move the record's linked Deal to "In signing". `requireCategory`
-   * limits it to records whose `Category` select has that value.
+   * limits it to records whose `Counterparty type` select has that value.
    */
   dealOnSent?: { relationProp: string; requireCategory?: string };
 }
@@ -607,7 +607,7 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
   //     names apply, not the mapping row: page ids survive a move between
   //     databases, so a row moved from SOWs/NDAs into Agreement Pipeline at
   //     cutover keeps a mapping row that still says "SOW"/"NDA". The same read
-  //     supplies the Deal relation and Category for 2b.
+  //     supplies the Deal relation and Counterparty type for 2b.
   const page = await ctx.step("read-page", async () => {
     const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
       connection: NOTION_CONNECTION,
@@ -626,7 +626,7 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     }
     return {
       dataSourceId: dashUuid(firstString(p?.parent?.data_source_id)),
-      category: firstString(props?.Category?.select?.name),
+      category: firstString(props?.["Counterparty type"]?.select?.name),
       relations,
     };
   });
@@ -670,7 +670,7 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
   });
 
   // 2b. Sent: advance the linked Deal for types with `dealOnSent` (SOW, and a
-  //     Client-category pipeline row). No Deal, or another Category, is a normal
+  //     Client pipeline row). No Deal, or another Counterparty type, is a normal
   //     skip. A replayed PATCH of a property lands in the same state.
   let dealUpdated: string | null = null;
   let dealSkipped: string | null = null;

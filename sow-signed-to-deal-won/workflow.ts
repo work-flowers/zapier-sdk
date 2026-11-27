@@ -15,7 +15,7 @@ const NOTION_VERSION = "2026-03-11";
  * The two data sources whose signed rows close a Deal, each with its own Deal
  * relation name and gate. "SOWs" (legacy, kept until the cutover task moves its
  * in-flight rows) closes on any posted row with a Deal; "Agreement Pipeline"
- * (TKT-1089) also needs Status = Signed and Category = Client, since it holds
+ * (TKT-1089) also needs Status = Signed and Counterparty type = Client, since it holds
  * every kind of agreement. Each source's Notion automation posts here.
  */
 interface SourceRule {
@@ -140,7 +140,7 @@ const workflow = defineDurable<Input, unknown>(
         archived: Boolean(p.archived || p.in_trash),
         dataSourceId,
         status: firstString(props["Status"]?.status?.name),
-        category: firstString(props["Category"]?.select?.name),
+        category: firstString(props["Counterparty type"]?.select?.name),
         dealIds: ((props[dealProp]?.relation ?? []) as any[])
           .map((rel) => dashUuid(firstString(rel?.id)))
           .filter((s) => s !== ""),
@@ -169,7 +169,7 @@ const workflow = defineDurable<Input, unknown>(
     }
     if (rule.requireCategory && sow.category !== rule.requireCategory) {
       console.log(
-        `${rule.label} ${sowPageId} has Category "${sow.category}", not ${rule.requireCategory} — skipping`,
+        `${rule.label} ${sowPageId} has Counterparty type "${sow.category}", not ${rule.requireCategory} — skipping`,
       );
       return { skipped: "not-client", sowPageId, category: sow.category };
     }
