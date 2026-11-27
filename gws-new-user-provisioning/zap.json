@@ -20,6 +20,7 @@
     "01JM3J9SG5X6S8GBSSC8AS28AT": "[Table] Internal User IDs — find-or-create by Email (f2); reads Zapier ID (f7) to decide whether to send the Zapier team invite; seeds First Name (f13) / Last Name (f14) on create only. The five internal-user-ids-* durables key on the same Email column, and internal-user-ids-zapier is what writes Zapier ID back once the invite is accepted."
   },
   "zapier_team_id": "20491667",
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "@zapier/zapier-sdk": "0.115.1"

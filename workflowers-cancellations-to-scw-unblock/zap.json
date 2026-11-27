@@ -26,6 +26,7 @@
     "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
   },
   "connections_note": "gcal_scw is the SCW Google Calendar connection 'dchiuten@securecodewarrior.com' — where this workflow deletes the Busy blocks that workflowers-events-to-scw-busy / gcal-block-sweep created.",
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",

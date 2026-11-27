@@ -35,6 +35,7 @@
     "tier": "standard/auto",
     "why": "Single creative-writing task: turn post markdown into one image-generation prompt. The classic Zap used the raw Anthropic app (Claude Opus 4.5, user's own billing) with a brand-guidelines PDF knowledge source; AI by Zapier has no knowledge sources, so the brand guidance is embedded in the prompt instead. Verified 2026-08-14 that standard/auto produces an on-brand, hex-correct, style-tagged brief on a real post — see the README's verified-cases table."
   },
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
