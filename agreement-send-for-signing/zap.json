@@ -3,21 +3,21 @@
   "workflow_id": "01a21af2-c09d-736a-a5a3-fe7b0486163e",
   "current_version_id": "01a21af2-ef2c-7959-9066-bfb7409c09dc",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AtiZxCssjDv4KFAgYWh7Gk8",
-  "enabled": false,
+  "enabled": true,
   "is_private": false,
   "deploy": {
     "state": "published",
     "workflow_name": "agreement-send-for-signing",
     "description": "Notion Agreement Pipeline 'Send to eSignatures' button -> eSignatures.com DRAFT contract whose text is the row's own page body. Document type picks the shell template and signer 1 (Signatory contact or Consultant; Override email wins); Dennis is always signer 2. A resend updates an unsent draft in place. Writes the draft link to 'eSignatures contract', sets Status = Ready to send, and maps the contract (Agreement Type = Agreement) in the eSignatures Mapping Table. Replaces sow-send-for-signing, project-addendum-send-for-signing and notion-nda-to-esignatures-draft (TKT-1088).",
     "enable_on_publish": false,
-    "enable_note": "Published disabled until the end-to-end test in TKT-1088 passes. Then `enable-workflow <workflow_id>` and set `enabled: true` here."
+    "enable_note": "Published disabled by the merge of PR #335. Enabled 2026-11-27 with `enable-workflow` so the TKT-1088 end-to-end tests could run. Zapier issued no catch URL while the Zap was disabled: `triggers[0].details` stayed null until enable-workflow, after which `details.webhook_url` appeared at once and the trigger went active."
   },
   "trigger": {
     "selected_api": "WebHookCLIAPI@1.2.2",
     "action": "hook_v2",
     "authentication_id": null,
     "params": {},
-    "webhook_url": null,
+    "webhook_url": "https://hooks.zapier.com/hooks/catch/20495893/Dd1AJ42OyMZAk4xs/",
     "trigger_note": "Catch hook. The sender is the Agreement Pipeline database's `Send to eSignatures` button property ('Send webhook' action). After the first publish, paste the `webhook_url` readback into that button. `trigger_url` is Zapier-internal and answers an unauthenticated POST with 401 — never point Notion at it."
   },
   "connections": {
