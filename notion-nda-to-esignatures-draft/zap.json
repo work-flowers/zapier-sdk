@@ -42,7 +42,7 @@
     "action_note": "`save_as_draft: \"yes\"` — nothing reaches a signer until a human sends the draft from eSignatures. `test: \"no\"` explicitly. `metadata` = the Notion page id, so a later contract-signed flow can find the row again. The create step runs with maxAttempts 1: create_contract is not idempotent.",
     "output_note": "Verified 2026-09-28: create_contract returns `{data:[{status:\"queued\", data:{contract:{id, draft_contract_url, signers, metadata, …}}}]}` — the same double nesting as the private app. `draft_contract_url` is `https://esignatures.com/draft_contracts/<id>/edit`."
   },
-  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
