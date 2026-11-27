@@ -56,12 +56,24 @@
   },
   "trigger_asymmetry": "The two triggers disagree about where the contract id lives: `contract_sent_to_signer` nests it at `.contract.id`, `contract_signed` delivers it flat at `.id`. `extractContractId` reads BOTH paths rather than branching on phase, so neither deployment can be broken by the asymmetry and a hand-built replay payload works either way.",
   "notion": {
+    "agreement_pipeline": {
+      "datasource_id": "42491b07-11ac-8198-b685-000bf23f6e17",
+      "datasource_name": "Agreement Pipeline",
+      "agreement_type": "Agreement",
+      "properties_written": [
+        "Status (status) = \"Sent for signature\" + Sent date (sent) / \"Signed\" + Signed date (signed), dates = today SGT",
+        "No files property: the executed PDF is never downloaded or attached (filed by the Gmail -> Drive -> register chain)"
+      ],
+      "deal_on_sent": "Deals relation, first id -> Status \"In signing\", only when Category = Client",
+      "added": "2026-11-27 (TKT-1089)"
+    },
     "sows": {
       "datasource_id": "07e4d8c1-24f2-44a8-ae9b-24628ee4a21b",
       "datasource_name": "SOWs",
       "properties_written": [
         "Status (status) = \"Sent for signature\" (sent) / \"Signed\" (signed)",
-        "Signed PDF (files) — the executed PDF, signed phase only"
+        "Signed PDF (files) — the executed PDF, signed phase only",
+        "Deal (relation) -> the Deal's Status = \"In signing\" (sent phase)"
       ]
     },
     "project_addendums": {
@@ -72,7 +84,7 @@
         "Executed Agreement (files) — the executed PDF, signed phase only"
       ]
     },
-    "status_note": "All three `Status` properties are type `status`. Since 2026-09-28 they are written with a raw PATCH /v1/pages ({Status: {status: {name}}}) rather than update_database_item, whose schema cache lags schema changes (NDAs' Status had just been converted from select). Option names differ per data source — see TYPES in shared.ts.",
+    "status_note": "All four `Status` properties are type `status`. Since 2026-09-28 they are written with a raw PATCH /v1/pages ({Status: {status: {name}}}) rather than update_database_item, whose schema cache lags schema changes (NDAs' Status had just been converted from select). Option names differ per data source — see TYPES in shared.ts.",
     "template_mode_note": "Repo rule 5 does not apply — this workflow only updates existing pages.",
     "ndas": {
       "datasource_id": "354e3731-d2e4-497d-8df0-8ac9738df959",
@@ -82,7 +94,8 @@
         "Signed PDF (files) — the executed PDF, signed phase only"
       ],
       "added": "2026-09-28"
-    }
+    },
+    "resolution_note": "Every run reads the page; its parent data source picks the type over the mapping row's Agreement Type, so a row moved between databases at cutover keeps resolving (TKT-1089)."
   },
   "signed_pdf": {
     "behaviour_change": "NEW. The classic Zap passed `properties|||Signed PDF|||files: []` — an empty array, a silent no-op — so the executed PDF was never actually filed on any record. This workflow files it: `Signed PDF` on SOWs, `Executed Agreement` on Project Addendums.",
@@ -115,9 +128,9 @@
       "miss_note": "Since 2026-11-02 a miss falls back to querying each data source for a record whose contract URL property contains the contract id (`eSignature contract` on SOWs, `eSignatures Contract` on Project Addendums, `Contract URL` on NDAs). One match is used and its mapping row backfilled; more than one throws; none is a SKIP, not an error. The classic Zap search failed on a miss (`_zap_search_success_on_miss: false`), which turned every contract created outside these flows into an error alert. The fallback exists because a contract made straight from the Zapier eSignatures Create Contract action (the Sakana AI Vanta amendment, 2026-11-02) skipped with no-mapping-row and needed a hand replay."
     }
   },
-  "zapier_durable_version": "0.12.3",
+  "zapier_durable_version": "0.14.1",
   "dependencies": {
-    "@zapier/zapier-sdk": "0.93.0",
+    "@zapier/zapier-sdk": "0.115.1",
     "zod": "4.4.3"
   },
   "live_runs": {

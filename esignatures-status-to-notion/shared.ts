@@ -8,8 +8,11 @@
 // contract id up in the mapping Table to find which Notion record it belongs to,
 // and move that record's status on. The two differ only in which trigger they
 // listen to and which status they set — plus the signed one also files the
-// executed PDF, which the classic Zap never actually did (it passed an empty
-// array to the files property, a silent no-op).
+// executed PDF on the old SOW / Project Addendum / NDA records, which the classic
+// Zap never actually did (it passed an empty array to the files property, a
+// silent no-op). Agreement Pipeline rows (TKT-1089) never get the PDF: the Gmail
+// Zap -> Drive intake Zap -> Agreement File Analyzer chain files it on the
+// Signed Agreement Register, and a second copy would create a second register row.
 //
 // Each entry file calls defineDurable itself, with a string-literal name, and
 // hands its body to runStatusSync here. The publish-time analyzer only looks
@@ -26,10 +29,12 @@ export const NOTION_API = "https://api.notion.com/v1";
 export const NOTION_VERSION = "2026-03-11";
 
 /**
- * "eSignatures Mapping" Zapier Table — written by `esignatures-send-for-signing`
- * and `notion-nda-to-esignatures-draft`, read-only here. Fields by name:
- * "Page ID", "Contract ID", "Agreement Type" (labeled_string: "SOW" |
- * "Project Addendum" | "NDA"). Tables auth is automatic.
+ * "eSignatures Mapping" Zapier Table — written by the send-for-signing Zaps
+ * (`agreement-send-for-signing` writes "Agreement" rows for Agreement Pipeline,
+ * TKT-1088), and here only to backfill a row found by contract URL. Fields by
+ * name: "Page ID", "Contract ID", "Agreement Type" (labeled_string: "SOW" |
+ * "Project Addendum" | "NDA" | "Agreement"; only the first two are listed
+ * choices, but the field stores any value). Tables auth is automatic.
  */
 export const ESIGN_TABLE = "01KHZEP4FA560E9GMTGTBR1E2N";
 export const T_PAGE_ID = "Page ID";
@@ -37,7 +42,7 @@ export const T_CONTRACT_ID = "Contract ID";
 export const T_AGREEMENT_TYPE = "Agreement Type";
 
 // --- Per-agreement-type configuration --------------------------------------
-type AgreementType = "SOW" | "Project Addendum" | "NDA";
+type AgreementType = "SOW" | "Project Addendum" | "NDA" | "Agreement";
 
 interface TypeConfig {
   datasource: string;
@@ -51,12 +56,20 @@ interface TypeConfig {
   sentStatus: string;
   /** Status when every signer has signed. */
   signedStatus: string;
-  /** Files property that receives the executed PDF. Differs between the two. */
-  fileProp: string;
+  /**
+   * Files property that receives the executed PDF. Absent means the PDF is
+   * never downloaded or attached (Agreement Pipeline: see the header).
+   */
+  fileProp?: string;
   /** Date property stamped with today (SGT) on send, if the record has one. */
   sentDateProp?: string;
   /** Date property stamped with today (SGT) on signature, if the record has one. */
   signedDateProp?: string;
+  /**
+   * On SEND, move the record's linked Deal to "In signing". `requireCategory`
+   * limits it to records whose `Category` select has that value.
+   */
+  dealOnSent?: { relationProp: string; requireCategory?: string };
 }
 
 const TYPES: Record<AgreementType, TypeConfig> = {
@@ -66,6 +79,7 @@ const TYPES: Record<AgreementType, TypeConfig> = {
     sentStatus: "Sent for signature", // lowercase s
     signedStatus: "Signed",
     fileProp: "Signed PDF",
+    dealOnSent: { relationProp: "Deal" },
   },
   "Project Addendum": {
     datasource: "46234707-641a-4aa4-96f6-295554e6543f", // "Project Addendums"
@@ -83,17 +97,37 @@ const TYPES: Record<AgreementType, TypeConfig> = {
     sentDateProp: "Sent Date",
     signedDateProp: "Signed Date",
   },
+  // Agreement Pipeline (TKT-1085/TKT-1089): every agreement we draft, AGR ids.
+  // The SOW, Project Addendum and NDA entries above stay until the cutover task
+  // moves their in-flight rows (CarTimes) across.
+  Agreement: {
+    datasource: "42491b07-11ac-8198-b685-000bf23f6e17", // "Agreement Pipeline"
+    urlProp: "eSignatures contract",
+    sentStatus: "Sent for signature",
+    signedStatus: "Signed",
+    sentDateProp: "Sent date",
+    signedDateProp: "Signed date",
+    dealOnSent: { relationProp: "Deals", requireCategory: "Client" },
+  },
 };
 
 const AGREEMENT_TYPES = new Set<string>(Object.keys(TYPES));
 
+/** The agreement type whose data source this is, or null. */
+export function typeForDataSource(dataSourceId: string): AgreementType | null {
+  const id = dashUuid(dataSourceId);
+  for (const [t, cfg] of Object.entries(TYPES) as [AgreementType, TypeConfig][]) {
+    if (cfg.datasource === id) return t;
+  }
+  return null;
+}
+
 /**
- * On a SOW's SEND, its linked Deal moves to "In signing". This used to happen in
- * esignatures-send-for-signing when the draft was created, which was too early:
- * a draft is often exported as a PDF for client review long before it is sent.
- * Moved here 2026-11-25.
+ * On SEND, the record's linked Deal moves to "In signing" (types with
+ * `dealOnSent`). This used to happen in esignatures-send-for-signing when the
+ * draft was created, which was too early: a draft is often exported as a PDF
+ * for client review long before it is sent. Moved here 2026-11-25.
  */
-const DEAL_RELATION_PROP = "Deal";
 const DEAL_IN_SIGNING = "In signing";
 
 /** Singapore has no DST, so "today" is a fixed +8h offset from UTC. */
@@ -569,6 +603,46 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     resolvedVia = "notion-url";
     console.log(`contract ${contractId} resolved from ${agreementType} contract URL; mapping row ${tableRowId} backfilled`);
   }
+  // 1c. Read the record itself. Its parent data source decides which property
+  //     names apply, not the mapping row: page ids survive a move between
+  //     databases, so a row moved from SOWs/NDAs into Agreement Pipeline at
+  //     cutover keeps a mapping row that still says "SOW"/"NDA". The same read
+  //     supplies the Deal relation and Category for 2b.
+  const page = await ctx.step("read-page", async () => {
+    const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
+      connection: NOTION_CONNECTION,
+      headers: { "Notion-Version": NOTION_VERSION },
+    });
+    if (!res.ok) {
+      throw new Error(`Notion get page ${pageId} failed (${res.status}): ${await res.text()}`);
+    }
+    const p: any = await res.json();
+    const props = p?.properties ?? {};
+    const relations: Record<string, string[]> = {};
+    for (const [key, val] of Object.entries(props) as [string, any][]) {
+      if (val?.type === "relation" && Array.isArray(val.relation)) {
+        relations[key] = val.relation.map((r: any) => dashUuid(firstString(r?.id))).filter(Boolean);
+      }
+    }
+    return {
+      dataSourceId: dashUuid(firstString(p?.parent?.data_source_id)),
+      category: firstString(props?.Category?.select?.name),
+      relations,
+    };
+  });
+  const mappedType = agreementType;
+  const actualType = typeForDataSource(page.dataSourceId);
+  if (actualType && actualType !== agreementType) {
+    console.log(
+      `page ${pageId} is mapped as ${agreementType} but lives in ${actualType}'s data source — using ${actualType}`,
+    );
+    agreementType = actualType;
+  } else if (!actualType) {
+    console.log(
+      `page ${pageId} is in data source ${page.dataSourceId || "(unknown)"}, not a known agreement type — using the mapped ${agreementType}`,
+    );
+  }
+
   const cfg = TYPES[agreementType];
   const status = phase === "sent" ? cfg.sentStatus : cfg.signedStatus;
 
@@ -595,25 +669,19 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     return { ok: true };
   });
 
-  // 2b. SOW sent: advance the linked Deal. Read the page for its Deal relation
-  //     (the payload carries only the contract), then PATCH the Deal. Skipped
-  //     cleanly when there is no Deal, which is normal. A replayed PATCH of a
-  //     property lands in the same state.
+  // 2b. Sent: advance the linked Deal for types with `dealOnSent` (SOW, and a
+  //     Client-category pipeline row). No Deal, or another Category, is a normal
+  //     skip. A replayed PATCH of a property lands in the same state.
   let dealUpdated: string | null = null;
-  if (phase === "sent" && agreementType === "SOW") {
-    const dealId: string = await ctx.step("read-sow-deal", async () => {
-      const res = await sdk.fetch(`${NOTION_API}/pages/${pageId}`, {
-        connection: NOTION_CONNECTION,
-        headers: { "Notion-Version": NOTION_VERSION },
-      });
-      if (!res.ok) {
-        throw new Error(`Notion get page ${pageId} failed (${res.status}): ${await res.text()}`);
-      }
-      const page: any = await res.json();
-      const rel = page?.properties?.[DEAL_RELATION_PROP]?.relation;
-      return Array.isArray(rel) ? firstString(rel[0]?.id) : "";
-    });
-    if (dealId) {
+  let dealSkipped: string | null = null;
+  if (phase === "sent" && cfg.dealOnSent) {
+    const rule = cfg.dealOnSent;
+    const dealId = (page.relations[rule.relationProp] ?? [])[0] ?? "";
+    if (rule.requireCategory && page.category !== rule.requireCategory) {
+      dealSkipped = `category-${page.category || "empty"}`;
+    } else if (!dealId) {
+      dealSkipped = "no-deal";
+    } else {
       await ctx.step("update-deal-in-signing", async () => {
         const res = await sdk.fetch(`${NOTION_API}/pages/${dealId}`, {
           connection: NOTION_CONNECTION,
@@ -630,11 +698,12 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     }
   }
 
-  // 3. On signature, file the executed PDF. New behaviour — the classic Zap
-  //    passed an empty files array and so never filed anything.
+  // 3. On signature, file the executed PDF on types that have a files property.
+  //    Agreement Pipeline has none: its PDF reaches the register through the
+  //    Gmail chain, so nothing is downloaded here.
   let attach: AttachResult | null = null;
   let pdfUrl = "";
-  if (phase === "signed") {
+  if (phase === "signed" && cfg.fileProp) {
     pdfUrl = extractSignedPdfUrl(payload);
     if (!pdfUrl) {
       attach = {
@@ -668,9 +737,13 @@ export async function runStatusSync(ctx: any, phase: Phase, rawInput: unknown) {
     status,
     tableRowId,
     resolvedVia,
-    ...(phase === "sent" && agreementType === "SOW" ? { dealUpdated } : {}),
+    ...(mappedType !== agreementType ? { mappedType } : {}),
+    ...(phase === "sent" && cfg.dealOnSent ? { dealUpdated, dealSkipped } : {}),
     ...(dateProp ? { dateProperty: dateProp, date: today } : {}),
-    ...(phase === "signed"
+    ...(phase === "signed" && !cfg.fileProp
+      ? { pdfFiled: false, pdfSkipped: "pdf-filed-by-gmail-chain" }
+      : {}),
+    ...(phase === "signed" && cfg.fileProp
       ? {
           fileProperty: cfg.fileProp,
           pdfFound: Boolean(pdfUrl),
