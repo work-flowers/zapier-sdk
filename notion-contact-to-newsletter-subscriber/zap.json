@@ -1,7 +1,7 @@
 {
   "name": "notion-contact-to-newsletter-subscriber",
   "workflow_id": "019febf8-421d-7d71-b059-af6cb658ecfb",
-  "current_version_id": "01a2102f-cf3e-7de6-8f51-269156169c67",
+  "current_version_id": "01a21fb1-6844-70c9-9697-7690b4db75fc",
   "trigger_url": "https://code-substrate-workflows.zapier.com/api/v0/workflows/trigger/AdiXSucse9XQp5hKoDxRhg",
   "enabled": true,
   "is_private": false,
@@ -66,6 +66,6 @@
     "typecheck": "tsc --strict --skipLibCheck clean"
   },
   "created_at": "2026-08-10T13:58:00.000Z",
-  "version_created_at": "2026-11-25T00:51:39.197Z",
+  "version_created_at": "2026-11-28T01:07:30.245Z",
   "description": "Notion Contacts button webhook -> subscribe that contact's Primary Email to the Buttondown newsletter."
 }
