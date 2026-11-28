@@ -28,7 +28,7 @@
     "gcal_scw": "02cb5353-8bd1-82ad-a382-b1900d3d40f2"
   },
   "connections_note": "gcal_wf is the work.flowers Google Calendar connection ('Google Calendar dennis@work.flowers') — the DESTINATION this workflow creates/updates/deletes mirror events on. Same id gcal-event-updated-to-meeting-note carries on its trigger. `gcal_scw` (dchiuten@securecodewarrior.com) is read-only here: it is the same credential as the trigger, bound as an alias since 2026-10-31 so mirrorSeries can call Google's events.instances for a series master.",
-  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR.",
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
