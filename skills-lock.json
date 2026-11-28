@@ -5,8 +5,8 @@
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/create/SKILL.md",
-      "computedHash": "ec2f52a53b3a0b45b00d1e8cc4e891bd2338bca557d3ffc0bbc0b2cd86de09c7",
-      "commit": "1d0ab9711a18def8dc9a6d290c00064e6501144a"
+      "computedHash": "31eb086d4497274022b2df0be70530e31322f5d940fee8f67834ea607261dc9a",
+      "commit": "6a3cd8d68d45346e7601fceaf7f9b18d99631136"
     },
     "workflows-doctor": {
       "source": "zapier/agent-skills",
@@ -19,8 +19,8 @@
       "source": "zapier/agent-skills",
       "sourceType": "github",
       "skillPath": "skills/workflows/history/SKILL.md",
-      "computedHash": "9b856eb962c9798359dba6961a6e6fd09735914a037eae6cfd746f081e6934fa",
-      "commit": "1d0ab9711a18def8dc9a6d290c00064e6501144a"
+      "computedHash": "2693b5686db2f3b72f7ed461adff6890f0a7187cbaac125f73fa800192cc001f",
+      "commit": "6a3cd8d68d45346e7601fceaf7f9b18d99631136"
     },
     "workflows-install": {
       "source": "zapier/agent-skills",
