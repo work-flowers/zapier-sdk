@@ -30,8 +30,8 @@
     "note": "Pages are read with sdk.fetch and the icon is written with a PATCH to /v1/pages/{id}, matching the rest of this repo. The Notion actions cannot write an icon at all: `update_page` takes only page + content, and the classic Zap reached for a per-account Custom Action instead."
   },
   "logo_dev": {
-    "token": "pk_MgvuyiQuRe6IT_XWNAUgrA",
-    "note": "Publishable key (pk_), carried over from the classic Zap. Designed for client-side image URLs and already public — it is embedded in every review page icon this Zap has ever set. Not a secret."
+    "token_source": "Zapier Table 01M8FY3JVN314M9J2X51CZ13FA ([Table] Workflow Config), row Key=logo_dev_publishable_key, column Value",
+    "note": "Publishable key (pk_), carried over from the classic Zap. Designed for client-side image URLs and already public — it is embedded in every review page icon this Zap has ever set. Not a secret. Read at run time since 2026-11-28 because Zapier's publish-time analyzer refuses it as a hardcoded-credential literal (stopped PR #341's run)."
   },
   "icon_policy": {
     "mode": "always-overwrite",

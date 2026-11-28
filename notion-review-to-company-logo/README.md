@@ -46,7 +46,8 @@ flowchart TD
     I -->|missing| I1[skip: no-website]
     I -->|not a hostname| I2[skip: unusable-website]
     I -->|yes| J[extract bare domain]
-    J --> K{icon already this URL?}
+    J --> R[read logo.dev key from Workflow Config Table]
+    R --> K{icon already this URL?}
     K -->|yes| K1[skip: icon-already-current]
     K -->|no| L[PATCH page icon = img.logo.dev/domain]
 ```
@@ -89,11 +90,21 @@ posture should change later, the guard is a single comparison in step 6 of
 
 ## The logo.dev token
 
-`pk_MgvuyiQuRe6IT_XWNAUgrA` is a **publishable** key, carried over from the
-classic Zap unchanged. It is designed to sit in a client-side image URL and is
-already public — it is embedded in every review page icon this Zap has ever set,
-and in [`start-a-timer-from-notion-task`](../start-a-timer-from-notion-task/)'s
-Notion favicon. It is not a secret and needs no vault.
+The token is logo.dev's **publishable** key (`pk_…`), carried over from the
+classic Zap. It is designed to sit in a client-side image URL and is already
+public: it is embedded in every review page icon this Zap has ever set, and in
+[`start-a-timer-from-notion-task`](../start-a-timer-from-notion-task/)'s Notion
+favicon. It is not a secret.
+
+**Since 2026-11-28 it is read at run time from the `[Table] Workflow Config`
+Zapier Table** (`01M8FY3JVN314M9J2X51CZ13FA`, row `Key = logo_dev_publishable_key`,
+column `Value`), in a `read-logo-dev-key` step just before the icon URL is built.
+Zapier's publish-time analyzer began refusing it as a `hardcoded-credential`
+literal, which stopped the SDK-migration republish in PR #341, and a Zapier
+connection can't hold it because the key has to end up inside the stored icon
+URL. The Table read costs no task. A missing or malformed row throws, so the Zap
+never writes an icon URL without a key. To rotate it, edit the row; only icons
+set afterwards change.
 
 ## Verified cases
 
