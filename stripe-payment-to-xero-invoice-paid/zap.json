@@ -18,7 +18,7 @@
     "xero_wf": "02336808-1736-878b-a0a8-87e02bb0aec3"
   },
   "connections_note": "Xero work.flowers, XeroCLIAPI@2.21.0 — same connection every other Xero Zap in this repo uses. Used twice in the workflow body: once to find the invoice, once to record the payment against it. Not bound on the trigger (Stripe is).",
-  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest.",
+  "dependencies_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap (a connections note in gws-new-user-provisioning was sent as a connection id); shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest. PR #341's run stopped at notion-review-to-company-logo (publish-time `hardcoded-credential` on its logo.dev publishable key), so this Zap shipped in the next PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "zod": "4.4.3",
