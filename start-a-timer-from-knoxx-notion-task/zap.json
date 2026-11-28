@@ -26,7 +26,7 @@
   "connectionless_apps": {
     "TableCLIAPI": "find_record / create_record — Zapier Tables auth is automatic, no connection and no task cost"
   },
-  "sdk_bump_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap; shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest.",
+  "sdk_bump_note": "Bumped 2026-11-27 to durable 0.14.1 / SDK 0.115.1 (Zapier refuses publishes below SDK 0.107.0). PR #337's publish run stopped before reaching this Zap; shipped by the follow-up PR. PR #339's run then stopped at notion-contact-to-newsletter-subscriber on an open, never-edited editor draft from 2026-08-10; that draft and one on notion-page-deleted-to-zapier-tables were discarded 2026-11-27 with Dennis's approval, and the following PR shipped the rest. PR #341's run stopped at notion-review-to-company-logo (publish-time `hardcoded-credential` on its logo.dev publishable key), so this Zap shipped in the next PR.",
   "zapier_durable_version": "0.14.1",
   "dependencies": {
     "@zapier/zapier-sdk": "0.115.1",

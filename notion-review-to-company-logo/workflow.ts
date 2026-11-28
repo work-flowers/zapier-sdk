@@ -27,13 +27,38 @@ const COMPANY_TITLE_PROP = "Company Name";
 const COMPANY_WEBSITE_PROP = "Website";
 
 // --- logo.dev -----------------------------------------------------------------
-/** Publishable key (`pk_`), carried over from the classic Zap. It is designed
- *  to sit in a client-side image URL and is already public: it is embedded in
- *  every review page icon this Zap has ever set. Not a secret. */
-const LOGO_DEV_TOKEN = "pk_MgvuyiQuRe6IT_XWNAUgrA";
+/** The logo.dev PUBLISHABLE key (`pk_`) lives in a Zapier Table row, not in this
+ *  source. It is not a secret: it is designed to sit in a client-side image URL
+ *  and is embedded in every review page icon this Zap has ever set. But Zapier's
+ *  publish-time analyzer refuses any credential-shaped literal
+ *  (`hardcoded-credential`, first hit 2026-11-28), and a connection cannot help
+ *  because the key has to end up inside the stored icon URL. A Table read is
+ *  free. */
+const CONFIG_TABLE = "01M8FY3JVN314M9J2X51CZ13FA"; // [Table] Workflow Config
+const LOGO_DEV_KEY_NAME = "logo_dev_publishable_key";
 
-function logoUrl(domain: string): string {
-  return `https://img.logo.dev/${domain}?token=${LOGO_DEV_TOKEN}`;
+function logoUrl(domain: string, token: string): string {
+  return `https://img.logo.dev/${domain}?token=${token}`;
+}
+
+/** Throws rather than building a token-less URL: a missing or malformed config
+ *  row is a setup fault that must surface, not an icon that silently 401s. */
+async function readLogoDevKey(): Promise<string> {
+  const res = await sdk.listTableRecords({
+    table: CONFIG_TABLE,
+    keyMode: "names",
+    filters: [{ fieldKey: "Key", operator: "exact", value: LOGO_DEV_KEY_NAME }],
+    pageSize: 1,
+  });
+  const value = (res?.data?.[0] as any)?.data?.["Value"];
+  const token = typeof value === "string" ? value.trim() : "";
+  if (!/^pk_[A-Za-z0-9_-]+$/.test(token)) {
+    throw new Error(
+      `No usable "${LOGO_DEV_KEY_NAME}" row in Zapier Table ${CONFIG_TABLE} ` +
+        `(expected a logo.dev publishable key starting pk_).`,
+    );
+  }
+  return token;
 }
 
 const InputSchema = z.unknown();
@@ -359,7 +384,8 @@ const workflow = defineDurable(
       return { skipped: "unusable-website", reviewPageId, companyId, companyName, website } satisfies Outcome;
     }
 
-    const iconUrl = logoUrl(domain);
+    const logoToken = await ctx.step("read-logo-dev-key", async () => readLogoDevKey());
+    const iconUrl = logoUrl(domain, logoToken);
     const currentIcon = externalIconUrl(reviewPage);
 
     // 6. Set the page icon. `update_page` cannot write an icon and the classic
